@@ -19,3 +19,8 @@ pnpm dlx skills add vercel-labs/agent-skills
 npx skills add vercel-labs/agent-skills
 ```
 
+### 常用Skills资源
+- https://github.com/anthropics/skills
+- https://github.com/vercel-labs/agent-skills
+- https://vercel.com/docs/agent-resources/skills
+

@@ -1,0 +1,1 @@
+pnpm dlx skills add vercel-labs/agent-skills
