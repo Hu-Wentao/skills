@@ -1,6 +1,13 @@
 
+
 ## 速览
 
+```bash
+# pnpm dlx 使用 vercel agent-skills 安装本仓库技能
+pnpm dlx skills add Hu-Wentao/wyatt_skills
+```
+
+## 介绍
 ### 使用vercel agent-skills安装skill
 - 仓库
 https://github.com/vercel-labs/agent-skills
