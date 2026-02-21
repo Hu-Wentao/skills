@@ -4,12 +4,10 @@
 # Usage: ./create_worktree.sh <project_path> <new_branch> <base_branch>
 
 PROJECT_PATH=$1
-NEW_BRANCH=$2
-BASE_BRANCH=$3
 
-if [ -z "$PROJECT_PATH" ] || [ -z "$NEW_BRANCH" ] || [ -z "$BASE_BRANCH" ]; then
-  echo "Error: Missing arguments."
-  echo "Usage: $0 <project_path> <new_branch> <base_branch>"
+if [ -z "$PROJECT_PATH" ]; then
+  echo "Error: Missing project path."
+  echo "Usage: $0 <project_path> [new_branch] [base_branch]"
   exit 1
 fi
 
@@ -26,6 +24,23 @@ if [ $? -ne 0 ]; then
 fi
 
 PROJECT_NAME=$(basename "$TOP_LEVEL")
+
+# Set defaults if not provided
+if [ -z "$2" ]; then
+  # Suggest a descriptive name if not provided (e.g., feat-project-name-260221)
+  NEW_BRANCH="feat-${PROJECT_NAME}-$(date +%y%m%d)"
+else
+  NEW_BRANCH=$2
+fi
+
+if [ -z "$3" ]; then
+  # Default base branch is the current branch
+  BASE_BRANCH=$(git branch --show-current 2>/dev/null)
+  BASE_BRANCH=${BASE_BRANCH:-"main"}
+else
+  BASE_BRANCH=$3
+fi
+
 PARENT_DIR=$(dirname "$TOP_LEVEL")
 
 # Define worktree name and path
