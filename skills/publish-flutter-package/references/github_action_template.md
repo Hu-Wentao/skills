@@ -29,3 +29,7 @@ jobs:
 
 Note: This workflow uses OIDC for authentication, which is the recommended way to publish to pub.dev from GitHub Actions.
 You will need to configure your package on pub.dev to allow publishing from your GitHub repository.
+
+For more information, see:
+- [Automated publishing](https://dart.dev/tools/pub/automated-publishing)
+- [Publishing packages](https://dart.dev/tools/pub/publishing)

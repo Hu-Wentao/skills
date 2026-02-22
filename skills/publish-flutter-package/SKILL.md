@@ -16,19 +16,21 @@ Read the root `pubspec.yaml` file.
 - Ask the user which package to publish if multiple are detected.
 
 ### 1. GitHub Actions Verification
-#### 1.1 Configuration Check
-Check `.github/workflows/publish*.yml`.
-- Multi-package projects often have separate workflows (e.g., `publish-core.yml`, `publish-ui.yml`).
-- Verify that `jobs.publish.uses` points to `dart-lang/setup-dart/.github/workflows/publish.yml`.
-- In multi-package workspaces, if multiple publish workflows exist, **recommend the one matching the selected package name and ask the user to confirm**.
-- **If the user skips or provides no alternative, proceed with the recommended workflow.**
-- If no matching workflow is found, show the [Github Action Template](references/github_action_template.md) and guide the user to create one.
-
-#### 1.2 Tag Format
-Read the `on.push.tags` field to identify the required tag format (e.g., `v[0-9]+.[0-9]+.[0-9]+`).
+#### 1.1 Configuration Check & Tag Format Discovery
+Run `scripts/inspect_workflows.py [package_name]` to find and parse publishing workflows.
+- The script returns a JSON list of identified workflows, their `uses` field, and their `on.push.tags`.
+- If a package name is provided, the script ranks workflows based on relevance (e.g., if the filename contains the package name).
+- **Selection Logic**:
+  - Verify that the chosen workflow's `uses` points to `dart-lang/setup-dart/.github/workflows/publish.yml`.
+  - Extract the expected tag format from the `tags` list (e.g., `v*`).
+  - If multiple workflows exist, **recommend the one with the highest score and ask the user to confirm**.
+  - **If the user skips or provides no alternative, proceed with the recommended workflow.**
+  - If no matching workflow is found, show the [Github Action Template](references/github_action_template.md) and guide the user to create one.
+  - For more details on the automated publishing flow, refer to [Automated publishing](https://dart.dev/tools/pub/automated-publishing).
 
 ### 2. Versioning Strategy (SemVer)
-- Use `scripts/prepare_release.py <current_version>` to analyze git history since the last tag.
+- Use `scripts/prepare_release.py <current_version> [--tag-match <pattern>]` to analyze git history since the last tag.
+  - If the tag format from Step 1.2 is non-standard (e.g., `package-name-*`), pass it as `--tag-match` to ensure the correct last tag is identified.
 - This script provides a suggested version based on commit types (feat/fix/breaking) and generates a formatted `CHANGELOG.md` entry.
 - Present the suggestion and the draft changelog entry to the user. **If the user skips or provides no alternative, proceed with the suggested values.**
 - Allow the user to edit the version or the content before proceeding.
@@ -53,12 +55,16 @@ Add a new git tag matching the format found in Step 1.2 using `git tag`.
 
 ### 5. Validation
 Run `dart pub publish --dry-run` to verify the package contents and configuration.
+- **Troubleshooting**: If publication consistently fails or you encounter unexpected issues, refer to the [official publishing guide](https://dart.dev/tools/pub/publishing) for the latest release process and requirements.
 
 ## Resources
 
 ### scripts/
+- `inspect_workflows.py`: Automatically discovers and parses GitHub Action workflows to identify publishing configurations and tag formats.
+  - Arguments: `[package_name]`
 - `prepare_release.py`: Analyze git history to suggest SemVer version and generate `CHANGELOG.md` entry.
   - Arguments: `<current_version>`
+  - Optional: `--tag-match <pattern>` (e.g., `my-pkg-*` or `v*`) to find the correct previous tag.
 
 ### references/
 - `github_action_template.md`: A template for setting up the GitHub Action for publishing.
