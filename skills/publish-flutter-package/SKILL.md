@@ -9,7 +9,12 @@ This skill automates the Flutter package release workflow triggered by git tags.
 
 ## Workflow
 
-### 0. Detect Packages (Workspace Support)
+### 0. Pre-check
+#### 0.1 Project Root
+Verify that the current working directory is the root of the Git repository (contains a `.git` folder and the main `pubspec.yaml`).
+- If not at the root (e.g., inside a sub-package directory), **advise the user to switch to the project root directory** before proceeding to ensure `.github/workflows` and workspace configurations can be correctly identified.
+
+#### 0.2 Detect Packages (Workspace Support)
 Read the root `pubspec.yaml` file.
 - Check for the `workspace:` field.
 - If present, parse the paths (e.g., `- pkgs/*`) to find all nested packages.

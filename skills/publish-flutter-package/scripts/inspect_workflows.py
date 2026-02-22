@@ -46,7 +46,20 @@ def parse_workflow(file_path):
     }
 
 def find_workflows(package_name=None):
-    workflow_dir = ".github/workflows"
+    # Try to find the project root by looking for .git or .github
+    curr = os.getcwd()
+    root = None
+    while curr != os.path.dirname(curr):
+        if os.path.exists(os.path.join(curr, ".github")) or os.path.exists(os.path.join(curr, ".git")):
+            root = curr
+            break
+        curr = os.path.dirname(curr)
+    
+    if not root:
+        # Fallback to current dir if not found (but usually SKILL.md pre-check will catch this)
+        root = os.getcwd()
+
+    workflow_dir = os.path.join(root, ".github/workflows")
     if not os.path.exists(workflow_dir):
         return []
 
