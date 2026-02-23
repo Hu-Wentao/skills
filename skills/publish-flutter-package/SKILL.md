@@ -53,14 +53,28 @@ Format requirement:
 ```
 Note: Ensure the format matches the user's project-specific conventions if they differ from the suggested draft.
 
-### 4. Git Tagging
-Add a new git tag matching the format found in Step 1.2 using `git tag`.
-- Example: If the tag format is `v[0-9]+.[0-9]+.[0-9]+`, the tag should be `v<version>`.
-- Use the exact tag format detected from the workflow file.
+### 4. Git Commit & Validation (Dry Run)
+#### 4.1 Git Commit
+Commit the modified `pubspec.yaml` and `CHANGELOG.md` files:
+```bash
+git add .
+git commit -m "chore(release): <version>"
+```
 
-### 5. Validation
+#### 4.2 Validation (Dry Run)
 Run `dart pub publish --dry-run` to verify the package contents and configuration.
 - **Troubleshooting**: If publication consistently fails or you encounter unexpected issues, refer to the [official publishing guide](https://dart.dev/tools/pub/publishing) for the latest release process and requirements.
+- **Proceed only if the dry run is successful.**
+
+### 5. Git Tagging & Push
+Once validated, add a new git tag and push everything to trigger the automated release.
+- **Tagging**: Add a new git tag matching the format found in Step 1.1 using `git tag`.
+  - Example: If the tag format is `v[0-9]+.[0-9]+.[0-9]+`, the tag should be `v<version>`.
+- **Pushing**: Push the new commit and tag to the remote repository to trigger the GitHub Action:
+  ```bash
+  git push
+  git push origin <tag_name>
+  ```
 
 ## Resources
 
