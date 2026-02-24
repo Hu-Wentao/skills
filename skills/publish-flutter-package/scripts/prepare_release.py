@@ -14,7 +14,7 @@ def get_last_tag(match_pattern=None):
     except subprocess.CalledProcessError:
         return None
 
-def get_commits_since(tag):
+def get_commits_since(tag, package_path=None):
     if tag:
         range_str = f"{tag}..HEAD"
     else:
@@ -22,8 +22,11 @@ def get_commits_since(tag):
         range_str = "HEAD"
     
     try:
-        # Check if we are in a shallow clone or if there are no commits
-        commits = subprocess.check_output(['git', 'log', '--pretty=format:%s', range_str]).decode('utf-8').splitlines()
+        cmd = ['git', 'log', '--pretty=format:%s', range_str]
+        if package_path:
+            cmd.extend(['--', package_path])
+            
+        commits = subprocess.check_output(cmd).decode('utf-8').splitlines()
         return commits
     except subprocess.CalledProcessError:
         # Fallback if range is invalid
@@ -46,6 +49,9 @@ def parse_semver(version_str):
 def suggest_version(current_version, commits):
     major, minor, patch = parse_semver(current_version)
     
+    if not commits:
+        return f"{major}.{minor}.{patch}"
+
     has_breaking = False
     has_feat = False
     has_fix = False
@@ -92,11 +98,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Prepare release by suggesting version and generating changelog.')
     parser.add_argument('current_version', help='The current version of the package (e.g., from pubspec.yaml)')
     parser.add_argument('--tag-match', help='Glob pattern for git tags to match (e.g., "my-pkg-*")')
+    parser.add_argument('--package-path', help='Filter commits by package path (e.g., "pkgs/my_pkg")')
     
     args = parser.parse_args()
     
     last_tag = get_last_tag(args.tag_match)
-    commits = get_commits_since(last_tag)
+    commits = get_commits_since(last_tag, args.package_path)
     
     # If no commits since last tag, we might still want to publish if it's the first release
     # but usually this script is called when there are changes.
@@ -106,6 +113,7 @@ if __name__ == "__main__":
     
     print(f"LAST_TAG: {last_tag if last_tag else 'None'}")
     print(f"SUGGESTED_VERSION: {suggested}")
+    print(f"PACKAGE_PATH: {args.package_path if args.package_path else 'Root'}")
     print("CHANGELOG_ENTRY_START")
     print(changelog_entry)
     print("CHANGELOG_ENTRY_END")

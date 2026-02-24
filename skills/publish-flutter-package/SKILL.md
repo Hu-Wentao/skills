@@ -17,8 +17,9 @@ Verify that the current working directory is the root of the Git repository (con
 #### 0.2 Detect Packages (Workspace Support)
 Read the root `pubspec.yaml` file.
 - Check for the `workspace:` field.
-- If present, parse the paths (e.g., `- pkgs/*`) to find all nested packages.
+- If present, parse the paths (e.g., `- packages/*`) to find all nested packages.
 - Ask the user which package to publish if multiple are detected.
+- **Store the relative path to the selected package** (e.g., `packages/my_package`) for subsequent steps.
 
 ### 1. GitHub Actions Verification
 #### 1.1 Configuration Check & Tag Format Discovery
@@ -34,8 +35,9 @@ Run `scripts/inspect_workflows.py [package_name]` to find and parse publishing w
   - For more details on the automated publishing flow, refer to [Automated publishing](https://dart.dev/tools/pub/automated-publishing).
 
 ### 2. Versioning Strategy (SemVer)
-- Use `scripts/prepare_release.py <current_version> [--tag-match <pattern>]` to analyze git history since the last tag.
+- Use `scripts/prepare_release.py <current_version> [--tag-match <pattern>] [--package-path <path>]` to analyze git history since the last tag.
   - If the tag format from Step 1.2 is non-standard (e.g., `package-name-*`), pass it as `--tag-match` to ensure the correct last tag is identified.
+  - **Pass the relative path of the package** (from Step 0.2) as `--package-path` to filter the git history to only include changes affecting that package.
 - This script provides a suggested version based on commit types (feat/fix/breaking) and generates a formatted `CHANGELOG.md` entry.
 - Present the suggestion and the draft changelog entry to the user. **If the user skips or provides no alternative, proceed with the suggested values.**
 - Allow the user to edit the version or the content before proceeding.
@@ -84,6 +86,7 @@ Once validated, add a new git tag and push everything to trigger the automated r
 - `prepare_release.py`: Analyze git history to suggest SemVer version and generate `CHANGELOG.md` entry.
   - Arguments: `<current_version>`
   - Optional: `--tag-match <pattern>` (e.g., `my-pkg-*` or `v*`) to find the correct previous tag.
+  - Optional: `--package-path <path>` (e.g., `packages/my_pkg`) to filter changes by package directory.
 
 ### references/
 - `github_action_template.md`: A template for setting up the GitHub Action for publishing.
