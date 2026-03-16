@@ -1,0 +1,1 @@
+pnpm dlx skills add pasky/chrome-cdp-skill
