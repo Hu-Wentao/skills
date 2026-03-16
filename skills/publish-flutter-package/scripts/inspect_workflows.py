@@ -14,9 +14,7 @@ def parse_workflow(file_path):
 
     # Extract uses
     # Looking for: uses: dart-lang/setup-dart/.github/workflows/publish.yml
-    uses_match = re.search(r'uses:\s+([^\s
-]+publish\.yml[^\s
-]*)', content)
+    uses_match = re.search(r'uses:\s+([^\s\n]+publish\.yml[^\s\n]*)', content)
     uses = uses_match.group(1) if uses_match else None
 
     # Extract tags
@@ -29,13 +27,12 @@ def parse_workflow(file_path):
     tags = []
     
     # Try to find the tags section
-    on_push_match = re.search(r'on:.*?push:.*?tags:(.*?)(?:
-\w|#|$)', content, re.DOTALL | re.IGNORECASE)
+    on_push_match = re.search(r'on:.*?push:.*?tags:(.*?)(?:\n\w|#|$)', content, re.DOTALL | re.IGNORECASE)
     if on_push_match:
         tag_lines = on_push_match.group(1).splitlines()
         for line in tag_lines:
             # Match lines like "- 'v*'" or "- v*"
-            m = re.search(r'-\s+['"]?([^'"]+)['"]?', line)
+            m = re.search(r'-\s+[\'"]?([^\'"]+)[\'"]?', line)
             if m:
                 tags.append(m.group(1))
 
