@@ -21,6 +21,14 @@ Read the root `pubspec.yaml` file.
 - Ask the user which package to publish if multiple are detected.
 - **Store the relative path to the selected package** (e.g., `packages/my_package`) for subsequent steps.
 
+#### 0.3 Git & Remote Pre-check
+Run `scripts/pre_check.py` to automatically verify the repository status.
+- **Uncommitted Changes**: If the script reports uncommitted files, list them and ask the user if they want to commit them before proceeding.
+- **Remote Sync**: 
+  - If the branch is **behind** the remote, advise the user to `git pull` before continuing.
+  - If the branch is **ahead**, notify the user that their commits will be pushed in Step 5.
+- Ensure the environment is ready for release based on the script's output.
+
 ### 1. GitHub Actions Verification
 #### 1.1 Configuration Check & Tag Format Discovery
 Run `scripts/inspect_workflows.py [package_name]` to find and parse publishing workflows.
@@ -81,6 +89,8 @@ Once validated, add a new git tag and push everything to trigger the automated r
 ## Resources
 
 ### scripts/
+- `pre_check.py`: Automatically verifies uncommitted changes and remote branch synchronization status before starting the release process.
+  - Returns a JSON report of the current git status.
 - `inspect_workflows.py`: Automatically discovers and parses GitHub Action workflows to identify publishing configurations and tag formats.
   - Arguments: `[package_name]`
 - `prepare_release.py`: Analyze git history to suggest SemVer version and generate `CHANGELOG.md` entry.
