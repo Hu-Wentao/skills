@@ -29,6 +29,11 @@ Run `scripts/pre_check.py` to automatically verify the repository status.
   - If the branch is **ahead**, notify the user that their commits will be pushed in Step 5.
 - Ensure the environment is ready for release based on the script's output.
 
+#### 0.4 FVM Detection
+Check if the project is using FVM (e.g., presence of `.fvm/fvm_config.json`).
+- If FVM is detected, **prefix all subsequent `flutter` and `dart` commands with `fvm`** (e.g., use `fvm dart` instead of `dart`) to ensure the correct SDK version is used and to avoid environment mismatches.
+
+
 ### 1. GitHub Actions Verification
 #### 1.1 Configuration Check & Tag Format Discovery
 Run `scripts/inspect_workflows.py [package_name]` to find and parse publishing workflows.
@@ -72,7 +77,7 @@ git commit -m "chore(release): <version>"
 ```
 
 #### 4.2 Validation (Dry Run)
-Run `dart pub publish --dry-run` to verify the package contents and configuration.
+Run `dart pub publish --dry-run` (or `fvm dart pub publish --dry-run` if FVM is used) to verify the package contents and configuration.
 - **Troubleshooting**: If publication consistently fails or you encounter unexpected issues, refer to the [official publishing guide](https://dart.dev/tools/pub/publishing) for the latest release process and requirements.
 - **Proceed only if the dry run is successful.**
 
