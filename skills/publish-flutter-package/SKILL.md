@@ -85,11 +85,12 @@ Run `dart pub publish --dry-run` (or `fvm dart pub publish --dry-run` if FVM is 
 Once validated, add a new git tag and push everything to trigger the automated release.
 - **Tagging**: Add a new git tag matching the format found in Step 1.1 using `git tag`.
   - Example: If the tag format is `v[0-9]+.[0-9]+.[0-9]+`, the tag should be `v<version>`.
-- **Pushing**: Push the new commit and tag to the remote repository to trigger the GitHub Action:
-  ```bash
-  git push
-  git push origin <tag_name>
-  ```
+- **Pushing**: Use `uv run python scripts/push_tag_and_print_actions.py <tag_name>` to push the current branch and the new tag to the remote repository.
+  - The script will:
+    - run `git push`
+    - run `git push origin <tag_name>`
+    - print `https://github.com/<owner>/<repo>/actions` after the tag push succeeds, so the user can jump directly to the workflow run page
+  - If the repository remote cannot be parsed as a GitHub repository, explicitly tell the user that the Actions URL could not be derived automatically.
 
 ## Resources
 
@@ -102,6 +103,8 @@ Once validated, add a new git tag and push everything to trigger the automated r
   - Arguments: `<current_version>`
   - Optional: `--tag-match <pattern>` (e.g., `my-pkg-*` or `v*`) to find the correct previous tag.
   - Optional: `--package-path <path>` (e.g., `packages/my_pkg`) to filter changes by package directory.
+- `push_tag_and_print_actions.py`: Push the current branch and release tag, then print the GitHub Actions page URL for the repository.
+  - Arguments: `<tag_name>`
 
 ### references/
 - `github_action_template.md`: A template for setting up the GitHub Action for publishing.
