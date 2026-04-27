@@ -1,1 +1,0 @@
-pnpm dlx skills add remotion-dev/skills
