@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flutter Slang I18n"
+  short_description: "Audit and migrate Flutter text to slang"
+  default_prompt: "Use $flutter-slang-i18n to add slang localization and audit hardcoded Flutter UI strings."
