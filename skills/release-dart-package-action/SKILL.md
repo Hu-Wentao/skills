@@ -1,5 +1,5 @@
 ---
-name: publish-flutter-package
+name: release-dart-package-action
 description: Automates the Flutter package release process via git tags and GitHub Actions. Handles multi-package workspaces, SemVer versioning suggestions based on git history, updating pubspec.yaml and CHANGELOG.md, and dry-run validation. Use when the user wants to "release", "publish", or "version" a Flutter package.
 ---
 
