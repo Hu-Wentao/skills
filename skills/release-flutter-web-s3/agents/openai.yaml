@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Flutter Web S3"
+  short_description: "Version and publish Flutter Web to S3-compatible object storage"
+  default_prompt: "Use $release-flutter-web-s3 to prepare, build, and publish a Flutter Web app to S3-compatible object storage."
