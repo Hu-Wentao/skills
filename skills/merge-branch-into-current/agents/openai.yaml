@@ -1,0 +1,4 @@
+interface:
+  display_name: "Merge Branch Into Current"
+  short_description: "Merge one branch into the current branch with an explicit merge commit"
+  default_prompt: "Use $merge-branch-into-current to merge a specified branch into the current branch, auto-detecting the source branch from main when possible and aborting if either branch is dirty."
