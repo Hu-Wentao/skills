@@ -23,16 +23,18 @@ current_branch() {
   git branch --show-current
 }
 
-count_unique_unmerged_branches_from_main() {
+count_unique_unmerged_branches_from_target() {
+  local target="$1"
+
   git for-each-ref --format='%(refname:short)' refs/heads \
     | while IFS= read -r branch; do
-        [[ "$branch" == "main" ]] && continue
+        [[ "$branch" == "$target" ]] && continue
 
-        if git merge-base --is-ancestor "$branch" main; then
+        if git merge-base --is-ancestor "$branch" "$target"; then
           continue
         fi
 
-        ahead_count="$(git rev-list --count "main..${branch}")"
+        ahead_count="$(git rev-list --count "${target}..${branch}")"
         if [[ "$ahead_count" -ge 1 ]]; then
           printf '%s\n' "$branch"
         fi
@@ -40,7 +42,8 @@ count_unique_unmerged_branches_from_main() {
 }
 
 resolve_branches() {
-  local current
+  local current candidate
+  local candidates=()
   current="$(current_branch)"
   [[ -n "$current" ]] || die "Detached HEAD is not supported for this workflow."
 
@@ -52,18 +55,23 @@ resolve_branches() {
     return 0
   fi
 
-  if [[ "$current" == "main" ]]; then
-    mapfile -t candidates < <(count_unique_unmerged_branches_from_main)
-    if [[ "${#candidates[@]}" -eq 1 ]]; then
-      source_branch="${candidates[0]}"
-      target_branch="main"
-      echo "Auto-selected source branch: ${source_branch}"
-      echo "Auto-selected target branch: ${target_branch}"
-      return 0
-    fi
+  while IFS= read -r candidate; do
+    candidates+=("$candidate")
+  done < <(count_unique_unmerged_branches_from_target "$target_branch")
+  if [[ "${#candidates[@]}" -eq 1 ]]; then
+    source_branch="${candidates[0]}"
+    echo "Auto-selected source branch: ${source_branch}"
+    echo "Auto-selected target branch: ${target_branch}"
+    return 0
   fi
 
-  die "Missing source branch. Provide it explicitly, or run this workflow from main when exactly one unmerged local branch is ahead of main."
+  if [[ "${#candidates[@]}" -gt 1 ]]; then
+    printf 'Multiple branches have commits after %s:\n' "$target_branch" >&2
+    printf '  %s\n' "${candidates[@]}" >&2
+    die "Specify the source branch explicitly."
+  fi
+
+  die "Missing source branch. Provide it explicitly, or run this workflow when exactly one unmerged local branch is ahead of the current branch."
 }
 
 ensure_on_target_branch() {

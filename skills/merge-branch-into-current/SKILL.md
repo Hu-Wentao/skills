@@ -1,6 +1,6 @@
 ---
 name: merge-branch-into-current
-description: Merge a specified branch into the current branch with a merge commit. Use this when the user wants to merge one branch into the current branch, or when Codex should auto-detect the source branch while currently on main. The skill checks whether the source branch and target branch have uncommitted work in any active git worktree and aborts if either branch is dirty.
+description: Merge a specified branch into the current branch with a merge commit. Use this when the user wants to merge one branch into the current branch, or when Codex should auto-detect the source branch that has commits after the current branch. The skill checks whether the source branch and target branch have uncommitted work in any active git worktree and aborts if either branch is dirty.
 ---
 
 # Merge Branch Into Current
@@ -36,18 +36,22 @@ git branch --show-current
 git branch --format='%(refname:short)'
 ```
 
-If the current branch is `main`, and there is exactly one local branch that satisfies all of the following, auto-select it as the source branch and continue without asking:
+When resolving the specified branch automatically, inspect local branches relative to the current branch:
 
-- it is not `main`
-- it is not merged into `main`
-- `git rev-list --count main..BRANCH` is at least `1`
+- it is not the current branch
+- it is not merged into the current branch
+- `git rev-list --count CURRENT_BRANCH..BRANCH` is at least `1`
 
-In that case:
+If there are multiple unmerged branches in the repository, narrow them to the branches that have commits after the current branch by using the `CURRENT_BRANCH..BRANCH` ahead count above.
 
-- source branch = that unmerged branch
-- target branch = `main`
+If exactly one local branch satisfies these conditions, auto-select it as the source branch and continue without asking:
 
-If the auto-detection rule does not produce exactly one source branch, stop and ask the user for the source branch name. Target branch remains the current branch unless the user states otherwise.
+- source branch = that branch
+- target branch = current branch
+
+If more than one branch has commits after the current branch, stop and ask the user to specify which one should be the source branch. Target branch remains the current branch unless the user states otherwise.
+
+If no branch has commits after the current branch, stop and ask the user for the source branch name.
 
 ### 2. Preflight checks
 
