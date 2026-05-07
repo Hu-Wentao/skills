@@ -14,7 +14,7 @@ pnpm dlx skills add Hu-Wentao/wyatt_skills
 pnpm add -g skills
 
 # 再执行添加命令
-skills add vercel-labs/agent-skills
+skills add Hu-Wentao/wyatt_skills
 ```
 
 
