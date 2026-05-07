@@ -2,12 +2,20 @@
 个人skill集合
 
 ## 安装
-> pnpm dlx 使用 vercel agent-skills 安装本仓库技能
+> 通过 pnpm dlx 临时使用 vercel agent-skills 安装本仓库技能
 
 ```bash
 pnpm dlx skills add Hu-Wentao/wyatt_skills
 ```
 
+> 通过 pnpm 安装 vercel agent-skills 后, 安装本仓库技能
+```bash
+# 全局安装 skills
+pnpm add -g skills
+
+# 再执行添加命令
+skills add vercel-labs/agent-skills
+```
 
 
 ## 其他常用Skills
