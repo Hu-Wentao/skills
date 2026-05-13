@@ -63,6 +63,8 @@ chmod +x scripts/release_web_s3.sh
 
 Adjust the source path if skills are installed somewhere other than `.codex/skills`.
 
+If the user needs local AWS CLI credentials setup, point them to `references/awscli-setup.md` in this skill before asking them to run upload commands. Prefer a named profile over exporting long-lived access keys into the shell.
+
 Create `deploy/s3.env.example` with non-secret placeholders, then create a local `deploy/s3.env` from it and ensure `deploy/s3.env` is git-ignored. Keep secrets out of commits:
 
 ```dotenv
@@ -79,7 +81,8 @@ Required runtime configuration:
 
 - `S3_ENDPOINT_URL`: provider endpoint URL
 - `S3_BUCKET`: target bucket
-- credentials via `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, CI secrets, or the provider's supported AWS CLI mechanism
+- credentials via `AWS_PROFILE`, CI secrets, or the provider's supported AWS CLI mechanism; direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` may fail on some S3-compatible providers
+- for local uploads, prefer configuring a named AWS CLI profile with `aws configure --profile <new-profile-name>` and setting `AWS_PROFILE=<profile>` so the script appends `aws --profile <profile>` consistently
 
 Optional project configuration:
 
@@ -184,3 +187,4 @@ Promotion copies an immutable release prefix to the live prefix. Use it for roll
 
 - `prepare_web_release.py`: inspect commits since the latest `web-v*` tag, suggest a SemVer version, generate `web-v<version>`, draft release notes, and optionally update `pubspec.yaml`.
 - `release_web_s3.sh`: reusable project script template for building Flutter Web, writing `version.json`, syncing an immutable release prefix, refreshing live assets, and promoting an existing release.
+- `references/awscli-setup.md`: local setup guide for installing AWS CLI, obtaining `ak/sk`, creating a named profile, and using that profile with `release_web_s3.sh`.
