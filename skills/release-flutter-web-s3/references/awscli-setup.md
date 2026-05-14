@@ -1,6 +1,6 @@
 # AWS CLI Local Setup
 
-Use this guide when the user needs to upload a Flutter Web build from a local machine with `scripts/release_web_s3.sh`.
+Use this guide when the user needs to upload a Flutter Web build from a local machine with `scripts/release_web_s3.py`.
 
 ## 1. Install AWS CLI
 
@@ -32,27 +32,38 @@ Then enter the provider values interactively:
 
 1. `AWS Access Key ID`: enter the provider `ak`
 2. `AWS Secret Access Key`: enter the provider `sk`
-3. `Default region name`: enter the provider region, usually `auto`
+3. `Default region name`: enter the provider region, usually `auto` or the provider's assigned region code (e.g. `cn-east-1` for Bitiful). **Do not leave it blank or enter garbage** — if the region is invalid, the AWS CLI signs requests incorrectly and the provider returns `SignatureDoesNotMatch` even with correct credentials.
 4. `Default output format`: optional, `json` is fine
+
+**Verify the profile works before uploading**:
+
+```bash
+aws --profile <profile-name> --endpoint-url <endpoint> s3 ls s3://<bucket>/
+```
+
+If you see `SignatureDoesNotMatch`, the most common cause is a corrupted `region` in `~/.aws/config` for that profile. Fix it:
+
+```bash
+aws configure --profile <profile-name> set region <correct-region>
+```
 
 This writes local credentials into the AWS CLI config files under the user's home directory.
 
-## 4. Use The Profile In Upload Commands
+## 4. Use The Profile In Release Commands
 
-The release script already supports `AWS_PROFILE`. Set it before running the upload:
-
-```bash
-AWS_PROFILE=<profile-name> scripts/release_web_s3.sh
-```
-
-Or export it for the current shell session:
+`release_web_s3.py` already supports `AWS_PROFILE`. Set it before running the release:
 
 ```bash
 export AWS_PROFILE=<profile-name>
-scripts/release_web_s3.sh
 ```
 
-Internally, the script passes `--profile <profile-name>` to `aws`, so the configured profile is used consistently for sync and copy operations.
+Or put it in `deploy/s3.env`:
+
+```dotenv
+AWS_PROFILE=<profile-name>
+```
+
+Internally, the script passes `--profile <profile-name>` to `aws`, so the configured profile is used consistently for S3 list, sync, copy, and promote operations.
 
 Do not recommend local uploads that depend only on `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Some S3-compatible providers fail in that mode and only work when the AWS CLI reads credentials from a named `AWS_PROFILE`.
 

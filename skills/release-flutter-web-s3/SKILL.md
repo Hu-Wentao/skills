@@ -1,6 +1,6 @@
 ---
 name: release-flutter-web-s3
-description: Prepare, build, and publish a Flutter Web app to S3-compatible object storage. Use when Codex needs to bump or update pubspec.yaml version, create a Flutter Web release tag, configure a reusable S3 deployment script, build build/web, upload or promote web assets, or inspect a Flutter Web S3 release workflow.
+description: Prepare, build, and publish a Flutter Web app to S3-compatible object storage. Use when Codex needs to bump or update pubspec.yaml version, create a Flutter Web release tag, configure S3 deployment, build build/web, upload or promote web assets, or inspect a Flutter Web S3 release workflow.
 ---
 
 # Release Flutter Web S3
@@ -13,8 +13,8 @@ Default assumptions:
 
 - Version source: `pubspec.yaml`
 - Build output: `build/web`
-- Release helper: this skill's `scripts/prepare_web_release.py`
-- Deploy script template: this skill's `scripts/release_web_s3.sh`, usually copied into the project as `scripts/release_web_s3.sh`
+- Main entry point: this skill's `scripts/release_web_s3.py`
+- Version helper: this skill's `scripts/prepare_web_release.py`
 - Local deploy config: `deploy/s3.env`, ignored by git
 - Default tag pattern: `web-v<pubspec version>`
 - Package manager/runtime preference: `uv` for Python helpers, `fvm` when the project uses FVM
@@ -23,49 +23,64 @@ Adapt these defaults to the target project before publishing. Do not assume the 
 
 Do not print secret values from `deploy/s3.env` or GitHub secrets. Any compatibility switch such as `BUILD_WASM`, `S3_ADDRESSING_STYLE`, `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION`, or `ALLOW_DIRTY` must be explicitly called out before use because these can hide provider or runtime differences.
 
-## Workflow
+## Main Usage
 
-### 1. Preflight
+Use `scripts/release_web_s3.py` as the only release entry point.
 
-Verify repository state before changing files:
+### Parameters
 
-```bash
-git status --short
-git branch --show-current
-git status -uno
-```
+- `--project-root`: manually specify the Flutter project root; by default the script auto-detects it from git or `pubspec.yaml`
+- `--pubspec`: override the `pubspec.yaml` path relative to the project root
+- `--tag-match`: specify the git tag glob used to locate the previous Web release; default `web-v*`
+- `--tag-prefix`: specify the git tag prefix for the new release; default `web-v`
+- `--version`: explicitly set the release version and bypass the suggested version
+- `--bump {major|minor|patch}`: override the detected semantic version bump
+- `--dry-run`: print planned file, git, build, and S3 actions without making changes
+- `--skip-tests`: skip the Flutter test step during validation
+- `--no-tag`: do not create the git release tag after publishing
+- `--no-push`: do not push the git release tag to remote
+- `--yes` / `-y`: non-interactive mode; fail instead of prompting for confirmation
+- `--promote <release-id>`: skip version/build flow and promote an existing immutable release to the live prefix
 
-If unrelated uncommitted changes exist, stop and ask whether to commit them first or ignore them for this release. If the branch is behind its upstream, pull or ask the user how to proceed before releasing.
+### Workflow Covered By The Script
 
-Confirm the Flutter app shape:
+The script handles the whole fixed flow automatically:
 
-```bash
-test -f pubspec.yaml
-test -d lib
-test -d web
-```
+1. **Preflight**
+   - check git status and branch state
+   - verify Flutter Web project structure
+   - detect `fvm` / `flutter` / `dart`
+   - ensure `deploy/s3.env` exists
+   - verify S3 connectivity
 
-Detect command style:
+2. **Version**
+   - inspect commits since the latest matching tag
+   - suggest a SemVer bump
+   - optionally accept an explicit or overridden version
+   - write the chosen version back to `pubspec.yaml`
 
-- If `.fvm/fvm_config.json`, `.fvmrc`, or `.fvm` exists, run Flutter and Dart commands through `fvm`.
-- Otherwise use the project's normal `flutter` and `dart` commands.
-- If the project uses generated code, inspect `pubspec.yaml`, `build.yaml`, `slang.yaml`, `melos.yaml`, and existing CI before choosing generation commands.
+3. **Validate**
+   - run `flutter pub get`
+   - run `build_runner` if needed
+   - run `slang` if needed
+   - run tests unless `--skip-tests`
+   - perform an S3 upload dry-run
 
-### 2. Install Or Review The Deploy Script
+4. **Publish**
+   - build Flutter Web
+   - write `build/web/version.json`
+   - upload immutable release assets
+   - refresh live assets
+   - create and optionally push a git tag
 
-If the project already has a web deploy script, inspect it and preserve its project-specific behavior unless it is wrong. If the project does not have one, copy this skill's template into the app:
+5. **Promote**
+   - copy an existing immutable release to the live prefix without rebuilding
 
-```bash
-mkdir -p scripts deploy
-cp .codex/skills/release-flutter-web-s3/scripts/release_web_s3.sh scripts/release_web_s3.sh
-chmod +x scripts/release_web_s3.sh
-```
+## Configuration
 
-Adjust the source path if skills are installed somewhere other than `.codex/skills`.
+Create `deploy/s3.env.example` with non-secret placeholders, then create a local `deploy/s3.env` from it and ensure `deploy/s3.env` is git-ignored.
 
-If the user needs local AWS CLI credentials setup, point them to `references/awscli-setup.md` in this skill before asking them to run upload commands. Prefer a named profile over exporting long-lived access keys into the shell.
-
-Create `deploy/s3.env.example` with non-secret placeholders, then create a local `deploy/s3.env` from it and ensure `deploy/s3.env` is git-ignored. Keep secrets out of commits:
+Example:
 
 ```dotenv
 S3_ENDPOINT_URL=https://s3.example.com
@@ -75,116 +90,56 @@ S3_LIVE_PREFIX=web
 S3_RELEASE_PREFIX=web/releases
 BASE_HREF=/
 PWA_STRATEGY=none
+# AWS_PROFILE=my-profile
 ```
 
 Required runtime configuration:
 
 - `S3_ENDPOINT_URL`: provider endpoint URL
 - `S3_BUCKET`: target bucket
-- credentials via `AWS_PROFILE`, CI secrets, or the provider's supported AWS CLI mechanism; direct `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` may fail on some S3-compatible providers
-- for local uploads, prefer configuring a named AWS CLI profile with `aws configure --profile <new-profile-name>` and setting `AWS_PROFILE=<profile>` so the script appends `aws --profile <profile>` consistently
+- credentials via `AWS_PROFILE`, CI secrets, or the provider's supported AWS CLI mechanism
+- for local uploads, prefer configuring a named AWS CLI profile with `aws configure --profile <new-profile-name>` and setting `AWS_PROFILE=<profile>`
 
 Optional project configuration:
 
-- `BASE_HREF`: set this to `/subpath/` when the app is hosted below the domain root
+- `S3_REGION`: region passed to AWS CLI; default `auto`
+- `S3_LIVE_PREFIX`: live object prefix; default `web`
+- `S3_RELEASE_PREFIX`: immutable release prefix; default `web/releases`
+- `BASE_HREF`: passed to `flutter build web --base-href`
 - `PWA_STRATEGY`: passed to `flutter build web --pwa-strategy`
 - `BUILD_WEB_DIR`: override when the web output is not `build/web`
 - `BUILD_WASM=1`: add `--wasm`, only after browser/runtime compatibility is verified
-- `FLUTTER_CMD`, `DART_CMD`, `PRE_BUILD_CMD`, `TEST_CMD`, `BUILD_RUNNER_CMD`, `SLANG_CMD`: override command discovery for non-standard projects
+- `FLUTTER_CMD`, `DART_CMD`: override command discovery for non-standard projects
+- `PRE_BUILD_CMD`, `BUILD_RUNNER_CMD`, `SLANG_CMD`, `TEST_CMD`: override build/test/codegen commands
+- `RELEASE_CACHE_CONTROL`, `LIVE_CACHE_CONTROL`, `LIVE_STATIC_CACHE_CONTROL`: customize cache headers for uploaded assets
 
-### 3. Choose The Version
+## Version Helper
 
-Run the helper to inspect the current version, last `web-v*` tag, commits since that tag, suggested SemVer bump, tag name, and draft release notes:
+If you only need to inspect or write the version without running the full release flow, use `prepare_web_release.py` directly.
 
-```bash
-uv run python .codex/skills/release-flutter-web-s3/scripts/prepare_web_release.py
-```
+It can:
 
-The helper treats breaking commits as major, `feat` commits as minor, `fix` or `perf` commits as patch, and other changed commits as patch. If the project uses another tag prefix, pass it explicitly:
+- inspect the current version from `pubspec.yaml`
+- find the latest matching git tag
+- inspect commits since the last release
+- suggest a SemVer bump
+- generate a tag name from the selected version
+- optionally write the version back to `pubspec.yaml`
 
-```bash
-uv run python .codex/skills/release-flutter-web-s3/scripts/prepare_web_release.py --tag-match "release-web-*" --tag-prefix "release-web-"
-```
+## Known Issues
 
-If the user provides a version, use it instead of the suggestion:
+### `S3_RELEASE_PREFIX` as a sub-path of `S3_LIVE_PREFIX`
 
-```bash
-uv run python .codex/skills/release-flutter-web-s3/scripts/prepare_web_release.py --version 0.1.0 --write
-```
+When `S3_RELEASE_PREFIX` is a child path of `S3_LIVE_PREFIX` (for example `LIVE_PREFIX=web`, `RELEASE_PREFIX=web/releases`), a naive live sync can accidentally delete immutable releases.
 
-When the chosen version is final, write it to `pubspec.yaml`:
+**Symptom**: after publishing, older immutable releases under `web/releases/<version>/` are missing their files.
 
-```bash
-uv run python .codex/skills/release-flutter-web-s3/scripts/prepare_web_release.py --version <version> --write
-```
-
-### 4. Validate Before Publishing
-
-Run the same commands the release script depends on, or let the release script run them. Use `fvm` only when the project uses FVM:
-
-```bash
-fvm flutter pub get
-fvm flutter test
-```
-
-If the project has code generation, run the existing project command, for example:
-
-```bash
-fvm dart run build_runner build -d
-fvm dart run slang
-```
-
-For an upload rehearsal, use dry-run mode. This still requires object storage configuration, but does not change objects:
-
-```bash
-scripts/release_web_s3.sh --dry-run
-```
-
-If generated files or the version change need committing for a reproducible release, commit before uploading or tagging:
-
-```bash
-git add pubspec.yaml
-git commit -m "chore(release): web <version>"
-```
-
-### 5. Publish
-
-For a local publish to the configured object storage bucket:
-
-```bash
-scripts/release_web_s3.sh
-```
-
-For a CI-driven publish, create and push a tag that matches the project's workflow:
-
-```bash
-git tag web-v<version>
-git push
-git push origin web-v<version>
-```
-
-Keep `pubspec.yaml` version, `RELEASE_ID`, and the tag version aligned unless the project intentionally separates app version from deploy release ID. If a workflow strips `web-v` and passes the rest as `RELEASE_ID`, verify that behavior before tagging.
-
-### 6. Promote An Existing Release
-
-Promote without rebuilding only when the immutable release already exists in object storage:
-
-```bash
-scripts/release_web_s3.sh --promote-only <release-id>
-```
-
-Use `--dry-run` first when changing prefixes or provider configuration:
-
-```bash
-scripts/release_web_s3.sh --promote-only <release-id> --dry-run
-```
-
-Promotion copies an immutable release prefix to the live prefix. Use it for rollback or staged promotion, and confirm the release ID and prefixes before running without `--dry-run`.
+**Fix**: `release_web_s3.py` explicitly excludes `releases/**` during live sync and live refresh operations. The script also warns when it detects nested prefix configuration.
 
 ## Resources
 
 ### scripts/
 
-- `prepare_web_release.py`: inspect commits since the latest `web-v*` tag, suggest a SemVer version, generate `web-v<version>`, draft release notes, and optionally update `pubspec.yaml`.
-- `release_web_s3.sh`: reusable project script template for building Flutter Web, writing `version.json`, syncing an immutable release prefix, refreshing live assets, and promoting an existing release.
-- `references/awscli-setup.md`: local setup guide for installing AWS CLI, obtaining `ak/sk`, creating a named profile, and using that profile with `release_web_s3.sh`.
+- `release_web_s3.py`: main release entry point; handles versioning, validation, upload, publish, and promote
+- `prepare_web_release.py`: inspect commits since the latest `web-v*` tag, suggest a SemVer version, generate `web-v<version>`, draft release notes, and optionally update `pubspec.yaml`
+- `references/awscli-setup.md`: local setup guide for installing AWS CLI, obtaining `ak/sk`, creating a named profile, and using that profile with `release_web_s3.py`
