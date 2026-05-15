@@ -83,7 +83,19 @@ The script must:
 
 If a matching branch has no active worktree, treat it as clean because Git cannot hold uncommitted state for that branch without a checked-out worktree.
 
-When aborting, clearly report which branch and which worktree path is dirty, and tell the user to整理 or commit/stash those changes before retrying.
+When a matching branch is dirty, handle it based on the user's wording:
+
+- If the user explicitly requested "提交并合并分支 xxx", do not stop at dirty-check failure. First perform a commit flow for the dirty branch worktree, then re-run the dirty-check and continue to merge.
+- If the user only requested "合并分支 xxx" (without "提交"), stop and ask whether to commit first (or otherwise stash/clean) before merging.
+
+When stopping, clearly report which branch and which worktree path is dirty.
+
+Commit flow requirements when the user requested "提交并合并":
+
+- stage changes in the dirty branch worktree (tracked and untracked) with `git add -A`
+- create a commit with a concise message aligned to the branch purpose (or user-provided message)
+- after commit, re-run `scripts/merge_branch_into_current.sh [source-branch] [target-branch]` to ensure both branches are clean before merge
+- if commit fails (for example, nothing to commit or hook failure), stop and report the exact reason
 
 ### 4. Merge
 
