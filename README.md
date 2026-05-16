@@ -34,7 +34,7 @@ pnpm dlx skills add vercel-labs/agent-skills
 pnpm dlx skills add pasky/chrome-cdp-skill
 ```
 
-### 其他
+### 视频制作
 ```bash
 pnpm dlx skills add remotion-dev/skills
 ```
