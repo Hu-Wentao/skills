@@ -41,6 +41,7 @@ from typing import NoReturn
 SKILL_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = SKILL_DIR / "scripts"
 PREPARE_SCRIPT = SCRIPTS_DIR / "prepare_web_release.py"
+FINGERPRINT_SCRIPT = SCRIPTS_DIR / "fingerprint_web_build.py"
 
 VERSION_RE = re.compile(
     r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
@@ -70,6 +71,7 @@ STATIC_PATTERNS = [
 WEB_BUILD_DEFAULTS: dict[str, str] = {
     "BUILD_WEB_DIR": "build/web",
     "BUILD_WASM": "0",
+    "FINGERPRINT_WEB_BUILD": "1",
     "PWA_STRATEGY": "none",
     "BASE_HREF": "/",
     "FLUTTER_WEB_RENDERER": "",
@@ -306,6 +308,10 @@ def configure_web_build_interactive(project_root: Path, current: dict[str, str])
     result["BASE_HREF"] = _ask("Base href", current.get("BASE_HREF", "/"))
     result["PWA_STRATEGY"] = _ask("PWA strategy (none / offline-first)", current.get("PWA_STRATEGY", "none"))
     result["BUILD_WASM"] = _ask_bool("Enable WebAssembly (--wasm)", bool_enabled(current.get("BUILD_WASM")))
+    result["FINGERPRINT_WEB_BUILD"] = _ask_bool(
+        "Enable hashed web asset fingerprinting",
+        bool_enabled(current.get("FINGERPRINT_WEB_BUILD", "1")),
+    )
     renderer = current.get("FLUTTER_WEB_RENDERER", "")
     result["FLUTTER_WEB_RENDERER"] = _ask("Web renderer (canvaskit / skwasm / html / auto)", renderer)
     result["SOURCE_MAPS"] = _ask_bool("Generate source maps", bool_enabled(current.get("SOURCE_MAPS")))
@@ -384,6 +390,7 @@ def _print_current_web_config(ctx: Context) -> None:
         f"  Base href:       {ctx.web_env.get('BASE_HREF', '/')}",
         f"  PWA strategy:    {ctx.web_env.get('PWA_STRATEGY', 'none')}",
         f"  WASM:            {'yes' if bool_enabled(ctx.web_env.get('BUILD_WASM')) else 'no'}",
+        f"  Fingerprint:     {'yes' if bool_enabled(ctx.web_env.get('FINGERPRINT_WEB_BUILD')) else 'no'}",
         f"  Renderer:        {ctx.web_env.get('FLUTTER_WEB_RENDERER') or 'default'}",
         f"  Source maps:     {'yes' if bool_enabled(ctx.web_env.get('SOURCE_MAPS')) else 'no'}",
         f"  CSP mode:        {'yes' if bool_enabled(ctx.web_env.get('FLUTTER_WEB_CSP')) else 'no'}",
@@ -447,8 +454,9 @@ def ensure_s3_required(s3_env: dict[str, str]) -> None:
     s3_env.setdefault("S3_LIVE_PREFIX", "web")
     s3_env.setdefault("S3_RELEASE_PREFIX", "web/releases")
     s3_env.setdefault("RELEASE_CACHE_CONTROL", "public,max-age=31536000,immutable")
-    s3_env.setdefault("LIVE_CACHE_CONTROL", "no-cache,max-age=0,must-revalidate")
-    s3_env.setdefault("LIVE_STATIC_CACHE_CONTROL", "public,max-age=86400")
+    s3_env.setdefault("LIVE_CACHE_CONTROL", "no-cache, no-store, must-revalidate")
+    s3_env.setdefault("LIVE_STATIC_CACHE_CONTROL", s3_env["LIVE_CACHE_CONTROL"])
+    s3_env.setdefault("LIVE_HASHED_CACHE_CONTROL", s3_env["RELEASE_CACHE_CONTROL"])
 
 
 def aws_base_args(s3_env: dict[str, str]) -> list[str]:
@@ -523,6 +531,60 @@ def aws_cp_filtered(
     run(args, dry_run=dry_run)
 
 
+def aws_cp_exact_paths(
+    s3_env: dict[str, str],
+    source_root: str | Path,
+    dest_root: str,
+    *,
+    paths: list[str],
+    cache_control: str,
+    source_is_s3: bool,
+    dry_run: bool = False,
+) -> None:
+    if not paths:
+        return
+    for rel in paths:
+        if source_is_s3:
+            source = f"{str(source_root).rstrip('/')}/{rel}"
+        else:
+            source = str(Path(source_root) / rel)
+        dest = f"{dest_root.rstrip('/')}/{rel}"
+        args = aws_base_args(s3_env) + ["s3", "cp", source, dest, "--cache-control", cache_control]
+        if source_is_s3:
+            args += ["--metadata-directive", "REPLACE"]
+        run(args, dry_run=dry_run)
+
+
+def fingerprint_manifest_path(build_dir: Path) -> Path:
+    return build_dir.parent / "web_fingerprint_manifest.json"
+
+
+def fingerprint_web_build(ctx: Context, build_dir: Path) -> dict[str, list[str]] | None:
+    if not bool_enabled(ctx.web_env.get("FINGERPRINT_WEB_BUILD")):
+        log("Web fingerprinting disabled by FINGERPRINT_WEB_BUILD.")
+        return None
+    if ctx.args.dry_run:
+        log(f"[dry-run] Would fingerprint cacheable web assets in {build_dir}")
+        return None
+    if not FINGERPRINT_SCRIPT.exists():
+        fail(f"Missing fingerprint script: {FINGERPRINT_SCRIPT}")
+    manifest_path = fingerprint_manifest_path(build_dir)
+    output = run_capture(
+        [sys.executable, str(FINGERPRINT_SCRIPT), str(build_dir), "--manifest-out", str(manifest_path)],
+        cwd=ctx.project_root,
+    )
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        fail(f"Fingerprint script returned invalid JSON: {exc}\n{output}")
+    log(
+        "Fingerprinting complete: "
+        f"{len(payload.get('hashed_files', []))} hashed files, "
+        f"{len(payload.get('stable_files', []))} stable files."
+    )
+    return payload
+
+
 def publish_to_s3(ctx: Context, *, dry_run: bool, build: bool) -> None:
     build_dir = ctx.project_root / ctx.web_env["BUILD_WEB_DIR"]
     if build:
@@ -530,6 +592,7 @@ def publish_to_s3(ctx: Context, *, dry_run: bool, build: bool) -> None:
     if not build_dir.exists() and not dry_run:
         fail(f"Build output not found: {build_dir}")
     write_version_json(ctx, build_dir)
+    fingerprint = fingerprint_web_build(ctx, build_dir)
 
     bucket = ctx.s3_env["S3_BUCKET"]
     live_uri = s3_uri(bucket, ctx.s3_env["S3_LIVE_PREFIX"])
@@ -537,17 +600,76 @@ def publish_to_s3(ctx: Context, *, dry_run: bool, build: bool) -> None:
 
     aws_sync(ctx.s3_env, str(build_dir), release_uri, cache_control=ctx.s3_env["RELEASE_CACHE_CONTROL"], dry_run=dry_run)
     aws_sync(ctx.s3_env, str(build_dir), live_uri, cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"], excludes=["releases/**"], dry_run=dry_run)
-    aws_cp_filtered(ctx.s3_env, str(build_dir), live_uri, includes=STATIC_PATTERNS, cache_control=ctx.s3_env["LIVE_STATIC_CACHE_CONTROL"], source_is_s3=False, dry_run=dry_run)
-    aws_cp_filtered(ctx.s3_env, str(build_dir), live_uri, includes=ENTRYPOINT_PATTERNS, cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"], source_is_s3=False, dry_run=dry_run)
+    if fingerprint:
+        aws_cp_exact_paths(
+            ctx.s3_env,
+            build_dir,
+            live_uri,
+            paths=fingerprint["stable_files"],
+            cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"],
+            source_is_s3=False,
+            dry_run=dry_run,
+        )
+        aws_cp_exact_paths(
+            ctx.s3_env,
+            build_dir,
+            live_uri,
+            paths=fingerprint["hashed_files"],
+            cache_control=ctx.s3_env["LIVE_HASHED_CACHE_CONTROL"],
+            source_is_s3=False,
+            dry_run=dry_run,
+        )
+    else:
+        aws_cp_filtered(
+            ctx.s3_env,
+            str(build_dir),
+            live_uri,
+            includes=["*"],
+            cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"],
+            source_is_s3=False,
+            dry_run=dry_run,
+        )
 
 
 def promote_release(ctx: Context, release_id: str, *, dry_run: bool) -> None:
     bucket = ctx.s3_env["S3_BUCKET"]
     live_uri = s3_uri(bucket, ctx.s3_env["S3_LIVE_PREFIX"])
     release_uri = s3_uri(bucket, join_prefix(ctx.s3_env["S3_RELEASE_PREFIX"], release_id))
+    build_dir = ctx.project_root / ctx.web_env["BUILD_WEB_DIR"]
+    manifest_path = fingerprint_manifest_path(build_dir)
+    fingerprint = None
+    if manifest_path.exists():
+        fingerprint = json.loads(manifest_path.read_text(encoding="utf-8"))
     aws_sync(ctx.s3_env, release_uri, live_uri, cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"], dry_run=dry_run)
-    aws_cp_filtered(ctx.s3_env, release_uri, live_uri, includes=STATIC_PATTERNS, cache_control=ctx.s3_env["LIVE_STATIC_CACHE_CONTROL"], source_is_s3=True, dry_run=dry_run)
-    aws_cp_filtered(ctx.s3_env, release_uri, live_uri, includes=ENTRYPOINT_PATTERNS, cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"], source_is_s3=True, dry_run=dry_run)
+    if fingerprint:
+        aws_cp_exact_paths(
+            ctx.s3_env,
+            release_uri,
+            live_uri,
+            paths=fingerprint["stable_files"],
+            cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"],
+            source_is_s3=True,
+            dry_run=dry_run,
+        )
+        aws_cp_exact_paths(
+            ctx.s3_env,
+            release_uri,
+            live_uri,
+            paths=fingerprint["hashed_files"],
+            cache_control=ctx.s3_env["LIVE_HASHED_CACHE_CONTROL"],
+            source_is_s3=True,
+            dry_run=dry_run,
+        )
+    else:
+        aws_cp_filtered(
+            ctx.s3_env,
+            release_uri,
+            live_uri,
+            includes=["*"],
+            cache_control=ctx.s3_env["LIVE_CACHE_CONTROL"],
+            source_is_s3=True,
+            dry_run=dry_run,
+        )
 
 
 # ---------------------------------------------------------------------------

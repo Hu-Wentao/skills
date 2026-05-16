@@ -18,10 +18,11 @@ Default assumptions:
 - Local deploy config: `deploy/s3.env`, ignored by git
 - Default tag pattern: `web-v<pubspec version>`
 - Package manager/runtime preference: `uv` for Python helpers, `fvm` when the project uses FVM
+- Fingerprinted live deploys are enabled by default via `FINGERPRINT_WEB_BUILD=1`
 
 Adapt these defaults to the target project before publishing. Do not assume the project has Slang, a specific GitHub Actions workflow, or a specific object storage provider.
 
-Do not print secret values from `deploy/s3.env` or GitHub secrets. Any compatibility switch such as `BUILD_WASM`, `S3_ADDRESSING_STYLE`, `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION`, or `ALLOW_DIRTY` must be explicitly called out before use because these can hide provider or runtime differences.
+Do not print secret values from `deploy/s3.env` or GitHub secrets. Any compatibility switch such as `BUILD_WASM`, `FINGERPRINT_WEB_BUILD`, `S3_ADDRESSING_STYLE`, `AWS_REQUEST_CHECKSUM_CALCULATION`, `AWS_RESPONSE_CHECKSUM_VALIDATION`, or `ALLOW_DIRTY` must be explicitly called out before use because these can hide provider or runtime differences.
 
 ## Main Usage
 
@@ -69,6 +70,7 @@ The script handles the whole fixed flow automatically:
 4. **Publish**
    - build Flutter Web
    - write `build/web/version.json`
+   - fingerprint cacheable build artifacts when enabled
    - upload immutable release assets
    - refresh live assets
    - create and optionally push a git tag
@@ -109,9 +111,72 @@ Optional project configuration:
 - `PWA_STRATEGY`: passed to `flutter build web --pwa-strategy`
 - `BUILD_WEB_DIR`: override when the web output is not `build/web`
 - `BUILD_WASM=1`: add `--wasm`, only after browser/runtime compatibility is verified
+- `FINGERPRINT_WEB_BUILD=1`: rewrite cacheable web artifacts to content-hashed paths and emit `build/web_fingerprint_manifest.json`
 - `FLUTTER_CMD`, `DART_CMD`: override command discovery for non-standard projects
 - `PRE_BUILD_CMD`, `BUILD_RUNNER_CMD`, `SLANG_CMD`, `TEST_CMD`: override build/test/codegen commands
-- `RELEASE_CACHE_CONTROL`, `LIVE_CACHE_CONTROL`, `LIVE_STATIC_CACHE_CONTROL`: customize cache headers for uploaded assets
+- `RELEASE_CACHE_CONTROL`, `LIVE_CACHE_CONTROL`, `LIVE_STATIC_CACHE_CONTROL`, `LIVE_HASHED_CACHE_CONTROL`: customize cache headers for uploaded assets
+
+### Fingerprint Mode
+
+When `FINGERPRINT_WEB_BUILD=1`, the skill fingerprints cacheable build artifacts and rewrites references across the Flutter Web output so the live prefix can safely serve:
+
+- stable entrypoints with short cache
+- hashed assets with long immutable cache
+
+Current stable entrypoints:
+
+- `index.html`
+- `flutter.js`
+- `flutter_service_worker.js`
+- `assets/AssetManifest.bin`
+- `assets/NOTICES`
+
+Current hashed targets include:
+
+- `flutter_bootstrap.js`
+- `manifest.json`
+- `favicon.png`
+- `version.json`
+- `main.dart.js`
+- `main.dart.mjs`
+- `main.dart.wasm`
+- `icons/**`
+- `assets/**` except the stable files listed above
+- `canvaskit/**` as one hashed directory prefix
+
+The fingerprint pass also emits `build/web_fingerprint_manifest.json`. The release script uses this manifest to split live uploads into:
+
+- `LIVE_CACHE_CONTROL` for stable files
+- `LIVE_HASHED_CACHE_CONTROL` for hashed files
+
+Recommended live cache policy when fingerprinting is enabled:
+
+```dotenv
+LIVE_CACHE_CONTROL=no-cache, no-store, must-revalidate
+LIVE_HASHED_CACHE_CONTROL=public,max-age=31536000,immutable
+```
+
+### Supported Flutter Output Assumptions
+
+The fingerprint helper is intentionally coupled to current Flutter Web build structure. Before sharing this skill across projects, assume it needs review whenever Flutter changes its web output conventions.
+
+This skill currently expects all of the following to exist in `build/web` after `flutter build web`:
+
+- `index.html`
+- `flutter_bootstrap.js`
+- `main.dart.js`
+- `main.dart.mjs`
+- `main.dart.wasm`
+- `manifest.json`
+- `assets/AssetManifest.bin.json`
+- `assets/FontManifest.json`
+- `canvaskit/`
+
+If a target project uses a different Flutter version or custom post-processing that changes these filenames or removes these files, re-verify the skill before reuse.
+
+### Project-Specific App Code
+
+This skill does not inject application-level migration logic into shared projects. If a project needs one-time cleanup for old service workers or legacy browser caches, keep that logic in the project repo, not in the shared skill.
 
 ## Version Helper
 
@@ -136,10 +201,32 @@ When `S3_RELEASE_PREFIX` is a child path of `S3_LIVE_PREFIX` (for example `LIVE_
 
 **Fix**: `release_web_s3.py` explicitly excludes `releases/**` during live sync and live refresh operations. The script also warns when it detects nested prefix configuration.
 
+### Flutter Web Output Drift
+
+The fingerprint helper rewrites generated Flutter artifacts, not source templates. A Flutter SDK upgrade can change:
+
+- bootstrap structure
+- runtime asset lookup paths
+- manifest formats
+- canvaskit/skwasm layout
+
+After upgrading Flutter in any project that uses this skill, rebuild once and run the fingerprint verifier before publishing.
+
+## Verification
+
+For a shared-skill smoke test after `flutter build web`, run:
+
+```bash
+uv run python .agents/skills/release-flutter-web-s3/scripts/fingerprint_web_build.py build/web --manifest-out build/web_fingerprint_manifest.json
+uv run python .agents/skills/release-flutter-web-s3/scripts/verify_fingerprint_web_build.py build/web --manifest build/web_fingerprint_manifest.json
+```
+
 ## Resources
 
 ### scripts/
 
 - `release_web_s3.py`: main release entry point; handles versioning, validation, upload, publish, and promote
+- `fingerprint_web_build.py`: fingerprint cacheable Flutter Web output files and rewrite internal references
+- `verify_fingerprint_web_build.py`: verify that a fingerprinted Flutter Web build is internally consistent
 - `prepare_web_release.py`: inspect commits since the latest `web-v*` tag, suggest a SemVer version, generate `web-v<version>`, draft release notes, and optionally update `pubspec.yaml`
 - `references/awscli-setup.md`: local setup guide for installing AWS CLI, obtaining `ak/sk`, creating a named profile, and using that profile with `release_web_s3.py`
