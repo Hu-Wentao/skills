@@ -8,7 +8,6 @@ description: Create a Dart-based macOS background activity process managed by la
 ## Workflow
 
 1. Check repo and environment first.
-   - Run `git status --short` in the target repo and follow its change-safety policy before editing files.
    - If the repo uses FVM, run Dart and Flutter commands through `fvm`.
    - Prefer a checked-in executable entrypoint path such as `daemon/bin/<service_name>` or `bin/<service_name>`.
 
