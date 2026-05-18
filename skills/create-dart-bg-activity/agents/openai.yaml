@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Dart Background Activity"
+  short_description: "Create a Dart LaunchAgent with a real executable entrypoint for macOS background activity"
+  default_prompt: "Use $create-dart-background-activity-process to create or fix a Dart-based macOS background activity process managed by launchd, including the Dart entrypoint, executable launcher, and LaunchAgent plist."
