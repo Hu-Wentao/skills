@@ -39,6 +39,12 @@ pnpm dlx skills add pasky/chrome-cdp-skill
 pnpm dlx skills add remotion-dev/skills
 ```
 
+### Flutter
+E2E测试 https://ai-dashboad.github.io/flutter-skill/
+```bash
+pnpm install -g flutter-skill
+```
+
 ## 常用Skills资源
 - https://github.com/anthropics/skills
 - https://github.com/vercel-labs/agent-skills
