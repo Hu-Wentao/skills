@@ -5,7 +5,7 @@
 > 通过 pnpm dlx 临时使用 vercel agent-skills 安装本仓库技能
 
 ```bash
-pnpm dlx skills add Hu-Wentao/wyatt_skills
+npx skills add Hu-Wentao/wyatt_skills
 ```
 
 > 通过 pnpm 安装 vercel agent-skills 后, 安装本仓库技能
@@ -22,27 +22,32 @@ skills add Hu-Wentao/wyatt_skills
 
 ### openai/anthropics/flutter
 ```bash
-pnpm dlx skills add openai/skills
-pnpm dlx skills add anthropics/skills
+npx skills add openai/skills
+npx skills add anthropics/skills
 
-pnpm dlx skills add flutter/skills
+npx skills add flutter/skills
 ```
 
 ### Web & 浏览器
 ```bash
-pnpm dlx skills add vercel-labs/agent-skills
-pnpm dlx skills add pasky/chrome-cdp-skill
+npx skills add vercel-labs/agent-skills
+npx skills add pasky/chrome-cdp-skill
 ```
 
 ### 视频制作
 ```bash
-pnpm dlx skills add remotion-dev/skills
+npx skills add remotion-dev/skills
 ```
 
 ### Flutter
 E2E测试 https://ai-dashboad.github.io/flutter-skill/
 ```bash
 pnpm install -g flutter-skill
+```
+
+flowr-mvvm
+```bash
+npx skills add Hu-Wentao/flowr
 ```
 
 ## 常用Skills资源
