@@ -1,0 +1,4 @@
+interface:
+  display_name: "Edit Streamlit"
+  short_description: "Build & repair Streamlit apps"
+  default_prompt: "Use $streamlit to fix a Streamlit UI state or widget issue."
