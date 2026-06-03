@@ -1,6 +1,6 @@
 ---
 name: merge-branch-into-current
-description: Merge a specified branch into the current branch with a merge commit. Use this when the user wants to merge one branch into the current branch, or when Codex should auto-detect the source branch that has commits after the current branch. The skill checks whether the source branch and target branch have uncommitted work in any active git worktree and aborts if either branch is dirty.
+description: Merge a specified branch into the current branch with a merge commit. Use this when the user wants to merge one branch into the current branch, or when Codex should auto-detect the source branch that has commits after the current branch. The skill checks whether the source branch and target branch have uncommitted work in any active git worktree, and resolves merge conflicts autonomously by default.
 ---
 
 # Merge Branch Into Current
@@ -15,6 +15,7 @@ Default behavior:
 - Source branch: the branch explicitly provided by the user
 - Merge strategy: `git merge --no-ff`
 - Dirty-check scope: the current worktree plus any active worktree that is currently checked out on the source or target branch
+- Conflict handling: resolve merge conflicts autonomously unless the user explicitly wants to review them first or the repository context is insufficient to choose a safe resolution
 
 Do not use squash merge or rebase unless the user explicitly overrides the request.
 
@@ -109,9 +110,13 @@ This preserves a merge commit even when fast-forward would be possible.
 
 If merge conflicts occur:
 
-- stop immediately
-- report the conflicted files from `git status --short`
-- do not auto-resolve unless the user asks
+- do not ask the user for permission by default
+- report the conflicted files from `git status --short` and `git diff --name-only --diff-filter=U`
+- inspect the conflicting hunks, preserve user changes already present in the worktree, and integrate both branches when the intended result is clear from repository context
+- avoid blind `ours` / `theirs` resolution unless the user explicitly requested that policy or the repository already enforces it for the affected files
+- run targeted validation when feasible after resolving the files
+- stage the resolved files and finish the merge with `git commit --no-edit` or `git merge --continue`
+- only stop and ask the user when multiple plausible semantic resolutions remain and the repository does not provide enough evidence to choose safely
 
 ### 5. Report result
 
@@ -125,4 +130,4 @@ On success, report:
 
 ### scripts/
 
-- `merge_branch_into_current.sh`: resolves branches when possible, checks worktree cleanliness for the source and target branches, and runs `git merge --no-ff`.
+- `merge_branch_into_current.sh`: resolves branches when possible, checks worktree cleanliness for the source and target branches, runs `git merge --no-ff`, and reports conflicts so the caller can continue autonomous resolution.

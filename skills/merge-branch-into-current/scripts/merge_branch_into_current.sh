@@ -133,6 +133,17 @@ check_branch_cleanliness() {
   fi
 }
 
+list_conflicted_files() {
+  git diff --name-only --diff-filter=U
+}
+
+has_conflicted_files() {
+  local conflicted_files
+
+  conflicted_files="$(list_conflicted_files)"
+  [[ -n "$conflicted_files" ]]
+}
+
 run_merge() {
   if git merge --no-ff "$source_branch"; then
     echo "Merge completed successfully."
@@ -144,7 +155,14 @@ run_merge() {
 
   echo "Merge failed. Current git status:" >&2
   git status --short >&2 || true
-  die "Resolve merge conflicts manually before continuing."
+
+  if has_conflicted_files; then
+    echo "Conflicted files:" >&2
+    list_conflicted_files >&2 || true
+    die "The merge is paused with conflicts. Resolve them in this worktree, stage the files, and finish with 'git commit --no-edit' or 'git merge --continue'."
+  fi
+
+  die "git merge --no-ff '${source_branch}' failed without leaving conflicted files."
 }
 
 main() {
