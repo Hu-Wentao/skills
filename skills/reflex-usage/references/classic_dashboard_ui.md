@@ -1,5 +1,12 @@
 # Classic Dashboard UI
 
+## Template Defaults
+
+- Default to `reflex init --template dashboard` when the user wants a layout similar to  navigation plus content area. This is the preferred starting point for dashboards with charts, tables, KPIs, or other data-visualization-heavy views.
+- Use `reflex init --template customer_data_app` when the main job is CRUD, record management, approvals, or admin backoffice flows.
+- Use `reflex init --template api_admin_panel` when the app is primarily an internal tool, API console, task runner, or operations panel.
+- Do not omit `--template` unless the user explicitly asks for a blank or custom-from-scratch Reflex app.
+
 ## Local Anchors
 
 - Inspect `web/relay_user_portal/relay_user_portal.py` for the concrete Reflex implementation used in this repo.
@@ -36,11 +43,12 @@ rg -n "def tone_palette|class TonePalette" src/lm_web/portal.py
 
 ## Composition Recipe
 
-1. Define shared style dictionaries before defining page components. Keep inputs, textareas, and code blocks consistent across the page.
-2. Define repeated primitives such as metric cards, summary cards, code blocks, or result blocks before composing the main panels.
-3. Build the sidebar as its own component. Put navigation and account identity there instead of duplicating that information inside the content panel.
-4. Build the content panel from top to bottom: badge and main action row, section label, title, explanatory copy, alerts, metrics, secondary blocks.
-5. Assemble the final page shell last. Keep the outer wrapper responsible only for background, padding, and the two-column layout.
+1. Start from the right Reflex template if the app is new. The default in this skill is `reflex init --template dashboard`.
+2. Define shared style dictionaries before defining page components. Keep inputs, textareas, and code blocks consistent across the page.
+3. Define repeated primitives such as metric cards, summary cards, code blocks, or result blocks before composing the main panels.
+4. Build the sidebar as its own component. Put navigation and account identity there instead of duplicating that information inside the content panel.
+5. Build the content panel from top to bottom: badge and main action row, section label, title, explanatory copy, alerts, metrics, secondary blocks.
+6. Assemble the final page shell last. Keep the outer wrapper responsible only for background, padding, and the two-column layout.
 
 ## Responsive Rules
 

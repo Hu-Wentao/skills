@@ -5,8 +5,10 @@ description: >
   operations consoles, and classic sidebar-plus-content management UIs. Use when
   editing `.py` files that import `reflex as rx`, creating metric cards, left
   navigation sidebars, status panels, action forms, code or result blocks, or
-  responsive dashboard pages, especially when the UI should match the established
-  style in `web/relay_user_portal/relay_user_portal.py`.
+  responsive dashboard pages. When bootstrapping a new Reflex app, prefer
+  `reflex init --template dashboard` by default, and switch to
+  `customer_data_app` or `api_admin_panel` only when the product shape matches
+  those templates more closely.
 ---
 
 # Reflex Usage
@@ -16,11 +18,12 @@ Build admin pages the way this repo already does: stable information hierarchy f
 ## Workflow
 
 1. Confirm that the target is an internal tool, admin page, or operator dashboard. Prefer this skill over a marketing-style layout.
-2. Read [references/classic_dashboard_ui.md](references/classic_dashboard_ui.md) before composing new UI. Open `web/relay_user_portal/relay_user_portal.py` if exact local examples are needed.
-3. Extract or reuse module-level style tokens first. Prefer shared dicts and helper components over repeated inline styling.
-4. Compose the page in four layers: background, sidebar, main panel, repeated section primitives.
-5. Drive status styling from state. Prefer palette-backed state fields for status badges, borders, and panel backgrounds.
-6. Validate desktop and narrow widths. Preserve readable grids with `repeat(auto-fit, minmax(...))`, `flex_wrap="wrap"`, and a sidebar capped at `max_width="320px"`.
+2. If you are creating a new Reflex app or first-pass shell, initialize from a template instead of a blank app. Default to `reflex init --template dashboard` for sidebar-plus-content dashboards; use `reflex init --template customer_data_app` for CRUD or admin backoffice flows; use `reflex init --template api_admin_panel` for internal tools, API consoles, or task-management surfaces.
+3. Read [references/classic_dashboard_ui.md](references/classic_dashboard_ui.md) before composing new UI. Open `web/relay_user_portal/relay_user_portal.py` if exact local examples are needed.
+4. Extract or reuse module-level style tokens first. Prefer shared dicts and helper components over repeated inline styling.
+5. Compose the page in four layers: background, sidebar, main panel, repeated section primitives.
+6. Drive status styling from state. Prefer palette-backed state fields for status badges, borders, and panel backgrounds.
+7. Validate desktop and narrow widths. Preserve readable grids with `repeat(auto-fit, minmax(...))`, `flex_wrap="wrap"`, and a sidebar capped at `max_width="320px"`.
 
 ## Layout Rules
 
@@ -40,6 +43,7 @@ Build admin pages the way this repo already does: stable information hierarchy f
 
 ## Implementation Notes
 
+- When suggesting project setup commands, always include an explicit `--template` unless the user asks to start from a blank Reflex app. The default recommendation in this skill is `reflex init --template dashboard`.
 - Prefer `rx.box`, `rx.text`, `rx.heading`, `rx.button`, `rx.link`, `rx.el.pre`, and simple CSS props for predictable admin layouts.
 - Prefer explicit style props over deeply nested theme abstractions when the page is custom and self-contained.
 - Keep typography hierarchy obvious: small uppercase section label, medium title, short explanatory copy, then actionable controls or metrics.
@@ -56,4 +60,4 @@ Build admin pages the way this repo already does: stable information hierarchy f
 
 ## Reference
 
-Load [references/classic_dashboard_ui.md](references/classic_dashboard_ui.md) when exact component anchors, sizing cues, or a copyable page skeleton are needed.
+Load [references/classic_dashboard_ui.md](references/classic_dashboard_ui.md) when you need the template selection guide, exact component anchors, sizing cues, or a copyable page skeleton.
