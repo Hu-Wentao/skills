@@ -1,4 +1,6 @@
 ## 介绍
+[![skills.sh](https://skills.sh/b/Hu-Wentao/wyatt_skills)](https://skills.sh/Hu-Wentao/wyatt_skills)
+
 个人skill集合
 
 ## 安装
@@ -54,4 +56,3 @@ npx skills add Hu-Wentao/flowr
 - https://github.com/anthropics/skills
 - https://github.com/vercel-labs/agent-skills
 - https://vercel.com/docs/agent-resources/skills
-
