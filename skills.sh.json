@@ -1,0 +1,40 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Flutter & Dart",
+      "description": "Skills for Flutter, Dart tooling, localization, and deployment workflows.",
+      "skills": [
+        "clear-flutter-env",
+        "create-dart-bg-activity",
+        "flutter-slang-i18n",
+        "release-dart-package-action",
+        "release-flutter-web-s3"
+      ]
+    },
+    {
+      "title": "Git Workflows",
+      "description": "Skills for worktree-based development and controlled branch merging.",
+      "skills": [
+        "git-worktree",
+        "merge-branch-into-current"
+      ]
+    },
+    {
+      "title": "Python UI",
+      "description": "Skills for building and refining Python-based application interfaces.",
+      "skills": [
+        "edit-streamlit",
+        "reflex-usage"
+      ]
+    },
+    {
+      "title": "Maintenance",
+      "description": "Repository-specific maintenance and update helpers.",
+      "skills": [
+        "update-wyatt-skills"
+      ]
+    }
+  ]
+}
