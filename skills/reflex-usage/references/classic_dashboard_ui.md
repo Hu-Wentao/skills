@@ -10,6 +10,7 @@
 ## Local Anchors
 
 - Inspect `web/relay_user_portal/relay_user_portal.py` for the concrete Reflex implementation used in this repo.
+- Load `references/reflex_admin_nav_shell.md` when the task is specifically about a reusable sidebar, drawer trigger, top navbar, or nav shell rather than the full dashboard body.
 - Search with:
 
 ```bash

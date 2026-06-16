@@ -1,4 +1,4 @@
 interface:
   display_name: "Reflex 用法"
-  short_description: "用 Reflex 模板快速起步经典管理后台与 dashboard UI"
-  default_prompt: "Use $reflex-usage to build or refine a Reflex admin dashboard. When bootstrapping a new app, default to `reflex init --template dashboard` unless `customer_data_app` or `api_admin_panel` is a better fit."
+  short_description: "用 Reflex 模板快速起步 dashboard 与导航壳 UI"
+  default_prompt: "Use $reflex-usage to build or refine a Reflex admin dashboard or navigation shell. When bootstrapping a new app, default to `reflex init --template dashboard` unless `customer_data_app` or `api_admin_panel` is a better fit."
