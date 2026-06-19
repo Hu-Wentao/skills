@@ -3,6 +3,13 @@
   "notGrouped": "bottom",
   "groupings": [
     {
+      "title": "Architecture & Design",
+      "description": "Skills for turning architecture discussions into concise implementation-ready design docs.",
+      "skills": [
+        "architecture-doc-design"
+      ]
+    },
+    {
       "title": "Flutter & Dart",
       "description": "Skills for Flutter, Dart tooling, localization, and deployment workflows.",
       "skills": [
