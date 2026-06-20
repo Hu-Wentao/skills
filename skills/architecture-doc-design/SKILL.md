@@ -112,7 +112,7 @@ When documenting project scripts:
 
 When documenting project versioning:
 
-- Use semantic versioning in `MAJOR.MINOR.PATCH` form.
+- Use SemVer in `MAJOR.MINOR.PATCH` form.
 - Use `0.0.1` as the initial project version.
 - Treat major version `0` as unreleased.
 - For unreleased projects, do not add compatibility configuration by default; replace old configuration with the new configuration.
