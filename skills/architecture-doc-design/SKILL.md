@@ -100,6 +100,14 @@ rg -n "\\[L0\\]|\\[L3\\]|\\[L6\\]|\\[L9\\]" docs/
 wc -l docs/**/*.md
 ```
 
+## Project Script Rules
+
+When documenting project scripts:
+
+- Place all project scripts under the repository root `scripts/` directory.
+- Name development runtime scripts as `dev-<module-name>.sh`.
+- Name production runtime scripts and other operational scripts with the `run-` prefix.
+
 ## Implementation Prompt
 
 When the design is ready, create `implementation-prompt.md` containing:
@@ -107,6 +115,7 @@ When the design is ready, create `implementation-prompt.md` containing:
 - Required docs to read first.
 - Review-level rules.
 - Directory layout.
+- Project script rules.
 - Non-negotiable boundaries.
 - Storage/config/deployment constraints.
 - Minimal APIs.
