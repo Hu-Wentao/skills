@@ -108,6 +108,16 @@ When documenting project scripts:
 - Name development runtime scripts as `dev-<module-name>.sh`.
 - Name production runtime scripts and other operational scripts with the `run-` prefix.
 
+## Versioning And Compatibility Rules
+
+When documenting project versioning:
+
+- Use semantic versioning in `MAJOR.MINOR.PATCH` form.
+- Use `0.0.1` as the initial project version.
+- Treat major version `0` as unreleased.
+- For unreleased projects, do not add compatibility configuration by default; replace old configuration with the new configuration.
+- Still list all breaking changes and compatibility/configuration decisions after every change.
+
 ## Implementation Prompt
 
 When the design is ready, create `implementation-prompt.md` containing:
@@ -116,6 +126,7 @@ When the design is ready, create `implementation-prompt.md` containing:
 - Review-level rules.
 - Directory layout.
 - Project script rules.
+- Versioning and compatibility rules.
 - Non-negotiable boundaries.
 - Storage/config/deployment constraints.
 - Minimal APIs.
