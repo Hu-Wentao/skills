@@ -3,10 +3,10 @@
   "notGrouped": "bottom",
   "groupings": [
     {
-      "title": "Architecture & Design",
-      "description": "Skills for turning architecture discussions into concise implementation-ready design docs.",
+      "title": "Project Design",
+      "description": "Skills for bootstrapping project design, architecture docs, and scaffolding conventions.",
       "skills": [
-        "architecture-doc-design"
+        "project-design-bootstrap"
       ]
     },
     {

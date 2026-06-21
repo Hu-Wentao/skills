@@ -1,4 +1,0 @@
-interface:
-  display_name: "Architecture Doc Design"
-  short_description: "Turn architecture discussions into executable docs"
-  default_prompt: "Use $architecture-doc-design to turn this architecture discussion into concise implementation-ready design docs."

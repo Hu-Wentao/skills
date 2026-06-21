@@ -8,7 +8,6 @@ Use these details when creating, simplifying, or maintaining implementation-read
 - Document Shape
 - Writing Rules
 - Boundary Design Pattern
-- Project Script Rules
 - Versioning And Compatibility Rules
 - Implementation Prompt
 - Consistency Checks
@@ -80,21 +79,6 @@ worker may fetch data but must persist market data through data-srv ingest API
 UI must read job state through worker API, not worker SQLite
 ```
 
-## Project Script Rules
-
-When documenting project scripts:
-
-- Place all project scripts under the repository root `scripts/` directory.
-- Name development runtime entry scripts as `dev-<module-name>.sh`.
-- Keep `dev-*` scripts as thin entrypoints that select the module/profile and delegate to a shared script or library.
-- Put cross-module behavior in the shared script: dependency profiles, environment defaults, build/no-build decisions, and startup flags.
-- For dev scripts that start a module plus dependencies, document the module as the target and the other modules as dependencies.
-- If dependency containers are already running, the shared script should prefer starting without `--build`; if required dependencies are not running, it should build and start them.
-- Name release/production runtime scripts and other operational scripts with the `run-` prefix.
-- Treat `run-*` scripts as release-mode runs unless the repo explicitly defines another convention; after startup, they usually do not hot reload when source files change.
-
-Example: `scripts/dev-lab.sh` delegates to a shared compose runner with target `lab`. The shared runner knows `data-srv` and `worker` are dependencies; when both dependency containers are running, it starts `lab` without `--build`, otherwise it builds and starts the required profile set.
-
 ## Versioning And Compatibility Rules
 
 When documenting project versioning:
@@ -112,7 +96,7 @@ When the design is ready, create `implementation-prompt.md` containing:
 - Required docs to read first.
 - Review-level rules.
 - Directory layout.
-- Project script rules.
+- Project scaffolding and script rules.
 - Versioning and compatibility rules.
 - Non-negotiable boundaries.
 - Storage/config/deployment constraints.
