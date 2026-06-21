@@ -86,7 +86,12 @@ When documenting project scripts:
 
 - Place all project scripts under the repository root `scripts/` directory.
 - Name development runtime scripts as `dev-<module-name>.sh`.
-- Name production runtime scripts and other operational scripts with the `run-` prefix.
+- Use `dev-*` scripts to run modules in development mode with source hot reload.
+- Do not make `dev-*` scripts thin wrappers around `run-*` scripts.
+- Name release/production runtime scripts and other operational scripts with the `run-` prefix.
+- Treat `run-*` scripts as release-mode runs; after startup, they do not hot reload when source files change.
+
+Example: in a Next.js project, `scripts/dev-admin.sh` runs the `admin` module in development mode so source changes hot reload. `scripts/run-admin.sh` runs the `admin` module in release mode and does not hot reload on source changes.
 
 ## Versioning And Compatibility Rules
 
