@@ -1,16 +1,16 @@
 ## 介绍
 [![skills.sh](https://skills.sh/b/Hu-Wentao/wyatt_skills)](https://skills.sh/Hu-Wentao/wyatt_skills)
 
-个人skill集合
+常用skill集合
 
 ## 安装
-> 通过 pnpm dlx 临时使用 vercel agent-skills 安装本仓库技能
+> 方式1. 通过 pnpm dlx 临时使用 vercel agent-skills 安装本仓库技能
 
 ```bash
 npx skills add Hu-Wentao/wyatt_skills
 ```
 
-> 通过 pnpm 安装 vercel agent-skills 后, 安装本仓库技能
+> 方式2. 通过 pnpm 安装 vercel agent-skills 后, 安装本仓库技能
 ```bash
 # 全局安装 skills
 pnpm add -g skills
