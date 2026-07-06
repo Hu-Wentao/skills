@@ -36,6 +36,11 @@ npx skills add vercel-labs/agent-skills
 npx skills add pasky/chrome-cdp-skill
 ```
 
+### 幻灯片制作
+```bash
+npx skills add slidevjs/slidev
+```
+
 ### 视频制作
 ```bash
 npx skills add remotion-dev/skills
