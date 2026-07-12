@@ -111,11 +111,16 @@ The detail refers to REQ-2.
             fenced_profile = self.document(
                 root, "```md\n" + profile() + "```\n\n## REQ-1: No active profile\n"
             )
-            missing = self.run_cli(
-                root, "query", str(fenced_profile), "--id", "REQ-1", expected=3
-            )
+            before = fenced_profile.read_bytes()
+            missing = self.run_cli(root, "query", str(fenced_profile), "--id", "REQ-1")
+            self.assertEqual(missing["status"], "matched")
+            self.assertEqual(fenced_profile.read_bytes(), before)
             self.assertIn(
                 "profile_missing", {item["code"] for item in missing["diagnostics"]}
+            )
+            self.assertIn(
+                "temporary_selectors_inferred",
+                {item["code"] for item in missing["diagnostics"]},
             )
 
             active = profile(fields="  body:\n    source: body")
@@ -523,6 +528,386 @@ tolerance: {incomplete: true}
             self.assertIn(
                 "unclosed_fence", {item["code"] for item in result["diagnostics"]}
             )
+
+    def test_profileless_query_infers_heading_records_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Requirements
+
+## REQ-1: Login
+
+- 状态：draft
+- 详情：Support passkeys.
+
+## REQ-2: Billing
+
+- 状态：done
+""",
+            )
+            before = path.read_bytes()
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["line_start"], 3)
+            self.assertEqual(result["records"][0]["line_end"], 7)
+            self.assertGreaterEqual(result["records"][0]["confidence"], 0.6)
+            self.assertLessEqual(result["records"][0]["confidence"], 0.8)
+            self.assertIn("Support passkeys", result["records"][0]["fields"]["body"])
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse((root / ".mdq").exists())
+
+    def test_profileless_query_infers_label_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Requirements
+
+## Login
+
+- 编号：REQ-4
+- 状态：draft
+
+## Billing
+
+- 编号：REQ-5
+""",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-4")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["key"], "REQ-4")
+            self.assertEqual(
+                result["records"][0]["identity_evidence"][0]["source"], "label"
+            )
+
+    def test_profileless_query_keeps_body_mentions_as_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """These notes mention REQ-7 in prose only.
+
+```md
+ID: REQ-7
+```
+""",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-7")
+            self.assertEqual(result["status"], "not_found")
+            self.assertEqual(result["count"], 0)
+            self.assertEqual(len(result["candidates"]), 1)
+            self.assertEqual(result["candidates"][0]["line_start"], 1)
+            self.assertEqual(result["candidates"][0]["confidence"], 0.4)
+
+    def test_profileless_search_returns_inferred_section_and_ignores_code(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Notes
+
+## Authentication
+
+Supports passkeys for sign-in.
+
+## Billing
+
+```text
+passkeys fake match
+```
+Invoices are exported monthly.
+""",
+            )
+            result = self.run_cli(root, "search", str(path), "--text", "passkeys")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["key"], "Authentication")
+            self.assertEqual(result["records"][0]["line_start"], 3)
+
+    def test_profileless_search_uses_line_local_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """Unstructured introduction.
+The deployment target is staging.
+
+```text
+staging in code is inert
+```
+""",
+            )
+            result = self.run_cli(root, "search", str(path), "--text", "staging")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["line_start"], 2)
+            self.assertEqual(result["records"][0]["line_end"], 2)
+            self.assertIn(
+                "line_local_fallback",
+                {item["code"] for item in result["records"][0]["diagnostics"]},
+            )
+
+    def test_profileless_query_accepts_explicit_temporary_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Tickets
+
+### Custom ticket
+
+- Ref: ticket_42
+- Owner: Wyatt
+""",
+            )
+            before = path.read_bytes()
+            result = self.run_cli(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "ticket_42",
+                "--record-level",
+                "3",
+                "--key-label",
+                "Ref",
+                "--key-pattern",
+                r"^(?P<id>ticket_[0-9]+)$",
+                "--key-group",
+                "id",
+            )
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["key"], "ticket_42")
+            self.assertLessEqual(result["records"][0]["confidence"], 0.9)
+            self.assertIn(
+                "temporary_selectors_applied",
+                {item["code"] for item in result["diagnostics"]},
+            )
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_profileless_query_reports_body_identity_candidate_in_section(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Notes
+
+## Authentication
+
+This section refers to REQ-77, but does not declare it as its identity.
+
+## Billing
+
+No reference here.
+""",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-77")
+            self.assertEqual(result["status"], "not_found")
+            self.assertEqual(len(result["candidates"]), 1)
+            self.assertEqual(result["candidates"][0]["key"], "Authentication")
+            self.assertEqual(result["candidates"][0]["confidence"], 0.4)
+            self.assertIn(
+                "body_identity_candidate",
+                {
+                    item["code"]
+                    for item in result["candidates"][0]["diagnostics"]
+                },
+            )
+
+    def test_profileless_invalid_explicit_pattern_does_not_fall_back(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(root, "ID: REQ-1\n")
+            result = self.run_cli(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--key-pattern",
+                "(",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_invalid",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_profileless_explicit_label_supports_line_local_query(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(root, "Ref: ticket_42\nOwner: Wyatt\n")
+            result = self.run_cli(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "ticket_42",
+                "--key-label",
+                "Ref",
+                "--key-pattern",
+                r"^(ticket_[0-9]+)$",
+                "--key-group",
+                "1",
+            )
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["line_start"], 1)
+            self.assertEqual(result["records"][0]["confidence"], 0.7)
+
+    def test_profileless_invalid_declared_yaml_profile_blocks_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                "---\nmdq:\n  records: [broken\n---\n\n## REQ-1: Login\n",
+            )
+            result = self.run_cli(
+                root, "query", str(path), "--id", "REQ-1", expected=3
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_invalid",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_profileless_unrelated_broken_frontmatter_still_queries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                "---\ntitle: [broken\n---\n\n## REQ-1: Login\n",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(result["status"], "matched")
+            self.assertIn(
+                "frontmatter_invalid",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_nested_mdq_text_in_broken_yaml_does_not_block_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                "---\nother:\n  mdq: [broken\n---\n\n## REQ-1: Login\n",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(result["status"], "matched")
+
+    def test_mdq_text_in_broken_json_string_does_not_block_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                '{"title": "mentions mdq: only", broken}\n\n## REQ-1: Login\n',
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(result["status"], "matched")
+
+    def test_invalid_top_level_json_mdq_profile_blocks_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                '{"title": "Requirements", "mdq": [broken}\n\n## REQ-1: Login\n',
+            )
+            result = self.run_cli(
+                root, "query", str(path), "--id", "REQ-1", expected=3
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_invalid",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_profileless_line_local_search_remains_literal_substring(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(root, "Supports passkeys without headings.\n")
+            result = self.run_cli(root, "search", str(path), "--text", "pass")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["line_start"], 1)
+
+    def test_profileless_body_field_excludes_record_heading(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                "Authentication preamble.\n\n# Notes\n\n## Authentication\n\nSupports passkeys.\n",
+            )
+            result = self.run_cli(
+                root,
+                "search",
+                str(path),
+                "--field",
+                "body",
+                "--text",
+                "Authentication",
+            )
+            self.assertEqual(result["status"], "not_found")
+
+    def test_profileless_nested_id_heading_does_not_duplicate_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """# Requirements
+
+## REQ-1: Login
+
+Primary requirement.
+
+### REQ-1 Examples
+
+Nested examples are not another record.
+
+### REQ-1 Diagnostics
+
+Nested diagnostics are not another record either.
+""",
+            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["count"], 1)
+
+    def test_profileless_search_recovers_preamble_outside_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """Important preamble note.
+
+## REQ-1: Login
+
+Requirement body.
+""",
+            )
+            result = self.run_cli(root, "search", str(path), "--text", "preamble")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["line_start"], 1)
+
+    def test_profileless_search_matches_keyless_inferred_section(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """## REQ-1: Login
+
+Login body.
+
+## Refund workflow
+
+- Requirement ID: REQ-2
+
+Partial refunds are supported.
+""",
+            )
+            result = self.run_cli(root, "search", str(path), "--text", "Partial")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["line_start"], 5)
 
 
 if __name__ == "__main__":

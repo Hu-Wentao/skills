@@ -1,19 +1,30 @@
 # MDQ Profile Protocol v1
 
-Use this reference when creating, reviewing, or repairing an `mdq` profile. Keep profiles declarative and small; the Markdown remains the source of truth.
+Use this reference when creating, reviewing, or repairing an `mdq` profile. A profile is optional persistent YAML metadata that makes repeated queries deterministic and reusable; it is not required for a read-only, skill-level query. Keep profiles declarative and small; the Markdown remains the source of truth.
 
 ## Contents
 
-1. Profile placement
-2. Complete example
-3. Profile schema
-4. Record and field extraction
-5. Recovery and confidence
-6. Result and diagnostic contract
-7. Index validity
-8. Compatibility and security
+1. Operating modes and write authority
+2. Profile placement
+3. Complete example
+4. Profile schema
+5. Record and field extraction
+6. Recovery and confidence
+7. Result and diagnostic contract
+8. Index validity
+9. Compatibility and security
 
-## 1. Profile Placement
+## 1. Operating Modes and Write Authority
+
+An `mdq` profile is a persistent query contract and optimization for repeated, deterministic extraction. Its absence does not make a Markdown document unqueryable: `query` and `search` may infer temporary selectors from Markdown structure, generic ID headings, and conservative ID labels. Temporary selectors live only in memory and never modify the Markdown or create a sidecar. Report `temporary_selectors_inferred` or `temporary_selectors_applied` so callers can distinguish this mode from a persisted contract.
+
+For non-generic conventions, callers may provide ephemeral `--record-level`, `--key-label`, `--key-pattern`, and `--key-group` arguments. `--record-level` and `--key-label` are repeatable. Apply the same regex length, group validation, and timeout limits as persistent profiles. When no safe record boundary can be recovered, return line-local evidence with `line_local_fallback`; do not fabricate a larger record.
+
+An ordinary request to find or retrieve specific information is read-only, whether the document has a profile or not. It does not authorize adding or changing a profile, inserting record markers, creating or rebuilding an index, or repairing invalid metadata. Perform those writes only when the user explicitly asks to make or persist the document as queryable, add query metadata or an index, or update or repair an existing query contract.
+
+The profile is data, not a script. It may declare selectors, field mappings, tolerance, versioning, and a document-relative index path. It must never contain executable commands, code, imports, URLs to follow, or dynamic plugin names.
+
+## 2. Profile Placement
 
 Prefer one profile per document.
 
@@ -39,7 +50,7 @@ version: 1
 
 Do not create a second frontmatter block. Do not repair unrelated frontmatter merely to add a profile. A comment profile is active only at byte zero or immediately after recognized complete frontmatter; identical text inside prose or a code example is inert. If valid YAML frontmatter and a comment block both define a profile, reject the document with `profile_conflict`; do not choose a precedence silently. Match the comment sentinel only when `mdq` is followed by a newline, so record markers are never parsed as profiles.
 
-## 2. Complete Example
+## 3. Complete Example
 
 ```yaml
 version: 1
@@ -72,7 +83,7 @@ index: .mdq/requirements.json
 
 For YAML frontmatter, nest this example under `mdq:`. For an HTML comment profile, use it directly.
 
-## 3. Profile Schema
+## 4. Profile Schema
 
 ### Top Level
 
@@ -119,7 +130,7 @@ Each field declares one source:
 
 Use `null` when a declared field is absent, truncated, or cannot be extracted confidently. Preserve a recovered partial value only when the source range proves it exists, and attach a diagnostic.
 
-## 4. Record and Field Extraction
+## 5. Record and Field Extraction
 
 ### Headings
 
@@ -163,12 +174,14 @@ Keep these cases queryable when identity is recoverable:
 
 Do not address a record whose key cannot be recovered. Report its source range as an orphan candidate when possible.
 
-## 5. Recovery and Confidence
+## 6. Recovery and Confidence
 
 Use these confidence bands consistently:
 
 - `1.0`: Declared selector and expected structure agree.
-- `0.8`: Identity is explicit, but heading level or supported field style drifted.
+- `0.9`: Explicit temporary selectors and observed structure agree.
+- `0.8`: Identity is explicit but inferred from generic document structure, or persisted structure drifted in a supported way.
+- `0.7`: A conservative identity label matched but no safe record boundary was available.
 - `0.6`: Tolerant source scanning recovered a declared structure outside the AST baseline.
 - Below `0.6`: Return only as a search candidate, not an exact structured match.
 
@@ -181,7 +194,9 @@ Use recovery layers in order:
 3. Source-line recovery outside known code ranges.
 4. Text-search candidates.
 
-## 6. Result and Diagnostic Contract
+## 7. Result and Diagnostic Contract
+
+The same top-level JSON envelope applies to persisted and temporary queries. For profile-free results, diagnostics identify the temporary selector source, confidence is capped at `0.8` for inferred selectors or `0.9` for explicit selectors, and the default extracted fields are `title` and `body`. Line-local fallback uses `context`. These results are source-located but do not claim the repeatability of a persisted field contract.
 
 Commands emit JSON. A query result should include:
 
@@ -218,11 +233,13 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 - `heading_level_drift`, `fallback_scan_used`
 - `marker_conflict`, `orphan_marker`
 - `index_missing`, `index_stale`, `index_invalid`, `index_verified`
+- `temporary_selectors_inferred`, `temporary_selectors_applied`, `temporary_selectors_unavailable`
+- `temporary_selectors_ignored`, `line_local_fallback`, `body_identity_candidate`
 - `ambiguous_match`, `no_match`
 
 Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, or failed writes.
 
-## 7. Index Validity
+## 8. Index Validity
 
 Store at least:
 
@@ -232,11 +249,11 @@ Store at least:
 - SHA-256 of the normalized profile.
 - Extracted records, fields, confidence, diagnostics, and source ranges.
 
-Canonicalize the parsed profile as UTF-8 JSON with sorted keys and no insignificant whitespace before hashing. Accept an index candidate only when both hashes and all supported schema/engine versions match, then compare its records with a fresh deterministic extraction before answering. On mismatch or corrupt cache data, answer from the current source, attach `index_stale` or `index_invalid`, and leave the stale file untouched unless the user explicitly runs `index` or otherwise authorizes writes.
+Canonicalize the parsed profile as UTF-8 JSON with sorted keys and no insignificant whitespace before hashing. Accept an index candidate only when both hashes and all supported schema/engine versions match, then compare its records with a fresh deterministic extraction before answering. On mismatch or corrupt cache data, answer from the current source, attach `index_stale` or `index_invalid`, and leave the stale file untouched during an ordinary query. Rebuild or rewrite it only as part of an explicitly requested persistent queryability change.
 
 When `index` is absent, parse without writing. Resolve a relative index path against the Markdown file's directory. Its real path must remain inside that directory tree, must not equal or alias the source document, and must not be a symlink. Reject every other path during validation and refuse query/index operations while it is unsafe.
 
-## 8. Compatibility and Security
+## 9. Compatibility and Security
 
 - Parse CommonMark/GFM structure without rendering HTML. Mask only the content of HTML comments so surrounding headings and labels remain visible. Treat `pre`/`code`/`script`/`style` blocks, capitalized MDX component blocks whose opening tag ends on the same line, and Hugo `highlight` blocks as opaque. Multiline MDX opening tags and other extension syntax are not guaranteed opaque in v1; inspect and report them as compatibility limits before preparing such a document.
 - Limit profile regex length and apply regex only to bounded heading, field, or record text. Enforce a per-match timeout and return `regex_timeout` instead of continuing after the limit.

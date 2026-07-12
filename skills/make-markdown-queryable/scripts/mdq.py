@@ -7,7 +7,7 @@
 #   "regex>=2024.11.6",
 # ]
 # ///
-"""Fault-tolerant, source-located queries for profiled Markdown documents."""
+"""Fault-tolerant, source-located queries for imperfect Markdown documents."""
 
 from __future__ import annotations
 
@@ -44,6 +44,27 @@ MARKER_RE = re.compile(
 ATX_HEADING_RE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 SETEXT_RE = re.compile(r"^[ \t]{0,3}(=+|-+)[ \t]*$")
 GENERIC_ID_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.]*-[0-9]+)\b")
+TEMPORARY_PROFILE_PREFIX = "temporary-"
+TEMPORARY_GENERIC_KEY_PATTERN = (
+    r"^[ \t]*(?P<id>[A-Za-z][A-Za-z0-9_.]*-[0-9]+)"
+    r"(?=$|[ \t:：—–-])"
+)
+YAML_MDQ_DECLARATION_RE = re.compile(r"(?m)^mdq[ \t]*:")
+INFERRED_KEY_LABELS = {
+    "id",
+    "key",
+    "identifier",
+    "recordid",
+    "requirementid",
+    "reqid",
+    "ticketid",
+    "编号",
+    "标识",
+    "标识符",
+    "需求id",
+    "需求编号",
+    "唯一键",
+}
 
 
 class DuplicateKeyLoader(yaml.SafeLoader):
@@ -135,6 +156,88 @@ def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"duplicate JSON key {key!r}")
         result[key] = value
     return result
+
+
+def top_level_json_key_present(text: str, wanted: str) -> bool:
+    """Conservatively find a top-level key even when the JSON is malformed."""
+    cursor = 0
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    if cursor >= len(text) or text[cursor] != "{":
+        return False
+    brace_depth = 1
+    bracket_depth = 0
+    expecting_key = True
+    cursor += 1
+    while cursor < len(text):
+        char = text[cursor]
+        if char.isspace():
+            cursor += 1
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            start = cursor
+            cursor += 1
+            escaped = False
+            while cursor < len(text):
+                current = text[cursor]
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == quote:
+                    break
+                cursor += 1
+            if cursor >= len(text):
+                return False
+            token = text[start : cursor + 1]
+            value: str | None = None
+            if quote == '"':
+                try:
+                    decoded = json.loads(token)
+                    value = decoded if isinstance(decoded, str) else None
+                except json.JSONDecodeError:
+                    value = token[1:-1]
+            else:
+                value = token[1:-1]
+            cursor += 1
+            lookahead = cursor
+            while lookahead < len(text) and text[lookahead].isspace():
+                lookahead += 1
+            if (
+                brace_depth == 1
+                and bracket_depth == 0
+                and expecting_key
+                and lookahead < len(text)
+                and text[lookahead] == ":"
+            ):
+                if value == wanted:
+                    return True
+                expecting_key = False
+            continue
+        if char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth -= 1
+            if brace_depth <= 0:
+                return False
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif char == "," and brace_depth == 1 and bracket_depth == 0:
+            expecting_key = True
+        elif expecting_key and brace_depth == 1 and bracket_depth == 0:
+            end = cursor
+            while end < len(text) and text[end] not in ":,{}[]\r\n":
+                end += 1
+            if end < len(text) and text[end] == ":":
+                if text[cursor:end].strip() == wanted:
+                    return True
+                expecting_key = False
+                cursor = end
+        cursor += 1
+    return False
 
 
 def normalize_label(value: str) -> str:
@@ -303,6 +406,17 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                     line=1,
                 )
             )
+            if delimiter == "---" and YAML_MDQ_DECLARATION_RE.search(
+                "".join(lines[1:])[:MAX_PROFILE_BYTES]
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        "incomplete YAML frontmatter appears to declare mdq; refusing temporary inference",
+                        line=1,
+                    )
+                )
         else:
             excluded |= line_set(0, closing + 1)
             allowed_comment_anchors.append(
@@ -332,6 +446,17 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                             line=1,
                         )
                     )
+                    if YAML_MDQ_DECLARATION_RE.search(
+                        "".join(lines[1:closing])
+                    ):
+                        diagnostics.append(
+                            diagnostic(
+                                "profile_invalid",
+                                "error",
+                                "invalid YAML frontmatter appears to declare mdq; refusing temporary inference",
+                                line=1,
+                            )
+                        )
     else:
         stripped = text.lstrip("\ufeff \t\r\n")
         if stripped.startswith("{"):
@@ -366,6 +491,17 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                         line=1,
                     )
                 )
+                if top_level_json_key_present(
+                    stripped[:MAX_PROFILE_BYTES], "mdq"
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "invalid JSON frontmatter appears to declare mdq; refusing temporary inference",
+                            line=1,
+                        )
+                    )
 
     prefix = text[:MAX_PROFILE_BYTES]
     for match in PROFILE_COMMENT_RE.finditer(prefix):
@@ -407,7 +543,11 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
     if not found:
         if not any(item["code"] == "profile_invalid" for item in diagnostics):
             diagnostics.append(
-                diagnostic("profile_missing", "warning", "no mdq profile found")
+                diagnostic(
+                    "profile_missing",
+                    "info",
+                    "no mdq profile found; profile-free read-only queries remain available",
+                )
             )
         return ProfileLoad(None, None, excluded, diagnostics)
     source, profile = found[0]
@@ -1766,6 +1906,16 @@ def records_for_query(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if document.profile is None:
         return [], list(document.diagnostics)
+    if (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX):
+        records, diagnostics = extract_current(document)
+        confidence_cap = (
+            0.9 if document.profile_source.endswith("explicit") else 0.8
+        )
+        for item in records:
+            item["confidence"] = min(
+                confidence_cap, float(item.get("confidence", 0.0))
+            )
+        return records, diagnostics
     cached, index_diagnostics = load_valid_index(document)
     records, diagnostics = extract_current(document)
     if cached is not None:
@@ -1796,6 +1946,471 @@ def status_for(records: list[dict[str, Any]], *, invalid: bool = False) -> str:
 
 def error_diagnostics(items: list[dict[str, Any]]) -> bool:
     return any(item.get("severity") == "error" for item in items)
+
+
+def temporary_selector_arguments(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "record_levels": list(getattr(args, "record_level", None) or []),
+        "key_labels": list(getattr(args, "key_label", None) or []),
+        "key_pattern": getattr(args, "key_pattern", None),
+        "key_group": getattr(args, "key_group", None),
+    }
+
+
+def has_temporary_selector_arguments(args: argparse.Namespace) -> bool:
+    return any(temporary_selector_arguments(args).values())
+
+
+def visible_label_items(
+    document: SourceDocument, code_lines: set[int]
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(document.masked_lines):
+        if index in code_lines or index in document.excluded_lines:
+            continue
+        stripped = strip_label_prefix(raw_line.rstrip("\r\n"))
+        if stripped.startswith("|") and stripped.count("|") >= 2:
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) >= 2 and cells[0]:
+                items.append(
+                    {"label": cells[0], "value": cells[1], "line": index}
+                )
+            continue
+        match = re.match(
+            r"^(?P<label>(?:\*\*|__|`)?[^:：|]+?(?:\*\*|__|`)?)"
+            r"[ \t]*[:：][ \t]*(?P<value>.*)$",
+            stripped,
+        )
+        if match:
+            label = re.sub(r"[*_`]", "", match.group("label")).strip()
+            if label:
+                items.append(
+                    {
+                        "label": label,
+                        "value": match.group("value").strip(),
+                        "line": index,
+                    }
+                )
+    return items
+
+
+def nearest_heading_level(headings: list[Heading], line: int) -> int | None:
+    preceding = [heading for heading in headings if heading.start < line]
+    return preceding[-1].level if preceding else None
+
+
+def inferred_section_levels(headings: list[Heading]) -> list[int]:
+    if not headings:
+        return []
+    counts = Counter(heading.level for heading in headings)
+    repeated = [level for level, count in counts.items() if count > 1]
+    if repeated:
+        return [min(repeated)]
+    # A single H1 followed by a single H2 is usually a document title plus one record.
+    return [max(counts)]
+
+
+def inferred_generic_id_level(items: list[tuple[Heading, str]]) -> int | None:
+    if not items:
+        return None
+    # Prefer the shallowest evidence so nested examples cannot outvote their record.
+    return min(heading.level for heading, _key in items)
+
+
+def temporary_profile_fields() -> dict[str, Any]:
+    return {
+        "title": {
+            "source": "heading",
+            "pattern": r"^(?P<value>.*)$",
+            "group": "value",
+        },
+        "body": {"source": "body"},
+    }
+
+
+def prepare_temporary_profile(
+    document: SourceDocument,
+    args: argparse.Namespace,
+    *,
+    requested: str | None,
+) -> list[dict[str, Any]]:
+    """Attach an in-memory-only profile when the source has no valid profile."""
+    if document.profile is not None:
+        if has_temporary_selector_arguments(args):
+            document.diagnostics.append(
+                diagnostic(
+                    "temporary_selectors_ignored",
+                    "info",
+                    "temporary selectors were ignored because the document declares an mdq profile",
+                )
+            )
+        return []
+    if error_diagnostics(document.diagnostics):
+        # A conflicting or invalid declared profile must not silently become an ad hoc query.
+        return []
+
+    headings, code_lines, _markers, parse_diagnostics = analyze_markdown(document)
+    labels = visible_label_items(document, code_lines)
+    supplied = temporary_selector_arguments(args)
+    explicit = has_temporary_selector_arguments(args)
+
+    levels = sorted(set(supplied["record_levels"]))
+    key_labels = list(dict.fromkeys(supplied["key_labels"]))
+    key_pattern = supplied["key_pattern"]
+    key_group = supplied["key_group"]
+    key_source = "label" if key_labels else "heading"
+
+    if explicit:
+        selector_diagnostics: list[dict[str, Any]] = []
+        compiled = (
+            safe_compile(key_pattern, "temporary key pattern", selector_diagnostics)
+            if key_pattern is not None
+            else None
+        )
+        if key_group is not None and key_pattern is None:
+            selector_diagnostics.append(
+                diagnostic(
+                    "profile_invalid",
+                    "error",
+                    "temporary key group requires --key-pattern",
+                )
+            )
+        elif key_group is not None:
+            validate_group(
+                compiled, key_group, "temporary key group", selector_diagnostics
+            )
+        if any(not label.strip() for label in key_labels):
+            selector_diagnostics.append(
+                diagnostic(
+                    "profile_invalid",
+                    "error",
+                    "temporary key labels must not be empty",
+                )
+            )
+        if error_diagnostics(selector_diagnostics):
+            document.diagnostics.extend(selector_diagnostics)
+            return parse_diagnostics
+
+    generic_headings: list[tuple[Heading, str]] = []
+    for heading in headings:
+        key = regex_value(TEMPORARY_GENERIC_KEY_PATTERN, heading.text, "id")
+        if key:
+            generic_headings.append((heading, key))
+    generic_level = inferred_generic_id_level(generic_headings)
+    canonical_generic_headings = [
+        item for item in generic_headings if item[0].level == generic_level
+    ]
+
+    if not explicit and requested is not None:
+        exact_generic_headings = [
+            heading for heading, key in canonical_generic_headings if key == requested
+        ]
+        exact_heading_text = [
+            heading for heading in headings if heading.text.strip() == requested
+        ]
+        exact_labels = [
+            item
+            for item in labels
+            if item["value"].strip() == requested
+            and normalize_label(item["label"]) in INFERRED_KEY_LABELS
+        ]
+        if exact_generic_headings:
+            assert generic_level is not None
+            levels = [generic_level]
+            key_pattern = TEMPORARY_GENERIC_KEY_PATTERN
+            key_group = "id"
+        elif exact_heading_text:
+            levels = sorted({heading.level for heading in exact_heading_text})
+        elif exact_labels:
+            key_source = "label"
+            key_labels = list(dict.fromkeys(item["label"] for item in exact_labels))
+            levels = sorted(
+                {
+                    level
+                    for item in exact_labels
+                    if (level := nearest_heading_level(headings, item["line"]))
+                    is not None
+                }
+            )
+        elif canonical_generic_headings:
+            # The requested key may simply be absent; preserve exact not-found semantics.
+            assert generic_level is not None
+            levels = [generic_level]
+            key_pattern = TEMPORARY_GENERIC_KEY_PATTERN
+            key_group = "id"
+        else:
+            levels = inferred_section_levels(headings)
+    elif not explicit:
+        if canonical_generic_headings:
+            assert generic_level is not None
+            levels = [generic_level]
+            key_pattern = TEMPORARY_GENERIC_KEY_PATTERN
+            key_group = "id"
+        else:
+            levels = inferred_section_levels(headings)
+    else:
+        if key_source == "label" and not levels:
+            wanted = {normalize_label(label) for label in key_labels}
+            levels = sorted(
+                {
+                    level
+                    for item in labels
+                    if normalize_label(item["label"]) in wanted
+                    and (
+                        level := nearest_heading_level(headings, item["line"])
+                    )
+                    is not None
+                }
+            )
+        if not levels:
+            levels = inferred_section_levels(headings)
+
+    if not levels:
+        return parse_diagnostics + [
+            diagnostic(
+                "temporary_selectors_unavailable",
+                "info",
+                "no safe record boundary could be inferred; line-local fallback will be used",
+            )
+        ]
+
+    boundary: dict[str, Any] = {
+        "source": "heading",
+        "levels": levels,
+        "level_tolerance": 0,
+    }
+    key: dict[str, Any] = {"source": key_source}
+    if key_labels:
+        key["labels"] = key_labels
+    if key_pattern:
+        key["pattern"] = key_pattern
+    if key_group is not None:
+        key["group"] = key_group
+    proposed = {
+        "version": 1,
+        "dialect": "commonmark",
+        "records": {"boundary": boundary, "key": key},
+        "fields": temporary_profile_fields(),
+        "tolerance": {"incomplete": True},
+    }
+    validation_diagnostics: list[dict[str, Any]] = []
+    validated = validate_profile(proposed, validation_diagnostics)
+    if validated is None:
+        document.diagnostics.extend(validation_diagnostics)
+        return parse_diagnostics
+
+    document.profile = validated
+    document.profile_source = (
+        f"{TEMPORARY_PROFILE_PREFIX}explicit"
+        if explicit
+        else f"{TEMPORARY_PROFILE_PREFIX}inferred"
+    )
+    document.diagnostics.append(
+        diagnostic(
+            "temporary_selectors_applied" if explicit else "temporary_selectors_inferred",
+            "info",
+            "an in-memory query profile was applied and was not written to the Markdown file",
+            details={
+                "source": "explicit" if explicit else "inferred",
+                "record_levels": levels,
+                "key_source": key_source,
+                "key_labels": key_labels,
+                "key_pattern": key_pattern,
+                "key_group": key_group,
+            },
+        )
+    )
+    return []
+
+
+def visible_record_text(
+    document: SourceDocument,
+    record: dict[str, Any],
+    *,
+    include_heading: bool = True,
+) -> str:
+    start = max(0, int(record.get("line_start", 1)) - 1)
+    end = min(len(document.lines), int(record.get("line_end", start + 1)))
+    if not include_heading:
+        cursor = start
+        while cursor < end and (
+            cursor in document.excluded_lines
+            or not document.masked_lines[cursor].strip()
+        ):
+            cursor += 1
+        if cursor < end and ATX_HEADING_RE.match(
+            document.masked_lines[cursor].rstrip("\r\n")
+        ):
+            start = cursor + 1
+        elif (
+            cursor + 1 < end
+            and document.masked_lines[cursor].strip()
+            and SETEXT_RE.match(
+                document.masked_lines[cursor + 1].rstrip("\r\n")
+            )
+        ):
+            start = cursor + 2
+    return "".join(
+        document.masked_lines[index]
+        for index in range(start, end)
+        if index not in document.lexical_code_lines
+        and index not in document.excluded_lines
+    )
+
+
+def line_local_record(
+    document: SourceDocument,
+    line: int,
+    *,
+    key: str | None,
+    context: str,
+    confidence: float,
+    evidence_source: str,
+    evidence_value: str | None = None,
+) -> dict[str, Any]:
+    item_diagnostics = [
+        diagnostic(
+            "line_local_fallback",
+            "warning" if confidence < 0.6 else "info",
+            "the match is line-local because no safe Markdown record boundary was available",
+            line=line + 1,
+        )
+    ]
+    return {
+        "key": key,
+        "fields": {"context": context},
+        "line_start": line + 1,
+        "line_end": line + 1,
+        "byte_start": document.byte_offsets[line],
+        "byte_end": document.byte_offsets[min(line + 1, len(document.byte_offsets) - 1)],
+        "confidence": confidence,
+        "diagnostics": item_diagnostics,
+        "identity_evidence": [
+            {
+                "source": evidence_source,
+                "value": key if evidence_value is None else evidence_value,
+                "line": line + 1,
+            }
+        ],
+    }
+
+
+def literal_is_present(text: str, needle: str, *, case_sensitive: bool) -> bool:
+    if not needle:
+        return False
+    haystack = text if case_sensitive else text.casefold()
+    wanted = needle if case_sensitive else needle.casefold()
+    start = 0
+    while True:
+        position = haystack.find(wanted, start)
+        if position < 0:
+            return False
+        before = haystack[position - 1] if position > 0 else ""
+        after_index = position + len(wanted)
+        after = haystack[after_index] if after_index < len(haystack) else ""
+        identifier = bool(re.fullmatch(r"[A-Za-z0-9_.-]+", wanted))
+        boundary_characters = (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+        )
+        if "-" in wanted:
+            boundary_characters += "-"
+        if "." in wanted:
+            boundary_characters += "."
+        if not identifier or (
+            (not before or before not in boundary_characters)
+            and (not after or after not in boundary_characters)
+        ):
+            return True
+        start = position + 1
+
+
+def line_local_query_results(
+    document: SourceDocument,
+    requested: str,
+    *,
+    key_labels: list[str] | None = None,
+    key_pattern: str | None = None,
+    key_group: str | int | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    _headings, code_lines, _markers, parse_diagnostics = analyze_markdown(document)
+    labels = visible_label_items(document, code_lines)
+    wanted_labels = (
+        {normalize_label(label) for label in key_labels}
+        if key_labels
+        else INFERRED_KEY_LABELS
+    )
+    matched_label_lines = {
+        item["line"]
+        for item in labels
+        if normalize_label(item["label"]) in wanted_labels
+        and (
+            regex_value(key_pattern, item["value"].strip(), key_group)
+            if key_pattern
+            else item["value"].strip()
+        )
+        == requested
+    }
+    records = [
+        line_local_record(
+            document,
+            line,
+            key=requested,
+            context=document.lines[line].rstrip("\r\n"),
+            confidence=0.7,
+            evidence_source="label",
+            evidence_value=requested,
+        )
+        for line in sorted(matched_label_lines)
+    ]
+    candidates: list[dict[str, Any]] = []
+    for line, masked in enumerate(document.masked_lines):
+        if (
+            line in matched_label_lines
+            or line in code_lines
+            or line in document.excluded_lines
+            or not literal_is_present(masked, requested, case_sensitive=False)
+        ):
+            continue
+        candidate = line_local_record(
+            document,
+            line,
+            key=None,
+            context=document.lines[line].rstrip("\r\n"),
+            confidence=0.4,
+            evidence_source="body",
+            evidence_value=requested,
+        )
+        candidate["candidate"] = True
+        candidates.append(candidate)
+    return records + candidates, parse_diagnostics
+
+
+def line_local_search_records(
+    document: SourceDocument, text: str, limit: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    _headings, code_lines, _markers, parse_diagnostics = analyze_markdown(document)
+    records: list[dict[str, Any]] = []
+    for line, masked in enumerate(document.masked_lines):
+        if (
+            line in code_lines
+            or line in document.excluded_lines
+            or text.casefold() not in masked.casefold()
+        ):
+            continue
+        records.append(
+            line_local_record(
+                document,
+                line,
+                key=None,
+                context=document.lines[line].rstrip("\r\n"),
+                confidence=0.6,
+                evidence_source="literal",
+                evidence_value=text,
+            )
+        )
+        if len(records) >= limit:
+            break
+    return records, parse_diagnostics
 
 
 def command_inspect(args: argparse.Namespace) -> int:
@@ -1919,17 +2534,64 @@ def command_validate(args: argparse.Namespace) -> int:
 
 def command_query(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
+    requested = args.id.strip()
+    preparation_diagnostics = prepare_temporary_profile(
+        document, args, requested=requested
+    )
     if document.profile is None:
+        if error_diagnostics(document.diagnostics):
+            emit(
+                {
+                    "status": "invalid",
+                    "count": 0,
+                    "records": [],
+                    "candidates": [],
+                    "diagnostics": document.diagnostics,
+                }
+            )
+            return 3
+        selectors = temporary_selector_arguments(args)
+        line_key_labels = selectors["key_labels"] or None
+        local, parse_diagnostics = line_local_query_results(
+            document,
+            requested,
+            key_labels=line_key_labels,
+            key_pattern=selectors["key_pattern"] if line_key_labels else None,
+            key_group=selectors["key_group"] if line_key_labels else None,
+        )
+        structured = [item for item in local if item.get("key") is not None]
+        candidates = [item for item in local if item.get("key") is None]
+        diagnostics = (
+            list(document.diagnostics)
+            + preparation_diagnostics
+            + parse_diagnostics
+        )
+        if len(structured) > 1:
+            diagnostics.append(
+                diagnostic(
+                    "ambiguous_match",
+                    "warning",
+                    f"exact key {requested!r} matched {len(structured)} line-local labels",
+                )
+            )
+        elif not structured:
+            diagnostics.append(
+                diagnostic(
+                    "no_match",
+                    "info",
+                    f"no exact record key matched {requested!r}; body mentions are candidates only",
+                )
+            )
         emit(
             {
-                "status": "invalid",
-                "count": 0,
-                "records": [],
-                "candidates": [],
-                "diagnostics": document.diagnostics,
+                "status": status_for(structured),
+                "count": len(structured),
+                "records": structured,
+                "candidates": candidates,
+                "diagnostics": diagnostics,
             }
         )
-        return 3
+        return 0
     records, diagnostics = records_for_query(document)
     if error_diagnostics(diagnostics):
         emit(
@@ -1942,7 +2604,9 @@ def command_query(args: argparse.Namespace) -> int:
             }
         )
         return 3
-    requested = args.id.strip()
+    temporary = (document.profile_source or "").startswith(
+        TEMPORARY_PROFILE_PREFIX
+    )
     structured = [
         item
         for item in records
@@ -1964,6 +2628,35 @@ def command_query(args: argparse.Namespace) -> int:
         if item not in structured and (case_candidate or evidence_candidate):
             candidate = dict(item)
             candidate["candidate"] = True
+            candidates.append(candidate)
+        elif (
+            temporary
+            and item not in structured
+            and literal_is_present(
+                visible_record_text(document, item),
+                requested,
+                case_sensitive=False,
+            )
+        ):
+            candidate = dict(item)
+            candidate["candidate"] = True
+            candidate["confidence"] = min(
+                0.4, float(candidate.get("confidence", 0.0))
+            )
+            candidate["identity_evidence"] = list(
+                candidate.get("identity_evidence", [])
+            )
+            candidate["identity_evidence"].append(
+                {"source": "body", "value": requested}
+            )
+            candidate["diagnostics"] = list(candidate.get("diagnostics", []))
+            candidate["diagnostics"].append(
+                diagnostic(
+                    "body_identity_candidate",
+                    "warning",
+                    "the requested key appears only in record content and is candidate-only",
+                )
+            )
             candidates.append(candidate)
     if len(structured) > 1:
         diagnostics.append(
@@ -2002,17 +2695,66 @@ def searchable_values(record: dict[str, Any], field_name: str | None) -> list[st
 
 def command_search(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
+    preparation_diagnostics = prepare_temporary_profile(
+        document, args, requested=None
+    )
     if document.profile is None:
+        if error_diagnostics(document.diagnostics):
+            emit(
+                {
+                    "status": "invalid",
+                    "count": 0,
+                    "records": [],
+                    "candidates": [],
+                    "diagnostics": document.diagnostics,
+                }
+            )
+            return 3
+        if args.field not in {None, "body", "context"}:
+            diagnostics = list(document.diagnostics) + preparation_diagnostics + [
+                diagnostic(
+                    "unknown_field",
+                    "error",
+                    f"field {args.field!r} is unavailable without a record boundary",
+                )
+            ]
+            emit(
+                {
+                    "status": "invalid",
+                    "count": 0,
+                    "records": [],
+                    "candidates": [],
+                    "diagnostics": diagnostics,
+                }
+            )
+            return 3
+        local, parse_diagnostics = line_local_search_records(
+            document, args.text, args.limit
+        )
+        diagnostics = (
+            list(document.diagnostics)
+            + preparation_diagnostics
+            + parse_diagnostics
+        )
+        if not local:
+            diagnostics.append(
+                diagnostic(
+                    "no_match", "info", f"literal text {args.text!r} was not found"
+                )
+            )
         emit(
             {
-                "status": "invalid",
-                "count": 0,
-                "records": [],
+                "status": "matched" if local else "not_found",
+                "count": len(local),
+                "records": local,
                 "candidates": [],
-                "diagnostics": document.diagnostics,
+                "diagnostics": diagnostics,
             }
         )
-        return 3
+        return 0
+    temporary = (document.profile_source or "").startswith(
+        TEMPORARY_PROFILE_PREFIX
+    )
     if (
         args.field
         and args.field != "key"
@@ -2049,10 +2791,19 @@ def command_search(args: argparse.Namespace) -> int:
     matched: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
     for item in records:
-        if any(
-            needle in value.casefold() for value in searchable_values(item, args.field)
-        ):
-            if item.get("key") is not None and float(item.get("confidence", 0)) >= 0.6:
+        values = searchable_values(item, args.field)
+        if temporary and args.field is None:
+            values = (
+                searchable_values(item, "key")
+                + searchable_values(item, "title")
+                + [visible_record_text(document, item, include_heading=False)]
+            )
+        elif temporary and args.field == "body":
+            values = [visible_record_text(document, item, include_heading=False)]
+        if any(needle in value.casefold() for value in values):
+            if float(item.get("confidence", 0)) >= 0.6 and (
+                temporary or item.get("key") is not None
+            ):
                 matched.append(item)
             else:
                 candidate = dict(item)
@@ -2060,6 +2811,26 @@ def command_search(args: argparse.Namespace) -> int:
                 candidates.append(candidate)
         if len(matched) + len(candidates) >= args.limit:
             break
+    if (
+        temporary
+        and args.field is None
+        and len(matched) + len(candidates) < args.limit
+    ):
+        local, _local_diagnostics = line_local_search_records(
+            document, args.text, args.limit - len(matched) - len(candidates)
+        )
+        covered = [
+            (int(item.get("line_start", 1)), int(item.get("line_end", 0)))
+            for item in records
+        ]
+        matched.extend(
+            item
+            for item in local
+            if not any(
+                start <= int(item.get("line_start", 0)) <= end
+                for start, end in covered
+            )
+        )
     if not matched and not candidates:
         diagnostics.append(
             diagnostic("no_match", "info", f"literal text {args.text!r} was not found")
@@ -2133,9 +2904,35 @@ def command_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def add_temporary_selector_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--record-level",
+        type=int,
+        choices=range(1, 7),
+        action="append",
+        help="temporary record heading level (repeatable; profileless documents only)",
+    )
+    parser.add_argument(
+        "--key-label",
+        action="append",
+        help="temporary label containing the record key (repeatable)",
+    )
+    parser.add_argument(
+        "--key-pattern",
+        help="temporary safe regex used to extract a key from a heading or label",
+    )
+    parser.add_argument(
+        "--key-group",
+        help="temporary regex capture group name or number",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Inspect and query imperfect Markdown through a declarative mdq profile."
+        description=(
+            "Inspect and query imperfect Markdown through a declared or temporary "
+            "in-memory mdq profile."
+        )
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2157,6 +2954,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     query_parser.add_argument("document")
     query_parser.add_argument("--id", required=True, help="exact record key")
+    add_temporary_selector_options(query_parser)
     query_parser.set_defaults(handler=command_query)
 
     search_parser = subparsers.add_parser(
@@ -2166,6 +2964,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--text", required=True)
     search_parser.add_argument("--field", help="declared field name, or key")
     search_parser.add_argument("--limit", type=int, default=20)
+    add_temporary_selector_options(search_parser)
     search_parser.set_defaults(handler=command_search)
 
     index_parser = subparsers.add_parser(

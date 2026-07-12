@@ -1,4 +1,4 @@
 interface:
   display_name: "Make Markdown Queryable"
-  short_description: "Prepare and query imperfect Markdown records"
-  default_prompt: "Use $make-markdown-queryable to add a fault-tolerant query contract to this Markdown document and verify representative lookups."
+  short_description: "Query imperfect Markdown; persist metadata on request"
+  default_prompt: "Use $make-markdown-queryable to answer my specific Markdown query read-only, and persist a YAML mdq profile only if I explicitly request it."
