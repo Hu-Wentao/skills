@@ -38,7 +38,7 @@ npx skills add vercel-labs/agent-skills
 ```bash
 npx skills add pasky/chrome-cdp-skill
 ```
-- AI爬虫
+- 给Agent使用的智能curl，用于替代一次性py脚本
 ```bash
 npx skills add yusukebe/ax 
 ```
