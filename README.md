@@ -22,26 +22,33 @@ skills add Hu-Wentao/wyatt_skills
 
 ## 其他常用Skills
 
-### openai/anthropics/flutter
+### openai/anthropics/flutter 官方skill
 ```bash
 npx skills add openai/skills
 npx skills add anthropics/skills
-
 npx skills add flutter/skills
 ```
 
 ### Web & 浏览器
+- Next.js 网站开发
 ```bash
 npx skills add vercel-labs/agent-skills
+```
+- ChromeCDP
+```bash
 npx skills add pasky/chrome-cdp-skill
 ```
+- AI爬虫
+```bash
+npx skills add yusukebe/ax 
+```
 
-### 幻灯片制作
+### 文档材料制作
+- 幻灯片制作
 ```bash
 npx skills add slidevjs/slidev
 ```
-
-### 视频制作
+- 视频制作
 ```bash
 npx skills add remotion-dev/skills
 ```
