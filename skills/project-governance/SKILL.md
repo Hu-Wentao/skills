@@ -95,7 +95,7 @@ Read [git-version-governance.md](references/git-version-governance.md) before ch
 1. Confirm that the workflow is repeated, specialized, high-risk, or expensive to rediscover.
 2. Keep universal governance here and project-specific commands, topology, terminology, and safety boundaries in the project skill.
 3. Prefer a concise procedural `SKILL.md`; move detailed knowledge to references and deterministic operations to tested scripts.
-4. Use `skillcraft` when creating or materially revising a skill.
+4. Use `skillcraft`, the repository replacement for `skill-creator`, when creating or materially revising any skill.
 5. Do not turn one-time plans, ordinary coding conventions, or unstable product proposals into skills.
 
 Read [project-skill-design.md](references/project-skill-design.md).

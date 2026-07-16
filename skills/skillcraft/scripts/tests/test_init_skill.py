@@ -99,7 +99,7 @@ class InitSkillTest(unittest.TestCase):
             )
             self.assertIn("Ran 6 tests", generated_tests.stderr)
 
-    def test_plain_scaffold_keeps_original_non_config_behavior(self) -> None:
+    def test_plain_scaffold_replaces_skill_creator_behavior(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skillcraft-plain-") as raw_root:
             output = Path(raw_root) / "skills"
             output.mkdir()
@@ -107,9 +107,12 @@ class InitSkillTest(unittest.TestCase):
                 [
                     sys.executable,
                     str(INIT_SCRIPT),
-                    "plain-skill",
+                    "Plain Skill",
                     "--path",
                     str(output),
+                    "--resources",
+                    "scripts,references,assets",
+                    "--examples",
                     "--interface",
                     "display_name=Plain Skill",
                     "--interface",
@@ -127,6 +130,18 @@ class InitSkillTest(unittest.TestCase):
                 msg=initialized.stdout + initialized.stderr,
             )
             skill = output / "plain-skill"
+            self.assertIn(
+                "Normalized skill name from 'Plain Skill' to 'plain-skill'",
+                initialized.stdout,
+            )
+            self.assertTrue((skill / "scripts" / "example.py").is_file())
+            self.assertTrue((skill / "references" / "api_reference.md").is_file())
+            self.assertTrue((skill / "assets" / "example_asset.txt").is_file())
+            openai_yaml = (skill / "agents" / "openai.yaml").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('display_name: "Plain Skill"', openai_yaml)
+            self.assertIn('short_description: "Create a plain reusable skill"', openai_yaml)
             self.assertFalse((skill / "scripts" / "resolve.py").exists())
             self.assertFalse((skill / "references" / "project_config.md").exists())
             self.assertNotIn(

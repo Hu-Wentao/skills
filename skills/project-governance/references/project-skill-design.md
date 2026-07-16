@@ -38,7 +38,7 @@ Ensure the skill does not broaden user authorization. A workflow skill may expla
 
 Keep `SKILL.md` concise and procedural. Put trigger conditions in its frontmatter description. Move detailed schemas, troubleshooting, and domain knowledge into directly linked `references/`. Put deterministic repeated operations in `scripts/` and test them. Add only output resources to `assets/`.
 
-Use `skillcraft` to initialize, write metadata, separate reusable behavior from optional project configuration, validate, and forward-test a new or substantially revised skill.
+Use `skillcraft` as the replacement for `skill-creator` to initialize, write metadata, separate reusable behavior from optional project configuration, validate, and forward-test a new or substantially revised skill.
 
 ## Review an Existing Skill
 

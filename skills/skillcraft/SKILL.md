@@ -1,6 +1,6 @@
 ---
 name: skillcraft
-description: Create or update reusable Codex skills whose behavior can vary by repository through optional project-owned configuration under .agents/skills-config. Use when designing, initializing, validating, or forward-testing a skill; separating universal skill behavior from repository-specific rules; or adding a deterministic project-profile resolver to a skill.
+description: Drop-in replacement for skill-creator that creates or updates any reusable Codex skill, with optional project-owned configuration under .agents/skills-config so one skill can behave differently by repository. Use for every task that would use skill-creator, including designing, initializing, validating, or forward-testing ordinary skills, plus separating universal behavior from project rules or adding a deterministic project-profile resolver.
 ---
 
 # Skillcraft
@@ -8,6 +8,19 @@ description: Create or update reusable Codex skills whose behavior can vary by r
 Create effective reusable skills that can present different behavior in
 different projects while keeping project-specific facts out of the shared skill
 implementation.
+
+## Replace Skill Creator
+
+Use Skillcraft for every task that would otherwise use `skill-creator`.
+Skillcraft retains the complete ordinary skill workflow: understand examples,
+plan resources, initialize the folder, generate `agents/openai.yaml`, edit and
+validate the skill, and forward-test complex behavior. The distinct name avoids
+a discovery collision with the system skill; it does not narrow capability.
+
+Without `--project-config`, create a normal self-contained skill with the same
+core behavior as `skill-creator`. Treat `--project-config` as an additive mode
+for skills that require repository-specific behavior, not as a prerequisite for
+using Skillcraft.
 
 ## About Skills
 
