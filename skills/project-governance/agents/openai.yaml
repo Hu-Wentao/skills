@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern requirements, baselines, plans, and project skills"
-  default_prompt: "Use $project-governance to review and improve this project governance system."
+  short_description: "Govern documents, Git history, and project skills"
+  default_prompt: "Use $project-governance to review and improve this project's document, Git version, and skill governance."
