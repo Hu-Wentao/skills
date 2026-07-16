@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Establish, review, and maintain project governance across document governance, Git version governance, and project-skill governance. Use when creating, writing, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; reconciling governance sources with code and tests; or deciding whether a repeated specialized workflow should become a project-level skill. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
+description: "Establish, review, and maintain project governance across documents, Git versions, project skills, and defects. Use when creating, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether a repeated workflow should become a project skill; diagnosing a software defect, recurring or similar fixes, root cause, test escape, or repair-history hotspot; or reconciling governance sources with code and tests. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
 ---
 
 # Project Governance
@@ -24,6 +24,7 @@ Treat these as peer capabilities rather than placing Git or skill governance und
 - **Document governance**: requirements, baselines, plans, archives, and verification traceability.
 - **Git version governance**: change isolation, commit lineage, integration branches, release commits, immutable tags, fixed deployment refs, and hotfix ancestry.
 - **Project-skill governance**: extraction and maintenance of repeated, specialized, or high-risk operational knowledge.
+- **Defect governance**: evidence-backed diagnosis, repair history, recurring-defect escalation, test escape, and proof that a repair eliminates its failure generator.
 
 Use every applicable domain when a task crosses boundaries. For example, a release-policy change may require a Git invariant, a baseline update, verification evidence, and a project release skill.
 
@@ -100,6 +101,21 @@ Read [git-version-governance.md](references/git-version-governance.md) before ch
 
 Read [project-skill-design.md](references/project-skill-design.md).
 
+## Defect Governance
+
+Before diagnosing a defect or reviewing repair history, resolve the effective task instructions for the current repository with the resolver adjacent to this skill:
+
+```bash
+uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task defect-diagnosis
+uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task defect-history-review
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes, then perform the requested task from those resolved instructions. Without project configuration, use the generic behavior. A repository may specialize either task through `.agents/skills-config/project-governance/config.yaml` without changing the reusable skill.
+
+Configuration discovery and composition are infrastructure supplied by `skillcraft`. They are not a Project Governance domain or a Project-Skill Governance capability; Defect Governance only consumes the resolved instructions.
+
+Project instructions override configurable generic defaults when both address the same choice. They cannot broaden user authorization, turn a read-only diagnosis into implementation, weaken secret or privacy protection, override external authority, replace non-configurable safety invariants, or bypass resolver schema and path-containment rules. Resolution declares commands but never executes them.
+
 ## Resolve Conflicts
 
 When documents, Git history, code, tests, or skills disagree:
@@ -136,6 +152,7 @@ Report:
 - verification ownership and remaining gaps;
 - conflicts still requiring a decision;
 - project skills created, changed, or recommended;
+- defect family, recurrence classification, repair-history evidence, systemic cause, ownership verdict, and whether the repair eliminates recurrence;
 - structural validation and relevant project checks;
 - breaking changes and compatibility provisions, explicitly stating when there are none.
 
