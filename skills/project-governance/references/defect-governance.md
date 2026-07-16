@@ -59,6 +59,8 @@ Perform this section whenever a new product defect is established.
 
 ## Maintain Repair History
 
+Before editing an established product defect, identify the project-approved repair-history owner and include it in the repair scope. A commit body, issue, pull request, or repository defect ledger is sufficient only when project instructions approve that owner. If the project requires a governed defect document, treat that document as a completion gate; a commit body cannot replace it.
+
 For every established product defect, produce a compact record with:
 
 - failure family and decision point;
@@ -70,6 +72,8 @@ For every established product defect, produce a compact record with:
 - whether recurrence is eliminated and how the next unseen case behaves.
 
 Persist the record only through a project-approved issue, pull request, commit, or defect ledger. Do not create a tracking system or mutate the repository during diagnosis-only work. For an implemented repair, make the durable change record and regression-test name identify the failure family rather than only the concrete example.
+
+When a project uses a repository defect ledger, prefer one compact file per defect over one ever-growing shared file. Use a stable collision-resistant id such as `DEF-YYYYMMDD-slug`, reference that id from the repair commit, and keep the record with the code and regression test in the same change when practical. Record current durable invariants separately in the appropriate baseline; the ledger is repair history and does not govern current behavior. Do not change requirement status merely because a defect repair passes.
 
 ## Review Repair History
 

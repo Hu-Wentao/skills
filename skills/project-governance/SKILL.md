@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Establish, review, and maintain project governance across documents, Git versions, project skills, and defects. Use when creating, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether a repeated workflow should become a project skill; diagnosing a software defect, recurring or similar fixes, root cause, test escape, or repair-history hotspot; or reconciling governance sources with code and tests. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
+description: "Establish, review, and maintain project governance across documents, Git versions, project skills, and defects. Use when creating, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether a repeated workflow should become a project skill; diagnosing or implementing a software defect repair, recurring or similar fixes, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
 ---
 
 # Project Governance
@@ -103,7 +103,7 @@ Read [project-skill-design.md](references/project-skill-design.md).
 
 ## Defect Governance
 
-Before diagnosing a defect or reviewing repair history, resolve the effective task instructions for the current repository with the resolver adjacent to this skill:
+Before diagnosing or repairing a defect, or reviewing repair history, resolve the effective task instructions for the current repository with the resolver adjacent to this skill:
 
 ```bash
 uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task defect-diagnosis
