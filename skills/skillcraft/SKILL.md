@@ -1,12 +1,13 @@
 ---
 name: skillcraft
-description: Create or update reusable Codex skills, including optional project-level configuration under .agents/skills-config. Use when designing, initializing, validating, or forward-testing a skill; separating universal skill behavior from repository-specific rules; or adding a deterministic project-profile resolver to a skill.
+description: Create or update reusable Codex skills whose behavior can vary by repository through optional project-owned configuration under .agents/skills-config. Use when designing, initializing, validating, or forward-testing a skill; separating universal skill behavior from repository-specific rules; or adding a deterministic project-profile resolver to a skill.
 ---
 
 # Skillcraft
 
-Create effective reusable skills while keeping project-specific facts out of the
-shared skill implementation.
+Create effective reusable skills that can present different behavior in
+different projects while keeping project-specific facts out of the shared skill
+implementation.
 
 ## About Skills
 
@@ -73,8 +74,8 @@ skill-name/
 
 ### Optional Project Configuration
 
-Use project configuration only when one reusable skill must adapt to tracked
-repository-specific rules. Keep the reusable skill in
+Use project configuration when the same reusable skill must produce different
+behavior from tracked repository-specific rules. Keep the reusable skill in
 `.agents/skills/<skill-name>/` and keep project-owned configuration in the
 repository sibling `.agents/skills-config/<skill-name>/`.
 
@@ -83,7 +84,9 @@ materially changing a config-aware skill. A config-aware skill must provide a
 deterministic resolver, a generic fallback, a skill-specific versioned schema,
 path-containment checks, and focused resolver tests. Configuration may declare
 instructions and commands, but resolving it must not execute arbitrary project
-code.
+code. Merely generating configuration files is insufficient: the generated
+`SKILL.md` must require resolver execution before configured tasks so the
+project profile becomes active behavior.
 
 #### SKILL.md (required)
 
@@ -412,6 +415,8 @@ For a config-aware skill, also run its resolver tests and verify at least:
 
 - generic fallback without project configuration;
 - project profile composition;
+- the same generated skill resolving different instructions, commands, profile
+  names, and `instructions_id` values in two differently configured projects;
 - stable `instructions_id` for unchanged inputs;
 - invalid schema rejection;
 - rejection of profile paths escaping `skills-config`.

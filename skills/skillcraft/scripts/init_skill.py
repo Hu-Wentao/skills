@@ -117,6 +117,32 @@ Files not intended to be loaded into context, but rather used within the output 
 **Not every skill requires all three types of resources.**
 """
 
+PROJECT_CONFIG_SKILL_SECTION = """## Resolve Project Behavior
+
+Before executing any supported task, resolve the behavior for the current
+repository:
+
+```bash
+uv run python .agents/skills/{skill_name}/scripts/resolve.py --task <task>
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes, then
+perform the task using those resolved instructions. Without project
+configuration, use the generic behavior. With
+`.agents/skills-config/{skill_name}/config.yaml`, apply the selected project
+profile so the same reusable skill can behave differently in different
+repositories.
+
+Project instructions override generic configurable defaults when both address
+the same choice. They must not override system, developer, or user authority;
+the skill's non-configurable safety invariants; resolver schema validation; or
+path-containment rules. Resolution declares commands but never executes them.
+
+Read [project_config.md](references/project_config.md) when creating or changing
+a project profile or resolver task.
+
+"""
+
 EXAMPLE_SCRIPT = '''#!/usr/bin/env python3
 """
 Example helper script for {skill_name}
@@ -321,6 +347,13 @@ def init_skill(
     # Create SKILL.md from template
     skill_title = title_case_skill_name(skill_name)
     skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
+    if project_config:
+        skill_content = skill_content.replace(
+            "## Structuring This Skill\n",
+            PROJECT_CONFIG_SKILL_SECTION.format(skill_name=skill_name)
+            + "## Structuring This Skill\n",
+            1,
+        )
 
     skill_md_path = skill_dir / "SKILL.md"
     try:

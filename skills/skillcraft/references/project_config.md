@@ -12,9 +12,10 @@
 
 ## Purpose
 
-Use project configuration when a reusable skill needs durable repository-owned
-adaptation without absorbing project-specific branches. The reusable skill owns
-the workflow and resolver contract. The target repository owns its profile.
+Use project configuration when one reusable skill must exhibit different
+behavior in different repositories without absorbing project-named branches.
+The reusable skill owns the workflow and resolver contract. Each target
+repository owns the profile that specializes its behavior.
 
 ## Layout
 
@@ -76,6 +77,12 @@ Commands are declarative output. Resolving configuration must never execute
 them. `SKILL.md` decides when an emitted command is appropriate and user
 authorization still controls external or destructive actions.
 
+Project instructions override generic configurable defaults when both address
+the same choice. They cannot override system, developer, or user authority;
+non-configurable safety invariants explicitly owned by the reusable skill;
+schema validation; or path-containment rules. Mark an invariant as
+non-configurable only when every consuming project must preserve it.
+
 ## Resolver Contract
 
 Before a config-aware task, run:
@@ -95,6 +102,7 @@ The resolver must:
 7. Hash all effective inputs into a stable `instructions_id`.
 8. Write resolved instructions below `.agents/.cache/<skill-name>/`.
 9. Return a small manifest and never execute configured commands.
+10. Make the active precedence policy explicit in the resolved instructions.
 
 Without project configuration, resolve the generic reference with profile
 `generic`. Do not require every consuming repository to create an empty
@@ -103,8 +111,11 @@ configuration directory.
 ## Required Tests
 
 Test generic fallback, profile composition, stable ids, schema rejection,
-missing task behavior, and path-containment rejection. Add task-specific tests
-when configuration changes validation commands or safety boundaries.
+missing task behavior, and path-containment rejection. Also install the exact
+same skill in two temporary repositories with different profiles and prove that
+their resolved instructions, declared commands, profile names, and
+`instructions_id` values differ. Add task-specific tests when configuration
+changes validation commands or safety boundaries.
 
 ## Migration
 

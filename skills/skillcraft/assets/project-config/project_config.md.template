@@ -1,6 +1,7 @@
 # Project Configuration
 
-This skill supports optional repository-owned configuration:
+This skill supports optional repository-owned configuration so the same skill
+can behave differently in different projects:
 
 ```text
 .agents/skills-config/__SKILL_NAME__/
@@ -31,3 +32,7 @@ Read the returned instruction path once per new `instructions_id`. Resolution
 does not execute declared commands. The target repository owns `skills-config`;
 resolved output belongs under `.agents/.cache/__SKILL_NAME__/` and should not be
 tracked.
+
+Project instructions override generic configurable defaults when both address
+the same choice. They cannot override external authority, non-configurable
+safety invariants, schema validation, or path-containment rules.

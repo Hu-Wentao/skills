@@ -57,6 +57,13 @@ class InitSkillTest(unittest.TestCase):
                 skill / "references" / "project_config.md",
             )
             self.assertTrue(all(path.is_file() for path in expected), expected)
+            skill_text = (skill / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn("## Resolve Project Behavior", skill_text)
+            self.assertIn(
+                ".agents/skills/demo-skill/scripts/resolve.py --task <task>",
+                skill_text,
+            )
+            self.assertIn("same reusable skill can behave differently", skill_text)
 
             generic = subprocess.run(
                 [
@@ -89,6 +96,42 @@ class InitSkillTest(unittest.TestCase):
                 generated_tests.returncode,
                 0,
                 msg=generated_tests.stdout + generated_tests.stderr,
+            )
+            self.assertIn("Ran 6 tests", generated_tests.stderr)
+
+    def test_plain_scaffold_keeps_original_non_config_behavior(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="skillcraft-plain-") as raw_root:
+            output = Path(raw_root) / "skills"
+            output.mkdir()
+            initialized = subprocess.run(
+                [
+                    sys.executable,
+                    str(INIT_SCRIPT),
+                    "plain-skill",
+                    "--path",
+                    str(output),
+                    "--interface",
+                    "display_name=Plain Skill",
+                    "--interface",
+                    "short_description=Create a plain reusable skill",
+                    "--interface",
+                    "default_prompt=Use $plain-skill for a plain task.",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                initialized.returncode,
+                0,
+                msg=initialized.stdout + initialized.stderr,
+            )
+            skill = output / "plain-skill"
+            self.assertFalse((skill / "scripts" / "resolve.py").exists())
+            self.assertFalse((skill / "references" / "project_config.md").exists())
+            self.assertNotIn(
+                "## Resolve Project Behavior",
+                (skill / "SKILL.md").read_text(encoding="utf-8"),
             )
 
 
