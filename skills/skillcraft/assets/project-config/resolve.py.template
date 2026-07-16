@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Resolve generic and repository-owned instructions for __SKILL_NAME__."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+
+SKILL_NAME = "__SKILL_NAME__"
+RESOLVER_VERSION = "1"
+
+
+class ResolveError(ValueError):
+    """Raised when project configuration violates the resolver contract."""
+
+
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def find_repo_root(start: Path) -> Path:
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    raise ResolveError("no Git repository found from the selected working directory")
+
+
+def parse_simple_yaml(text: str) -> dict[str, Any]:
+    """Parse the mapping-only YAML subset used by project configuration."""
+
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        if raw_line.startswith("\t"):
+            raise ResolveError(f"config.yaml:{line_number}: tabs are not supported")
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent % 2 or ":" not in raw_line:
+            raise ResolveError(
+                f"config.yaml:{line_number}: expected two-space key: value"
+            )
+        key, value = raw_line.strip().split(":", 1)
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        if not stack:
+            raise ResolveError(f"config.yaml:{line_number}: invalid indentation")
+        parent = stack[-1][1]
+        if key in parent:
+            raise ResolveError(f"config.yaml:{line_number}: duplicate key {key!r}")
+        if value.strip():
+            parent[key] = value.strip().strip("\"'")
+        else:
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+    return root
+
+
+def load_config(path: Path) -> tuple[dict[str, Any], str]:
+    if not path.exists():
+        return {}, ""
+    text = path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore[import-not-found]
+    except Exception:
+        parsed = parse_simple_yaml(text)
+    else:
+        try:
+            parsed = yaml.safe_load(text)
+        except Exception as exc:
+            raise ResolveError(f"failed to parse config.yaml: {exc}") from exc
+        if parsed is None:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            raise ResolveError("config.yaml must contain a mapping")
+    return parsed, text
+
+
+def require_mapping(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ResolveError(f"{field} must be a mapping")
+    return value
+
+
+def resolve_path(value: str, root: Path, field: str) -> Path:
+    candidate = (root / value).resolve()
+    if not is_relative_to(candidate, root.resolve()):
+        raise ResolveError(f"{field} escapes its allowed root")
+    if not candidate.is_file():
+        raise ResolveError(f"{field} not found: {candidate}")
+    return candidate
+
+
+def display_path(path: Path, repo_root: Path) -> str:
+    resolved = path.resolve()
+    if is_relative_to(resolved, repo_root.resolve()):
+        return str(resolved.relative_to(repo_root.resolve()))
+    return str(resolved)
+
+
+def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
+    repo_root = find_repo_root(cwd)
+    skill_root = repo_root / ".agents" / "skills" / SKILL_NAME
+    config_root = repo_root / ".agents" / "skills-config" / SKILL_NAME
+    config_path = config_root / "config.yaml"
+    cache_root = repo_root / ".agents" / ".cache" / SKILL_NAME
+
+    config, config_text = load_config(config_path)
+    profile = "generic"
+    task_config: dict[str, Any] = {}
+    if config:
+        expected_schema = f"{SKILL_NAME}.config.v1"
+        if config.get("schema") != expected_schema:
+            raise ResolveError(f"config.yaml schema must be {expected_schema}")
+        profile = str(config.get("profile", "project"))
+        tasks = require_mapping(config.get("tasks"), "tasks")
+        task_config = require_mapping(tasks.get(task), f"tasks.{task}")
+
+    base_value = str(task_config.get("base", f"references/{task}.md"))
+    base_path = resolve_path(base_value, skill_root, f"tasks.{task}.base")
+    base_text = base_path.read_text(encoding="utf-8").strip()
+    sources = {"base": display_path(base_path, repo_root)}
+
+    profile_text = ""
+    profile_value = task_config.get("profile")
+    if profile_value is not None:
+        profile_path = resolve_path(
+            str(profile_value), config_root, f"tasks.{task}.profile"
+        )
+        profile_text = profile_path.read_text(encoding="utf-8").strip()
+        sources["profile"] = display_path(profile_path, repo_root)
+        sources["project_config"] = display_path(config_path, repo_root)
+
+    commands_raw = task_config.get("commands", {})
+    commands = require_mapping(commands_raw, f"tasks.{task}.commands")
+    normalized_commands = {str(key): str(value) for key, value in commands.items()}
+
+    parts = [
+        f"# Resolved {SKILL_NAME} Instructions",
+        "",
+        f"- Task: `{task}`",
+        f"- Profile: `{profile}`",
+        "",
+        "## Generic Instructions",
+        "",
+        base_text,
+    ]
+    if profile_text:
+        parts.extend(["", "## Project Instructions", "", profile_text])
+    if normalized_commands:
+        parts.extend(["", "## Declared Commands", ""])
+        parts.extend(
+            f"- `{name}`: `{command}`"
+            for name, command in sorted(normalized_commands.items())
+        )
+    instructions = "\n".join(parts).rstrip() + "\n"
+
+    hash_input = {
+        "resolver_version": RESOLVER_VERSION,
+        "skill": SKILL_NAME,
+        "task": task,
+        "profile": profile,
+        "base": base_text,
+        "profile_text": profile_text,
+        "commands": normalized_commands,
+        "config": config_text,
+    }
+    digest = hashlib.sha256(
+        json.dumps(hash_input, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    instructions_id = f"{SKILL_NAME}/{task}@{digest}"
+    cache_path = cache_root / task / f"{digest}.md"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(instructions, encoding="utf-8")
+
+    manifest_lines = [
+        "status: ready",
+        f"skill: {SKILL_NAME}",
+        f"task: {task}",
+        f"profile: {profile}",
+        f"instructions_id: {instructions_id}",
+        "instructions:",
+        f"  path: {display_path(cache_path, repo_root)}",
+        "sources:",
+    ]
+    manifest_lines.extend(
+        f"  {name}: {value}" for name, value in sorted(sources.items())
+    )
+    if normalized_commands:
+        manifest_lines.append("commands:")
+        manifest_lines.extend(
+            f"  {name}: {value}"
+            for name, value in sorted(normalized_commands.items())
+        )
+    return "\n".join(manifest_lines) + "\n", cache_path, instructions
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=f"Resolve {SKILL_NAME} task instructions."
+    )
+    parser.add_argument("--task", default="default")
+    parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--emit", choices=("manifest", "instructions"), default="manifest"
+    )
+    args = parser.parse_args()
+    try:
+        manifest, _, instructions = resolve_task(args.task, args.cwd)
+    except ResolveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(instructions if args.emit == "instructions" else manifest, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

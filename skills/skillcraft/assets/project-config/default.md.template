@@ -1,0 +1,5 @@
+# Generic Default Instructions
+
+Replace this file with the reusable instructions for the `default` task. Keep
+repository-specific terminology, commands, and authoritative paths in
+`.agents/skills-config/__SKILL_NAME__/`.

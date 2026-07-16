@@ -1,0 +1,33 @@
+# Project Configuration
+
+This skill supports optional repository-owned configuration:
+
+```text
+.agents/skills-config/__SKILL_NAME__/
+├── config.yaml
+└── <profile>.md
+```
+
+Example:
+
+```yaml
+schema: __SKILL_NAME__.config.v1
+profile: example-project
+tasks:
+  default:
+    base: references/default.md
+    profile: project.md
+    commands:
+      validate: <project validation command>
+```
+
+Run the resolver before a configured task:
+
+```bash
+uv run python .agents/skills/__SKILL_NAME__/scripts/resolve.py --task default
+```
+
+Read the returned instruction path once per new `instructions_id`. Resolution
+does not execute declared commands. The target repository owns `skills-config`;
+resolved output belongs under `.agents/.cache/__SKILL_NAME__/` and should not be
+tracked.

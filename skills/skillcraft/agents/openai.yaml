@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skillcraft"
+  short_description: "Create reusable skills with project configuration"
+  icon_small: "./assets/skillcraft-small.svg"
+  icon_large: "./assets/skillcraft.png"
+  default_prompt: "Use $skillcraft to create or update a reusable skill with optional project-level configuration."
