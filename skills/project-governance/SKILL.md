@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Establish, review, and maintain project governance across three peer domains: document governance, Git version governance, and project-skill governance. Use when bootstrapping or reorganizing requirements, baselines, plans, archives, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; reconciling governance sources with code and tests; or deciding whether a repeated specialized workflow should become a project-level skill."
+description: "Establish, review, and maintain project governance across document governance, Git version governance, and project-skill governance. Use when creating, writing, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; reconciling governance sources with code and tests; or deciding whether a repeated specialized workflow should become a project-level skill. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
 ---
 
 # Project Governance
@@ -14,6 +14,8 @@ description: "Establish, review, and maintain project governance across three pe
 5. Separate reusable governance method from project-specific product facts and operational commands.
 
 For a read-only review, inspect and report without editing. For a change, present the intended scope or implementation plan when repository instructions require it. Never treat release, deployment, publishing, or live migration authority from an earlier turn as current authorization.
+
+Treat a plan as governed when it is written into the repository, referenced as an implementation authority, linked to requirements or baselines, assigned lifecycle status, or expected to be completed and archived. Do not treat a temporary pre-implementation explanation as a governed plan.
 
 ## Select a Governance Domain
 
