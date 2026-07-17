@@ -3,11 +3,19 @@
   "notGrouped": "bottom",
   "groupings": [
     {
-      "title": "Project Design",
-      "description": "Skills for bootstrapping project design, architecture docs, and scaffolding conventions.",
+      "title": "Project Lifecycle",
+      "description": "Skills for bootstrapping projects and governing requirements, plans, versions, defects, and verification.",
       "skills": [
         "project-design-bootstrap",
-        "skillcraft"
+        "project-governance"
+      ]
+    },
+    {
+      "title": "Skill Tooling",
+      "description": "Skills for creating, validating, and updating reusable Codex skills.",
+      "skills": [
+        "skillcraft",
+        "update-wyatt-skills"
       ]
     },
     {
@@ -38,10 +46,10 @@
       ]
     },
     {
-      "title": "Maintenance",
-      "description": "Repository-specific maintenance and update helpers.",
+      "title": "Knowledge & Documents",
+      "description": "Skills for querying and maintaining structured knowledge in documents.",
       "skills": [
-        "update-wyatt-skills"
+        "make-markdown-queryable"
       ]
     }
   ]
