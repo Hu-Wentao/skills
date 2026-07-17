@@ -14,15 +14,13 @@
       "title": "Skill Tooling",
       "description": "Skills for creating, validating, and updating reusable Codex skills.",
       "skills": [
-        "skillcraft",
-        "update-wyatt-skills"
+        "skillcraft"
       ]
     },
     {
       "title": "Flutter & Dart",
       "description": "Skills for Flutter, Dart tooling, localization, and deployment workflows.",
       "skills": [
-        "clear-flutter-env",
         "create-dart-bg-activity",
         "flutter-slang-i18n",
         "release-dart-package-action",

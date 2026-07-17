@@ -13,11 +13,9 @@
 ### Skill 工具
 
 - [`skillcraft`](skills/skillcraft)：创建、更新、验证和测试可复用 Codex skill。
-- [`update-wyatt-skills`](skills/update-wyatt-skills)：更新本仓库安装的 skill 集合。
 
 ### Flutter & Dart
 
-- [`clear-flutter-env`](skills/clear-flutter-env)：清除 macOS 上的 Flutter 镜像环境变量。
 - [`create-dart-bg-activity`](skills/create-dart-bg-activity)：创建由 launchd 管理的 Dart macOS 后台进程。
 - [`flutter-slang-i18n`](skills/flutter-slang-i18n)：为 Flutter 项目添加和维护 Slang 国际化。
 - [`release-dart-package-action`](skills/release-dart-package-action)：通过 Git tag 和 GitHub Actions 发布 Dart/Flutter package。
