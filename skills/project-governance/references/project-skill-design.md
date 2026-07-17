@@ -26,6 +26,26 @@ Keep universal governance in `project-governance`. Put these in project skills:
 
 Do not copy unrelated product baselines into a workflow skill. Link to project sources and state when they must be read.
 
+## Decide Whether Project Configuration Is Required
+
+Require `skillcraft` project configuration when the same reusable skill needs durable, repository-owned specialization for project terminology, authoritative sources, commands, topology, or policy, and the target repository must track and review that specialization independently from the reusable skill.
+
+Do not require project configuration for one-off inputs, cheaply discoverable paths, ordinary package-manager detection, or differences that the skill can infer reliably at runtime. Prefer a normal self-contained skill in those cases.
+
+Treat requests for `skill_config`, `skills-config`, project profiles, resolvers, or resolved-instruction caches as requests for `skillcraft` project-configuration mechanisms.
+
+## Select the Skill Authoring Capability
+
+Inspect the skills available in the current session before creating or materially revising a skill:
+
+1. If `skillcraft` is available, use it for both ordinary and config-aware skills.
+2. If `skillcraft` is unavailable and project configuration is not required, use the system `skill-creator`.
+3. If `skillcraft` is unavailable and project configuration is required, stop and ask the user to install `skillcraft`. Do not install it without user approval.
+
+Do not emulate `skillcraft` project configuration with the fallback, edit or extend the system `skill-creator`, or silently downgrade a config-aware design to a normal skill. After `skillcraft` is installed, resume the original config-aware task with it.
+
+Once a config-aware skill exists, its runtime workflow invokes its own resolver. Runtime use does not require loading or calling `skillcraft`; `skillcraft` is the authoring and revision capability.
+
 ## Set the Degree of Freedom
 
 - Use high freedom for review heuristics and design choices with several valid outcomes.
@@ -38,7 +58,7 @@ Ensure the skill does not broaden user authorization. A workflow skill may expla
 
 Keep `SKILL.md` concise and procedural. Put trigger conditions in its frontmatter description. Move detailed schemas, troubleshooting, and domain knowledge into directly linked `references/`. Put deterministic repeated operations in `scripts/` and test them. Add only output resources to `assets/`.
 
-Use `skillcraft` as the replacement for `skill-creator` to initialize, write metadata, separate reusable behavior from optional project configuration, validate, and forward-test a new or substantially revised skill.
+Follow the authoring-capability selection above. The selected capability initializes the skill, writes metadata, validates it, and supports forward-testing; `skillcraft` additionally supplies project-configuration mechanisms when required.
 
 ## Review an Existing Skill
 
