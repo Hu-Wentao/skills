@@ -1,4 +1,4 @@
-# Legacy Project Extraction
+# Legacy Project Design Extraction
 
 Use this reference only when a new project should be informed by an existing or old project.
 

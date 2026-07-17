@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Establish, review, and maintain project governance across documents, Git versions, project skills, and defects. Use when creating, reviewing, updating, reorganizing, completing, or archiving governed requirements, baselines, formal project plans, or verification traceability; governing branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether a repeated workflow should become a project skill; diagnosing or implementing a software defect repair, recurring or similar fixes, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient conversational implementation outline that will not become a project authority or tracked artifact."
+description: "Bootstrap, establish, review, and maintain software project design and governance across architecture, scaffolding, documents, Git versions, project skills, and defects. Use when turning product discussions or an existing codebase into implementation-ready architecture docs, module/data ownership, package/runtime/Docker conventions, project scripts, or an implementation prompt; governing requirements, baselines, formal plans, verification traceability, branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether repeated work should become a project skill; diagnosing or repairing defects, recurrence, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design, authority, or another tracked artifact."
 ---
 
 # Project Governance
@@ -21,12 +21,33 @@ Treat a plan as governed when it is written into the repository, referenced as a
 
 Treat these as peer capabilities rather than placing Git or skill governance under documentation:
 
+- **Project design and bootstrap**: project intent, architecture, module and data ownership, scaffolding conventions, and implementation-ready handoff.
 - **Document governance**: requirements, baselines, plans, archives, and verification traceability.
 - **Git version governance**: change isolation, commit lineage, integration branches, release commits, immutable tags, fixed deployment refs, and hotfix ancestry.
 - **Project-skill governance**: extraction and maintenance of repeated, specialized, or high-risk operational knowledge.
 - **Defect governance**: evidence-backed diagnosis, repair history, recurring-defect escalation, test escape, and proof that a repair eliminates its failure generator.
 
 Use every applicable domain when a task crosses boundaries. For example, a release-policy change may require a Git invariant, a baseline update, verification evidence, and a project release skill.
+
+## Project Design and Bootstrap
+
+Turn product intent or useful legacy knowledge into a maintainable project starting point:
+
+1. Classify the source as a new product or system discussion, an existing codebase that will continue, or a legacy project informing a replacement.
+2. Capture product and system decisions rather than conversation transcript. Separate confirmed constraints from inferred design.
+3. Define module responsibilities, data ownership, runtime surfaces, API and anti-boundaries, and package/tooling conventions.
+4. Create the smallest implementation-ready document set. Keep each decision in one canonical location and link to it elsewhere.
+5. End with `implementation-prompt.md` when the design is stable enough for another agent to implement without the original conversation.
+
+Read [design-doc-rules.md](references/design-doc-rules.md) when creating or revising architecture docs, selecting review levels, defining module boundaries, choosing the document shape, or preparing the implementation prompt.
+
+Read [project-scaffolding.md](references/project-scaffolding.md) when choosing or documenting package and runtime managers, project scripts, Docker or Compose patterns, or pnpm BuildKit caching.
+
+Read [legacy-extraction.md](references/legacy-extraction.md) only when an existing or old project should inform a new design. Classify legacy behavior as inherited, replaced, dropped, or requiring review; do not preserve accidental coupling or compatibility by default.
+
+Project design defines a target architecture and initial engineering shape. Document governance controls the authority, lifecycle, status, and archival of those decisions after they become governed project sources. Apply both domains when bootstrap outputs become durable project authority.
+
+Ask for a decision when alternatives materially change implementation cost, deployability, security, or data ownership. When terminology or constraints change, update every affected design source and remove stale terms. Keep project-specific commands, topology, and policy in repository-owned instructions or skill configuration rather than making them universal defaults.
 
 ## Document Governance
 

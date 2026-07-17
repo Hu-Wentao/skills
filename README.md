@@ -7,8 +7,7 @@
 
 ### 项目生命周期
 
-- [`project-design-bootstrap`](skills/project-design-bootstrap)：从产品讨论或现有代码库生成可实施的项目设计与脚手架约定。
-- [`project-governance`](skills/project-governance)：治理需求、基线、计划、Git 版本、缺陷与验证追踪。
+- [`project-governance`](skills/project-governance)：启动项目设计，并治理需求、基线、计划、Git 版本、Skill、缺陷与验证追踪。
 
 ### Skill 工具
 

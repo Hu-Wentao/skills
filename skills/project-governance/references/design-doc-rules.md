@@ -1,4 +1,4 @@
-# Design Doc Rules
+# Project Design Documentation Rules
 
 Use these details when creating, simplifying, or maintaining implementation-ready architecture docs.
 

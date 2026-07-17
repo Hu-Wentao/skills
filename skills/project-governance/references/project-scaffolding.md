@@ -1,4 +1,4 @@
-# Project Scaffolding Rules
+# Project Bootstrap Scaffolding Rules
 
 Use these rules when bootstrapping or documenting a project's initial engineering shape.
 

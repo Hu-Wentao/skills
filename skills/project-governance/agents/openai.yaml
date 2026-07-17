@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern documents, Git, skills, and defects"
-  default_prompt: "Use $project-governance to review or maintain this project's governed documents, Git lineage, skills, defect repairs, or defect ledger."
+  short_description: "Bootstrap design and govern project lifecycle"
+  default_prompt: "Use $project-governance to bootstrap this project design or govern its requirements, plans, Git lineage, skills, defects, and verification."

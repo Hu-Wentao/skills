@@ -6,7 +6,6 @@
       "title": "Project Lifecycle",
       "description": "Skills for bootstrapping projects and governing requirements, plans, versions, defects, and verification.",
       "skills": [
-        "project-design-bootstrap",
         "project-governance"
       ]
     },

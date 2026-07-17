@@ -1,4 +1,0 @@
-interface:
-  display_name: "Project Design Bootstrap"
-  short_description: "Bootstrap project design and scaffolding"
-  default_prompt: "Use $project-design-bootstrap to turn this project idea or legacy codebase into concise design docs and scaffolding rules."
