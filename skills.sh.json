@@ -30,8 +30,7 @@
       "title": "Git Workflows",
       "description": "Skills for worktree-based development and controlled branch merging.",
       "skills": [
-        "git-worktree",
-        "merge-branch-into-current"
+        "git-worktree"
       ]
     },
     {

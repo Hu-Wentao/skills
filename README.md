@@ -22,8 +22,7 @@
 
 ### Git 工作流
 
-- [`git-worktree`](skills/git-worktree)：创建和管理 Git worktree 开发环境。
-- [`merge-branch-into-current`](skills/merge-branch-into-current)：使用 merge commit 将指定分支合并到当前分支。
+- [`git-worktree`](skills/git-worktree)：管理 Git worktree 的创建、分支合并与安全清理完整流程。
 
 ### Python UI
 
