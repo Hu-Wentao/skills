@@ -1,0 +1,4 @@
+interface:
+  display_name: "安装配置 Xray REALITY"
+  short_description: "安装、配置、验证并维护 VLESS REALITY 节点"
+  default_prompt: "使用 $install-xray-reality 在指定 Linux 服务器上安全安装并配置 Xray REALITY。"
