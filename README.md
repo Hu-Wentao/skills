@@ -31,7 +31,7 @@
 
 ### 知识与文档
 
-- [`make-markdown-queryable`](skills/make-markdown-queryable)：查询半结构化 Markdown，并按需建立持久化查询契约。
+- [`queryable-markdown`](skills/queryable-markdown)：只读查询普通 Markdown，并创建、维护、编辑和查询具有持久化查询契约的 Markdown 文档。
 
 ## 安装
 > 方式1. 通过 pnpm dlx 临时使用 vercel agent-skills 安装本仓库技能

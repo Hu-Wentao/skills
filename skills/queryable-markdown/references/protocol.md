@@ -1,30 +1,63 @@
-# MDQ Profile Protocol v1
+# MDQ Persistent Query Contract Protocol v1
 
-Use this reference when creating, reviewing, or repairing an `mdq` profile. A profile is optional persistent YAML metadata that makes repeated queries deterministic and reusable; it is not required for a read-only, skill-level query. Keep profiles declarative and small; the Markdown remains the source of truth.
+Use this reference when creating, querying, editing, reviewing, or repairing a Markdown document governed by an `mdq` profile. The profile is a persistent query contract that makes record identity, boundaries, fields, recovery, and repeated queries deterministic; it is not required for a read-only query of ordinary Markdown. Keep contracts declarative and small. The Markdown source remains authoritative.
 
 ## Contents
 
-1. Operating modes and write authority
-2. Profile placement
-3. Complete example
-4. Profile schema
-5. Record and field extraction
-6. Recovery and confidence
-7. Result and diagnostic contract
-8. Index validity
-9. Compatibility and security
+1. Document states, operations, and write authority
+2. Contract lifecycle
+3. Profile placement
+4. Complete example
+5. Profile schema
+6. Record and field extraction
+7. Recovery and confidence
+8. Result and diagnostic contract
+9. Index validity
+10. Compatibility and security
 
-## 1. Operating Modes and Write Authority
+## 1. Document States, Operations, and Write Authority
 
 An `mdq` profile is a persistent query contract and optimization for repeated, deterministic extraction. Its absence does not make a Markdown document unqueryable: `query` and `search` may infer temporary selectors from Markdown structure, generic ID headings, and conservative ID labels. Temporary selectors live only in memory and never modify the Markdown or create a sidecar. Report `temporary_selectors_inferred` or `temporary_selectors_applied` so callers can distinguish this mode from a persisted contract.
 
 For non-generic conventions, callers may provide ephemeral `--record-level`, `--key-label`, `--key-pattern`, and `--key-group` arguments. `--record-level` and `--key-label` are repeatable. Apply the same regex length, group validation, and timeout limits as persistent profiles. When no safe record boundary can be recovered, return line-local evidence with `line_local_fallback`; do not fabricate a larger record.
 
-An ordinary request to find or retrieve specific information is read-only, whether the document has a profile or not. It does not authorize adding or changing a profile, inserting record markers, creating or rebuilding an index, or repairing invalid metadata. Perform those writes only when the user explicitly asks to make or persist the document as queryable, add query metadata or an index, or update or repair an existing query contract.
+An ordinary request to find, retrieve, summarize, or inspect specific information is read-only, whether the document has a profile or not. The presence of a valid contract enables deterministic editing but does not authorize a write.
+
+Without a valid contract, authored-content editing is outside this protocol. The only supported write is an explicitly requested creation or conversion into a contracted document. Do not treat a generic request to edit ordinary Markdown as permission to add a contract.
+
+With a valid contract, an explicit request may authorize adding, updating, deleting, renaming, or reorganizing authored records. Resolve each existing target through the contract, reject ambiguous identity, patch only the bounded authorized source, and validate the complete contract after the write. Permission to edit authored content does not implicitly authorize changing the profile, identity scheme, markers, or index policy.
+
+Create or change a profile, insert markers, repair invalid metadata, or change index policy only when the user explicitly requests creation, conversion, contract maintenance, or repair. Rebuilding an already-declared index is an expected derived-cache step after an authorized contracted-document write; it does not expand permission to authored content.
 
 The profile is data, not a script. It may declare selectors, field mappings, tolerance, versioning, and a document-relative index path. It must never contain executable commands, code, imports, URLs to follow, or dynamic plugin names.
 
-## 2. Profile Placement
+## 2. Contract Lifecycle
+
+A contracted document moves through these structural states:
+
+- **ordinary**: no declared profile; temporary read-only selectors may be inferred;
+- **valid**: one supported profile deterministically resolves its declared structure;
+- **drifted**: a valid profile exists but authored structure requires supported recovery or produces warnings;
+- **invalid**: a declared profile is conflicting, unsafe, malformed, or unsupported and cannot govern reliable edits.
+
+Creating a new contracted document writes the requested authored records and the smallest contract that addresses them. Converting an existing document describes its current stable structure; it must not normalize or rewrite business content merely to simplify the profile.
+
+Before an authored-record edit, require `valid` or a deliberately accepted `drifted` state whose warnings do not affect the target identity or boundary. Never edit an authored record under an `invalid` contract. Repair first only when repair is authorized.
+
+After every authored-record or contract write:
+
+1. validate the profile and safe index path;
+2. diagnose all records and recovery paths;
+3. query every affected identity, an unaffected representative identity, and an absent identity;
+4. verify that source ranges remain disjoint and expected;
+5. rebuild a declared index only after source checks pass;
+6. inspect the source diff for changes outside authorized ranges.
+
+Deletion and identity rename can leave references behind. Search the document and report remaining references; update them only when the request includes reference maintenance and each occurrence is semantically unambiguous. Cross-document reference policy belongs to the calling domain, not this generic contract.
+
+The profile describes extraction, not business validity or field editability. A field extracted by `regex` is not automatically a safe write address. Locate writes through a reliable record boundary and a source-exact span, or stop for clarification.
+
+## 3. Profile Placement
 
 Prefer one profile per document.
 
@@ -50,7 +83,7 @@ version: 1
 
 Do not create a second frontmatter block. Do not repair unrelated frontmatter merely to add a profile. A comment profile is active only at byte zero or immediately after recognized complete frontmatter; identical text inside prose or a code example is inert. If valid YAML frontmatter and a comment block both define a profile, reject the document with `profile_conflict`; do not choose a precedence silently. Match the comment sentinel only when `mdq` is followed by a newline, so record markers are never parsed as profiles.
 
-## 3. Complete Example
+## 4. Complete Example
 
 ```yaml
 version: 1
@@ -83,7 +116,7 @@ index: .mdq/requirements.json
 
 For YAML frontmatter, nest this example under `mdq:`. For an HTML comment profile, use it directly.
 
-## 4. Profile Schema
+## 5. Profile Schema
 
 ### Top Level
 
@@ -130,7 +163,7 @@ Each field declares one source:
 
 Use `null` when a declared field is absent, truncated, or cannot be extracted confidently. Preserve a recovered partial value only when the source range proves it exists, and attach a diagnostic.
 
-## 5. Record and Field Extraction
+## 6. Record and Field Extraction
 
 ### Headings
 
@@ -174,7 +207,7 @@ Keep these cases queryable when identity is recoverable:
 
 Do not address a record whose key cannot be recovered. Report its source range as an orphan candidate when possible.
 
-## 6. Recovery and Confidence
+## 7. Recovery and Confidence
 
 Use these confidence bands consistently:
 
@@ -194,7 +227,7 @@ Use recovery layers in order:
 3. Source-line recovery outside known code ranges.
 4. Text-search candidates.
 
-## 7. Result and Diagnostic Contract
+## 8. Result and Diagnostic Contract
 
 The same top-level JSON envelope applies to persisted and temporary queries. For profile-free results, diagnostics identify the temporary selector source, confidence is capped at `0.8` for inferred selectors or `0.9` for explicit selectors, and the default extracted fields are `title` and `body`. Line-local fallback uses `context`. These results are source-located but do not claim the repeatability of a persisted field contract.
 
@@ -239,7 +272,7 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 
 Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, or failed writes.
 
-## 8. Index Validity
+## 9. Index Validity
 
 Store at least:
 
@@ -249,11 +282,11 @@ Store at least:
 - SHA-256 of the normalized profile.
 - Extracted records, fields, confidence, diagnostics, and source ranges.
 
-Canonicalize the parsed profile as UTF-8 JSON with sorted keys and no insignificant whitespace before hashing. Accept an index candidate only when both hashes and all supported schema/engine versions match, then compare its records with a fresh deterministic extraction before answering. On mismatch or corrupt cache data, answer from the current source, attach `index_stale` or `index_invalid`, and leave the stale file untouched during an ordinary query. Rebuild or rewrite it only as part of an explicitly requested persistent queryability change.
+Canonicalize the parsed profile as UTF-8 JSON with sorted keys and no insignificant whitespace before hashing. Accept an index candidate only when both hashes and all supported schema/engine versions match, then compare its records with a fresh deterministic extraction before answering. On mismatch or corrupt cache data, answer from the current source, attach `index_stale` or `index_invalid`, and leave the stale file untouched during an ordinary query. Rebuild or rewrite it only as part of an authorized contracted-document write or an explicit index-maintenance request.
 
 When `index` is absent, parse without writing. Resolve a relative index path against the Markdown file's directory. Its real path must remain inside that directory tree, must not equal or alias the source document, and must not be a symlink. Reject every other path during validation and refuse query/index operations while it is unsafe.
 
-## 9. Compatibility and Security
+## 10. Compatibility and Security
 
 - Parse CommonMark/GFM structure without rendering HTML. Mask only the content of HTML comments so surrounding headings and labels remain visible. Treat `pre`/`code`/`script`/`style` blocks, capitalized MDX component blocks whose opening tag ends on the same line, and Hugo `highlight` blocks as opaque. Multiline MDX opening tags and other extension syntax are not guaranteed opaque in v1; inspect and report them as compatibility limits before preparing such a document.
 - Limit profile regex length and apply regex only to bounded heading, field, or record text. Enforce a per-match timeout and return `regex_timeout` instead of continuing after the limit.

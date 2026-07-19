@@ -45,7 +45,7 @@
       "title": "Knowledge & Documents",
       "description": "Skills for querying and maintaining structured knowledge in documents.",
       "skills": [
-        "make-markdown-queryable"
+        "queryable-markdown"
       ]
     }
   ]

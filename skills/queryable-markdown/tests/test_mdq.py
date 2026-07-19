@@ -909,6 +909,69 @@ Partial refunds are supported.
             self.assertEqual(result["count"], 1)
             self.assertEqual(result["records"][0]["line_start"], 5)
 
+    def test_contracted_record_edit_lifecycle_remains_queryable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fields = "  status:\n    source: label\n    labels: [Status]"
+            path = self.document(
+                root,
+                profile(fields=fields, index=True)
+                + """
+## REQ-1: First
+
+- Status: planned
+
+## REQ-2: Second
+
+- Status: active
+""",
+            )
+            self.run_cli(root, "validate", str(path))
+            self.run_cli(root, "index", str(path))
+
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "\n## REQ-3: Third\n\n- Status: planned\n",
+                encoding="utf-8",
+            )
+            added = self.run_cli(root, "query", str(path), "--id", "REQ-3")
+            self.assertEqual(added["records"][0]["fields"]["status"], "planned")
+            self.assertIn(
+                "index_stale", {item["code"] for item in added["diagnostics"]}
+            )
+
+            content = path.read_text(encoding="utf-8")
+            content = content.replace(
+                "## REQ-3: Third\n\n- Status: planned",
+                "## REQ-3: Third\n\n- Status: accepted",
+            )
+            content = content.replace("## REQ-2: Second", "## REQ-20: Second")
+            content = content.replace(
+                "\n## REQ-1: First\n\n- Status: planned\n", "", 1
+            )
+            path.write_text(content, encoding="utf-8")
+
+            deleted = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            old_key = self.run_cli(root, "query", str(path), "--id", "REQ-2")
+            renamed = self.run_cli(root, "query", str(path), "--id", "REQ-20")
+            unaffected = self.run_cli(root, "query", str(path), "--id", "REQ-3")
+            self.assertEqual(deleted["status"], "not_found")
+            self.assertEqual(old_key["status"], "not_found")
+            self.assertEqual(renamed["status"], "matched")
+            self.assertEqual(unaffected["status"], "matched")
+            self.assertEqual(
+                unaffected["records"][0]["fields"]["status"], "accepted"
+            )
+
+            self.run_cli(root, "validate", str(path))
+            self.run_cli(root, "diagnose", str(path))
+            rebuilt = self.run_cli(root, "index", str(path))
+            self.assertEqual(rebuilt["record_count"], 2)
+            verified = self.run_cli(root, "query", str(path), "--id", "REQ-20")
+            self.assertIn(
+                "index_verified", {item["code"] for item in verified["diagnostics"]}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
