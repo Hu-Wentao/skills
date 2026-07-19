@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+"""Tests for fr-mvvm-contract project profile resolver."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+TEST_DIR = Path(__file__).resolve().parent
+SKILL_ROOT = TEST_DIR.parents[1]
+RESOLVE_SCRIPT = TEST_DIR.parent / "resolve.py"
+
+
+def find_repo_root(start: Path) -> Path:
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    raise AssertionError(f"test skill is not inside a Git repository: {start}")
+
+
+REPO_ROOT = find_repo_root(TEST_DIR)
+
+
+def bundled_reference(name: str) -> str:
+    path = SKILL_ROOT / "references" / name
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def run_resolver(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run the resolver from the repository root."""
+
+    return subprocess.run(
+        [sys.executable, str(RESOLVE_SCRIPT), *args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def manifest_value(manifest: str, key: str) -> str:
+    """Read a top-level scalar from the simple manifest."""
+
+    prefix = f"{key}: "
+    for line in manifest.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix)
+    raise AssertionError(f"missing manifest key: {key}\n{manifest}")
+
+
+class ResolveTest(unittest.TestCase):
+    """Resolver behavior tests."""
+
+    def test_adapt_project_uses_bundled_scaffold_baseline(self) -> None:
+        result = run_resolver("--task", "adapt_project")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("task: adapt_project", result.stdout)
+        self.assertIn(
+            bundled_reference("adapt_project.md"),
+            result.stdout,
+        )
+        self.assertIn("bundled ACDD scaffold", result.stdout)
+        self.assertIn("Preserve existing behavior", result.stdout)
+
+    def test_adapt_project_falls_back_when_existing_profile_omits_task(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_adapt_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: fr-mvvm-contract.config.v1",
+                        "profile: existing",
+                        "tasks:",
+                        "  gen_page:",
+                        "    base: references/gen_page.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_resolver("--task", "adapt_project", "--cwd", str(root))
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("task: adapt_project", result.stdout)
+        self.assertIn("profile: existing", result.stdout)
+        self.assertIn("references/adapt_project.md", result.stdout)
+
+    def test_gen_page_manifest_writes_cache(self) -> None:
+        result = run_resolver("--task", "gen_page")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("status: ready", result.stdout)
+        self.assertIn("profile: generic", result.stdout)
+        self.assertIn("instructions_id: fr-mvvm-contract/gen_page@", result.stdout)
+        self.assertIn(
+            bundled_reference("gen_page.md"),
+            result.stdout,
+        )
+        path = None
+        for line in result.stdout.splitlines():
+            if line.startswith("  path: "):
+                path = line.removeprefix("  path: ")
+                break
+        self.assertIsNotNone(path, msg=result.stdout)
+        cache_path = REPO_ROOT / str(path)
+        self.assertTrue(cache_path.exists(), msg=str(cache_path))
+        cache_text = cache_path.read_text(encoding="utf-8")
+        self.assertIn("# Resolved fr-mvvm-contract Instructions", cache_text)
+        self.assertNotIn("## Project Profile Instructions", cache_text)
+
+    def test_gen_page_instructions_id_is_stable(self) -> None:
+        first = run_resolver("--task", "gen_page")
+        second = run_resolver("--task", "gen_page")
+
+        self.assertEqual(first.returncode, 0, msg=first.stdout + first.stderr)
+        self.assertEqual(second.returncode, 0, msg=second.stdout + second.stderr)
+        self.assertEqual(
+            manifest_value(first.stdout, "instructions_id"),
+            manifest_value(second.stdout, "instructions_id"),
+        )
+
+    def test_emit_instructions_prints_only_instructions(self) -> None:
+        result = run_resolver("--task", "gen_component", "--emit", "instructions")
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertTrue(
+            result.stdout.startswith("# Resolved fr-mvvm-contract Instructions"),
+            msg=result.stdout,
+        )
+        self.assertNotIn("## Project Profile Instructions", result.stdout)
+        self.assertNotIn("status: ready", result.stdout)
+
+    def test_generic_fallback_works_without_project_config(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_generic_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            references = root / ".agents/skills/fr-mvvm-contract/references"
+            references.mkdir(parents=True)
+            (references / "gen_component.md").write_text(
+                "# Generic component fallback\n", encoding="utf-8"
+            )
+
+            result = run_resolver(
+                "--task",
+                "gen_component",
+                "--cwd",
+                str(root),
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("profile: generic", result.stdout)
+            self.assertIn("description_language: English", result.stdout)
+            self.assertIn("status: ready", result.stdout)
+            self.assertIn("Using generic fr-mvvm-contract fallback", result.stdout)
+
+    def test_contract_description_language_changes_resolved_instructions(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_language_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            config_path = config_root / "config.yaml"
+
+            def write_config(language: str) -> None:
+                config_path.write_text(
+                    "\n".join(
+                        [
+                            "schema: fr-mvvm-contract.config.v1",
+                            "profile: language-test",
+                            "contract:",
+                            f"  description_language: {language}",
+                            "tasks:",
+                            "  gen_component:",
+                            "    base: references/gen_component.md",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+
+            write_config("English")
+            english = run_resolver(
+                "--task", "gen_component", "--cwd", str(root)
+            )
+            write_config("zh-CN")
+            chinese = run_resolver(
+                "--task", "gen_component", "--cwd", str(root)
+            )
+            instructions = run_resolver(
+                "--task",
+                "gen_component",
+                "--emit",
+                "instructions",
+                "--cwd",
+                str(root),
+            )
+
+        self.assertEqual(english.returncode, 0, msg=english.stdout + english.stderr)
+        self.assertEqual(chinese.returncode, 0, msg=chinese.stdout + chinese.stderr)
+        self.assertEqual(
+            instructions.returncode, 0, msg=instructions.stdout + instructions.stderr
+        )
+        self.assertIn("description_language: English", english.stdout)
+        self.assertIn("description_language: zh-CN", chinese.stdout)
+        self.assertNotEqual(
+            manifest_value(english.stdout, "instructions_id"),
+            manifest_value(chinese.stdout, "instructions_id"),
+        )
+        self.assertIn("Write descriptive contract values in zh-CN", instructions.stdout)
+        self.assertIn("Keep stable contract labels", instructions.stdout)
+
+    def test_contract_description_language_must_be_non_empty(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_language_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: fr-mvvm-contract.config.v1",
+                        "profile: language-test",
+                        "contract:",
+                        "  description_language: ''",
+                        "tasks:",
+                        "  gen_component:",
+                        "    base: references/gen_component.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_resolver(
+                "--task", "gen_component", "--cwd", str(root)
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "contract.description_language must be a non-empty string",
+            result.stdout,
+        )
+
+    def test_bundled_skill_fallback_works_in_new_repository(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_bundled_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+
+            result = run_resolver("--task", "gen_page", "--cwd", str(root))
+
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            self.assertIn("profile: generic", result.stdout)
+            self.assertIn("status: ready", result.stdout)
+            self.assertIn(
+                str(SKILL_ROOT / "references/gen_page.md"),
+                result.stdout,
+            )
+
+    def test_package_bff_has_generic_package_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_package_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+
+            result = run_resolver("--task", "package_bff", "--cwd", str(root))
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("task: package_bff", result.stdout)
+        self.assertIn("profile: generic", result.stdout)
+        self.assertIn("package_bff.py", result.stdout)
+        self.assertIn("package:", result.stdout)
+        self.assertNotIn("  sync:", result.stdout)
+
+    def test_package_bff_falls_back_when_existing_profile_omits_task(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_package_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: fr-mvvm-contract.config.v1",
+                        "profile: existing",
+                        "tasks:",
+                        "  gen_page:",
+                        "    base: references/gen_page.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_resolver("--task", "package_bff", "--cwd", str(root))
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("profile: existing", result.stdout)
+        self.assertIn("package_bff.py", result.stdout)
+
+    def test_project_package_and_sync_commands_override_generic_command(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_sync_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            (config_root / "package_bff.md").write_text(
+                "# Project BFF delivery\n", encoding="utf-8"
+            )
+            marker = root / "resolver-must-not-run-sync"
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: fr-mvvm-contract.config.v1",
+                        "profile: delivery-repo",
+                        "tasks:",
+                        "  package_bff:",
+                        "    base: references/package_bff.md",
+                        "    profile: package_bff.md",
+                        "    commands:",
+                        "      package: ./tool/package_contracts.sh",
+                        f"      sync: touch {marker}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_resolver("--task", "package_bff", "--cwd", str(root))
+            marker_created = marker.exists()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("profile: delivery-repo", result.stdout)
+        self.assertIn("package: ./tool/package_contracts.sh", result.stdout)
+        self.assertIn(f"sync: touch {marker}", result.stdout)
+        self.assertFalse(marker_created, "resolver must never execute sync commands")
+
+    def test_different_project_delivery_profiles_have_different_ids(self) -> None:
+        manifests: list[str] = []
+        for profile, sync in (
+            ("alpha", "./tool/sync_alpha.sh"),
+            ("beta", "./tool/sync_beta.sh"),
+        ):
+            with tempfile.TemporaryDirectory(prefix=f"fr_resolve_{profile}_") as raw:
+                root = Path(raw)
+                (root / ".git").mkdir()
+                config_root = root / ".agents/skills-config/fr-mvvm-contract"
+                config_root.mkdir(parents=True)
+                (config_root / f"{profile}.md").write_text(
+                    f"# {profile} delivery\n", encoding="utf-8"
+                )
+                (config_root / "config.yaml").write_text(
+                    "\n".join(
+                        [
+                            "schema: fr-mvvm-contract.config.v1",
+                            f"profile: {profile}",
+                            "tasks:",
+                            "  package_bff:",
+                            "    base: references/package_bff.md",
+                            f"    profile: {profile}.md",
+                            "    commands:",
+                            f"      sync: {sync}",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                result = run_resolver(
+                    "--task", "package_bff", "--cwd", str(root)
+                )
+                self.assertEqual(
+                    result.returncode, 0, msg=result.stdout + result.stderr
+                )
+                manifests.append(result.stdout)
+
+        self.assertNotEqual(
+            manifest_value(manifests[0], "instructions_id"),
+            manifest_value(manifests[1], "instructions_id"),
+        )
+        self.assertIn("profile: alpha", manifests[0])
+        self.assertIn("sync: ./tool/sync_alpha.sh", manifests[0])
+        self.assertIn("profile: beta", manifests[1])
+        self.assertIn("sync: ./tool/sync_beta.sh", manifests[1])
+
+    def test_package_profile_path_cannot_escape_config_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fr_resolve_escape_") as raw_root:
+            root = Path(raw_root)
+            (root / ".git").mkdir()
+            config_root = root / ".agents/skills-config/fr-mvvm-contract"
+            config_root.mkdir(parents=True)
+            (root / ".agents/skills-config/outside.md").write_text(
+                "# outside\n", encoding="utf-8"
+            )
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: fr-mvvm-contract.config.v1",
+                        "profile: escape",
+                        "tasks:",
+                        "  package_bff:",
+                        "    base: references/package_bff.md",
+                        "    profile: ../outside.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_resolver("--task", "package_bff", "--cwd", str(root))
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("escapes", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

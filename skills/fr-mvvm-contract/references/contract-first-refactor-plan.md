@@ -1,0 +1,285 @@
+# FR MVVM Contract Refactor Plan
+
+## Contents
+
+- Purpose
+- Source repository boundary
+- Accepted architecture
+- API semantic model
+- Approval flow
+- Executable validation
+- Runtime integration gate
+- Runtime scripts
+- Migration
+- Verification
+- Breaking changes
+- Potential optimizations
+
+## Purpose
+
+Refactor `fr-mvvm-contract` from a form-correct DTO generator into a generic,
+contract-first component skill that proves API meaning before generating code.
+A contract must describe either the data needed to render UI or a closed
+business operation. A syntactically valid request/response pair is not enough.
+
+The effective minimum combines an approval gate with executable validation:
+
+1. Generate invalid API placeholders instead of a plausible `/bootstrap` path.
+2. Classify APIs as `data` or `business`.
+3. Require structured Data or Business semantics before DTO derivation.
+4. Trace every BFF request field to an authoritative source and backend purpose.
+5. Reject UI-only business command responses.
+6. Distinguish contract delivery from required runtime integration.
+
+## Source repository boundary
+
+This repository is the reusable skill source. Keep all implementation,
+examples, tests, and references generic. Do not embed consumer project names,
+business-specific keyword lists, repository paths, or project security policy.
+
+Consumer repositories may add project-owned configuration after installing the
+skill. Such configuration is outside this refactor and must not become a
+project-named branch in the source skill.
+
+## Accepted architecture
+
+The primary unit is a component contract, not a page contract:
+
+```text
+order_content/
+  order_content.dart
+  order_content.c.dart
+  order_content.thm.dart       # optional component theme implementation
+  order_content.v.dart
+  order_content.vm.dart
+  order_content.srv.dart       # component-owned service when declared
+  order_content.bff.md
+  order_content.page.dart      # optional Page Support
+```
+
+`order_content.dart` plus its parts are one independently importable component
+library. `order_content.page.dart` is a separate Dart library that imports it.
+Deleting `.page.dart` removes only route access and router registration; the
+component library remains analyzable and reusable.
+
+`XxxPage` is the route adapter. `XxxView` is the component entry and creates
+its own `FrProvider`. `XxxViewModel` owns
+`FrBlocViewModel<XxxEvent, XxxModel>` behavior. Do not give pure presentation
+components a VM merely for symmetry.
+
+Page Support contains route entry, route-owned `XxxPageArgs`, expansion into
+ordinary `XxxView` fields, and the `/// Component: [XxxView]` marker. It does
+not own models, DTOs, API semantics, services, Providers, or UI implementation.
+
+The Component Contract contains Figma facts, API classification and semantics,
+request provenance, runtime/service ownership, state ownership, component and
+Widget choices, theme, models/DTOs, Events, and ViewModel references.
+
+## API semantic model
+
+Read `api-contract-semantics.md` for the normative schema and examples.
+
+Every API declares exactly one type:
+
+```dart
+/// API Type: data
+```
+
+or:
+
+```dart
+/// API Type: business
+```
+
+A data API supplies the complete UI read model and declares UI Data, Source,
+Loading/Refresh, and Empty/Error behavior. It must not cause a business state
+transition.
+
+A business API completes a user operation and declares Goal, Upstream Proof,
+Effect, Success Condition, Failure Cases with App recovery/display, and
+Navigation Ownership. Its response contains a non-UI result referenced by the
+Success Condition.
+
+Prefer separate data and business APIs when a component both loads content and
+submits an operation. Apply the stricter business rules when an upstream
+endpoint cannot be split.
+
+Every BFF request field uses the stable provenance form:
+
+```dart
+/// Request Field Sources:
+/// - field <- authoritative source | backend purpose
+```
+
+Every BFF contract independently chooses runtime scope through `BFF Service`.
+Omit the field for contract-only delivery; declare `component [Type]` or
+`shared [Type]` when runtime integration is required. Service scope is
+independent of API type.
+
+## Approval flow
+
+Use this order:
+
+```text
+Page/component requirement
+→ Cross-component data and business flow
+→ API classification
+→ Data read model or business proof/effect/result/error design
+→ Req/Rsp/Error and request-field provenance
+→ Optional service ownership
+→ User approval
+→ Contract validation
+→ DTO/BFF generation
+→ Service implementation
+→ ViewModel implementation
+→ View implementation
+→ Runtime validation
+→ Analyzer and project checks
+```
+
+Before drafting DTOs, answer the applicable semantic questions and trace each
+request field. Do not derive API meaning by copying fields from a mock
+ViewModel.
+
+The generated draft is intentionally invalid. It contains pending API type,
+method/path, Data and Business sections, field provenance, and a pending service
+value. Choose one API type, remove the unused semantic section, replace every
+pending value, and remove the service declaration for contract-only delivery
+before defining the DTOs.
+
+If any semantic item is unknown, stop for user input or design approval. Do
+not invent `/bootstrap`, `nextRoute`, proof tokens, success flags, or error
+codes.
+
+Present API type, method/path, Req/Rsp/Error, the applicable semantic section,
+request provenance and optional service ownership together for approval.
+
+## Executable validation
+
+Contract-phase validation rejects:
+
+- `.c.dart` contract sections written as `/* ... */` blocks instead of
+  consecutive `///` documentation comments;
+- pending/TODO/TBD/unknown markers and generated `/bootstrap` paths;
+- missing or invalid API type;
+- mixed Data and Business sections;
+- incomplete Data or Business fields;
+- business GET and data PUT/PATCH/DELETE mismatches;
+- request fields without an exact source and purpose entry;
+- provenance entries for unknown request fields;
+- failures without `error -> App recovery/display` mappings;
+- command responses containing only navigation/display fields;
+- Success Condition text that references no non-UI response field;
+- obsolete `BFF Runtime`, `BFF Service: none`, and invalid service declarations.
+
+Use POST, PUT, PATCH, and DELETE as business command transports. Allow a
+query-style POST for a data API, while still forbidding business side effects.
+
+Do not maintain a universal allowlist of business result names. Prove semantics
+by requiring Success Condition to reference a real response field that is not
+only UI/navigation data.
+
+## Runtime integration gate
+
+When `BFF Service` is declared, final validation proves:
+
+1. A component `.srv.dart` exists and is declared, or a shared service type is
+   named explicitly.
+2. The ViewModel constructor receives and retains that service.
+3. A registered business command or data load/refresh handler is asynchronous.
+4. The handler constructs the approved BFF request.
+5. It passes that request to an awaited service call.
+6. It retains the BFF response and uses response fields to emit state.
+7. The model exposes submitting/loading and failure state.
+8. The handler restores in-flight state on success and failure.
+9. Failure handling emits a UI-visible failure value.
+10. Navigation is not triggered before the successful response.
+
+Use narrow, documented source conventions for deterministic validation. Fail
+with an actionable message when source is too dynamic to prove. Do not claim
+runtime completion merely because `xxx.bff.md` exists.
+
+Omitting `BFF Service` selects contract-only delivery and skips runtime wiring.
+It does not bypass contract semantics.
+
+## Runtime scripts
+
+- `resolve.py`: resolve generic and optional consumer-owned instructions.
+- `draft_contract.py`: draft shell, invalid API/semantic placeholders,
+  component contract, and optional adapter.
+- `contract_core.py` / `contract_parser.py`: parse stable contract facts,
+  including API type and optional service ownership.
+- `read_contract.py`: print stable AI-readable page/component summaries and
+  semantic sections.
+- `validate_contract.py`: enforce approval and final/runtime gates.
+- `generate_from_contract.py`: preflight and prepare a rollback-protected
+  derived file set from approved source, never from a hidden JSON spec or mock
+  ViewModel; never replace implemented `.v/.vm` files.
+
+Keep the lightweight structured parser while it can prove the documented
+conventions. Add a Dart analyzer AST bridge only when supported implementation
+patterns outgrow it.
+
+## Migration
+
+1. Preserve the component library plus optional `.page.dart` adapter layout.
+2. Replace generated `/bootstrap` with invalid pending method/path markers.
+3. Add API Type, Data/Business, Request Field Sources, and a pending BFF Service
+   declaration to draft contracts.
+4. Parse API type and optional service ownership into reader output.
+5. Enforce semantics before `generate_from_contract.py` mutates any file.
+6. Enforce runtime execution during final validation when required.
+7. Update skill instructions, references, examples, and all affected fixtures
+   as one schema migration.
+8. Migrate consumer contracts explicitly; do not silently grandfather
+   semantically incomplete contracts.
+
+## Verification
+
+- Draft tests prove no usable method/path or `/bootstrap` is generated.
+- Parser/reader tests expose API type, optional service ownership, and
+  structured sections.
+- Data and Business contract tests cover accepted schemas and every required
+  field.
+- Provenance tests reject missing, duplicate, pending, and unknown entries.
+- Command tests reject UI-only responses and unmatched success conditions.
+- Failure tests reject error lists without recovery/display mappings.
+- Runtime tests reject every missing service, injection, async handler,
+  request, awaited call, response use, failure state, reset, and navigation
+  ordering requirement.
+- Existing component, Theme, BFF, resolver, package, and Figma binding suites
+  remain green.
+- Skill structure validation and repository diff checks pass.
+
+## Breaking changes
+
+- Existing strict contract/final validation callers must add API type and the
+  applicable Data or Business section.
+- BFF contracts must trace every request field and omit or declare service
+  ownership according to delivery scope.
+- Generated drafts no longer contain a usable default API path.
+- Business commands with UI-only responses fail.
+- Declaring `BFF Service` makes actual service invocation part of final
+  validation; a generated BFF artifact alone is insufficient.
+- Source-phase validation remains a structural compatibility entry, but is not
+  an approval or completion gate.
+
+No compatibility flag bypasses the semantic gates. Omit `BFF Service` only
+when runtime wiring is genuinely outside the approved delivery.
+
+## Potential optimizations
+
+These are follow-up options, not part of the minimum refactor:
+
+1. Emit JSON validation reports with rule IDs and source locations for CI/IDE.
+2. Add a Dart analyzer AST bridge for complex service/control-flow patterns.
+3. Build cross-component provenance graphs for upstream-to-request fields.
+4. Produce semantic contract diffs for type/proof/effect/result/error changes.
+5. Add an extensible error taxonomy for retryability and recovery actions.
+6. Add optional data policies for cache freshness, pagination, partial data,
+   stale-while-refresh, and offline behavior.
+7. Add optional business policies for idempotency, optimistic concurrency,
+   replay protection, and audit correlation.
+8. Generate contract-test skeletons without generating business decisions.
+9. Provide a migration inventory grouped by missing semantic gate.
+10. Add named multi-API blocks after the single-API schema is stable.
