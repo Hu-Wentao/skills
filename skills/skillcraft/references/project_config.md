@@ -51,6 +51,12 @@ Keep these in the target repository's `skills-config`:
 - repository-specific policy and validation entry points;
 - profile instructions reviewed with the project.
 
+Treat the configured `profile` value as an opaque identifier in reusable skill
+code. Never branch on a concrete profile name such as `if profile ==
+"customer-a"`; express that behavior through the selected config/profile
+content instead. Resolver tests must run against temporary generic and project
+fixtures and must not assert the repository that happens to contain the skill.
+
 Do not put transient user input, secrets, generated output, or runtime state in
 `skills-config`.
 
@@ -116,6 +122,9 @@ same skill in two temporary repositories with different profiles and prove that
 their resolved instructions, declared commands, profile names, and
 `instructions_id` values differ. Add task-specific tests when configuration
 changes validation commands or safety boundaries.
+
+Run `quick_validate.py` after editing. It rejects reusable Python code that
+compares `profile` with a concrete string literal.
 
 ## Migration
 

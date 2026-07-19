@@ -3,6 +3,7 @@
 Quick validation script for skills - minimal version
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -10,6 +11,53 @@ from pathlib import Path
 import yaml
 
 MAX_SKILL_NAME_LENGTH = 64
+
+
+def _is_profile_expression(node):
+    """Return whether an AST node reads a project profile identifier."""
+
+    return (isinstance(node, ast.Name) and node.id == "profile") or (
+        isinstance(node, ast.Attribute) and node.attr == "profile"
+    )
+
+
+def _contains_string_literal(node):
+    """Return whether a comparison operand embeds a concrete string."""
+
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+        return any(_contains_string_literal(element) for element in node.elts)
+    return False
+
+
+def find_literal_profile_branch(skill_path):
+    """Find reusable Python code branching on a concrete project profile."""
+
+    scripts = Path(skill_path) / "scripts"
+    if not scripts.is_dir():
+        return None
+    for path in sorted(scripts.rglob("*.py")):
+        if "tests" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                operands = [node.left, *node.comparators]
+                if any(_is_profile_expression(item) for item in operands) and any(
+                    _contains_string_literal(item) for item in operands
+                ):
+                    return path, node.lineno
+            if isinstance(node, ast.Match) and _is_profile_expression(node.subject):
+                for case in node.cases:
+                    if isinstance(case.pattern, ast.MatchValue) and _contains_string_literal(
+                        case.pattern.value
+                    ):
+                        return path, case.pattern.lineno
+    return None
 
 
 def validate_skill(skill_path):
@@ -86,6 +134,19 @@ def validate_skill(skill_path):
             return (
                 False,
                 f"Description is too long ({len(description)} characters). Maximum is 1024 characters.",
+            )
+
+    project_configured = (skill_path / "references/project_config.md").is_file()
+    if project_configured:
+        literal_branch = find_literal_profile_branch(skill_path)
+        if literal_branch:
+            path, line = literal_branch
+            relative = path.relative_to(skill_path)
+            return (
+                False,
+                f"{relative}:{line} branches on a concrete project profile. "
+                "Treat profile names as opaque and move project behavior to "
+                f".agents/skills-config/{name}/.",
             )
 
     return True, "Skill is valid!"

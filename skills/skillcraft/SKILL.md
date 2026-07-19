@@ -392,7 +392,9 @@ run and which task is selected. Keep parsing, containment validation, stable
 instruction hashing, and cache rendering in `scripts/resolve.py`. The target
 repository owns `.agents/skills-config/<skill-name>/config.yaml` and referenced
 profile files; the reusable skill repository must not ship a concrete project
-profile as if it were universal behavior.
+profile as if it were universal behavior. Treat the profile name as opaque:
+never branch on a literal project profile in reusable scripts, and never make
+resolver tests depend on the current host repository's config.
 
 #### Update SKILL.md
 
