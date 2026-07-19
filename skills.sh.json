@@ -14,7 +14,7 @@
       "description": "Skills for creating, validating, and updating reusable Codex skills.",
       "skills": [
         "skillcraft",
-        "sync-to-wyatt-skills"
+        "sync-skill-repo"
       ]
     },
     {

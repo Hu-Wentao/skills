@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Skill Repo"
+  short_description: "Sync updated skills to local source repositories"
+  default_prompt: "Use $sync-skill-repo to sync this project skill back to its registered local source repository."
