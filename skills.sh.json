@@ -13,7 +13,8 @@
       "title": "Skill Tooling",
       "description": "Skills for creating, validating, and updating reusable Codex skills.",
       "skills": [
-        "skillcraft"
+        "skillcraft",
+        "sync-to-wyatt-skills"
       ]
     },
     {

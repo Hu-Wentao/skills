@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync To Wyatt Skills"
+  short_description: "Sync a reusable project skill into wyatt_skills"
+  default_prompt: "Use $sync-to-wyatt-skills to sync this project skill into wyatt_skills, commit it, and push it."
