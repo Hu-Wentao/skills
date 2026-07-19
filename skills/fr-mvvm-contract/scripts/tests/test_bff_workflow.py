@@ -21,8 +21,13 @@ class BffWorkflowTest(unittest.TestCase):
             "environment:\n  sdk: ^3.7.0\n"
             "dependencies:\n"
             + ("  fr_acdd: any\n" if fr_acdd else "")
+            + "  dio: any\n"
+            "  efficient_dio_logger: any\n"
+            "  retrofit: any\n"
             + "  json_annotation: any\n"
             "dev_dependencies:\n"
+            "  build_runner: any\n"
+            "  retrofit_generator: any\n"
             "  json_serializable: any\n",
             encoding="utf-8",
         )
@@ -112,7 +117,18 @@ class BffWorkflowTest(unittest.TestCase):
             "args = sys.argv\n"
             "source = pathlib.Path(args[args.index('--input') + 1]).read_text()\n"
             "output = pathlib.Path(args[args.index('--output') + 1])\n"
-            "output.write_text('# generated JSON5 BFF\\n' + source)\n",
+            "output.write_text(\n"
+            "    '# generated JSON5 BFF\\n\\n'\n"
+            "    '## BFF-API\\n\\n'\n"
+            "    '### GET /orders/:orderId\\n'\n"
+            "    '- Request DTOs: [OrderContentBffReq]\\n'\n"
+            "    '- Response DTOs: [OrderContentBffRsp]\\n\\n'\n"
+            "    '#### Request JSON5\\n\\n```json5\\n{\\n'\n"
+            "    '  // Dart type: String\\n  orderId: \\'string\\',\\n'\n"
+            "    '}\\n```\\n\\n#### Response JSON5\\n\\n```json5\\n{\\n'\n"
+            "    '  // Dart type: String\\n  orderStatus: \\'string\\',\\n'\n"
+            "    '}\\n```\\n\\n' + source\n"
+            ")\n",
             encoding="utf-8",
         )
         executable.chmod(0o755)
@@ -179,6 +195,38 @@ class BffWorkflowTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(component.with_suffix(".bff.md").is_file())
+
+    def test_generate_bff_immediately_generates_declared_retrofit_service(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            component = self.draft(root, page=False)
+            contract = component.with_name("order_content.c.dart")
+            contract.write_text(
+                contract.read_text(encoding="utf-8").replace(
+                    "@FrAcddPage",
+                    "/// BFF Service: [OrderContentService]\n@FrAcddPage",
+                ),
+                encoding="utf-8",
+            )
+            result = self.run_script(
+                "generate_bff.py",
+                "--component-file",
+                str(component),
+                env=self.fake_fvm(root),
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            service = component.with_name("order_content.srv.dart")
+            self.assertTrue(service.is_file())
+            self.assertIn("@RestApi()", service.read_text(encoding="utf-8"))
+            self.assertIn(
+                "part 'order_content.srv.g.dart';",
+                service.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "import 'order_content.srv.dart';",
+                component.read_text(encoding="utf-8"),
+            )
 
     def test_check_rejects_missing_and_stale_bff(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -19,7 +19,7 @@ state, API, Event, or ViewModel responsibilities.
 Read `api-contract-semantics.md` before defining DTO fields. Classify each API
 as data or business, complete only the applicable semantic section, trace each
 request field, and either omit `BFF Service` for contract-only delivery or
-declare component/shared ownership for required runtime integration.
+reference the generated Dart class as `[Type]` for runtime integration.
 
 The component shell owns imports and `.c/.v/.vm` parts. The contract defines
 Figma/API facts, state ownership, reused components, widget tree, Event and VM
@@ -60,9 +60,13 @@ component-owned `xxx.bff.md` in BFF-JSON mode. The draft itself contains the
 required `fr_acdd` page/root-DTO/JSON declarations and detailed `BFF-API:`, but
 must not emit a placeholder BFF artifact before approval.
 
-When `BFF Service` is declared, implement the component/shared service before
-`.vm.dart`, then implement `.v.dart`. When it is omitted, deliver only the
-contract and do not claim runtime delivery.
+When `BFF Service: [Type]` is declared, the Python workflow immediately reads
+the generated `xxx.bff.md` and creates the independent Retrofit `xxx.srv.dart`
+containing `Type` only when absent. Preserve any existing `.srv.dart` as
+developer-owned project code; run build_runner to generate `xxx.srv.g.dart`.
+Implement service integration in `.vm.dart`, then
+implement `.v.dart`. When `BFF Service` is omitted, deliver only the contract
+and do not claim runtime delivery.
 Format handwritten files, run build_runner, and require
 `validate_contract.py --component-file ... --phase final` plus the repository
 analyzer. The generator may refresh only its own unfinished stubs and must

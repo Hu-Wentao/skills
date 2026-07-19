@@ -514,22 +514,39 @@ def validate_api_semantics(component: object, contract: str) -> None:
             )
         validate_failure_cases(business["Failure Cases"])
 
-    if not is_bff_mode(component):
-        return
     if "BFF Runtime" in component.sections:
         raise ContractError(
             "BFF Runtime is obsolete; omit BFF Service for contract-only delivery "
-            "or declare `BFF Service: component [Type]` / `shared [Type]` to require "
-            "runtime integration"
+            "or declare `BFF Service: [Type]` to reference the generated Dart class"
         )
+    if not is_bff_mode(component):
+        return
     requires_runtime = component.bff_service is not None
     if requires_runtime and not re.fullmatch(
-        rf"(?:component|shared)\s+\[({IDENTIFIER})\]", component.bff_service or ""
+        rf"\[({IDENTIFIER})\]", component.bff_service or ""
     ):
         raise ContractError(
             "BFF Service must be omitted for contract-only delivery or declared as "
-            "`component [Type]` / `shared [Type]` for required runtime integration"
+            "`[Type]` to reference the generated Dart class"
         )
+    if component.bff_service:
+        pubspec = find_package_pubspec(Path(component.component_file))
+        missing_retrofit = [
+            package
+            for package, section in (
+                ("dio", "dependencies"),
+                ("efficient_dio_logger", "dependencies"),
+                ("retrofit", "dependencies"),
+                ("build_runner", "dev_dependencies"),
+                ("retrofit_generator", "dev_dependencies"),
+            )
+            if not has_direct_dependency(pubspec, package, section=section)
+        ]
+        if missing_retrofit:
+            raise ContractError(
+                f"{pubspec} must directly declare BFF Service dependencies: "
+                + ", ".join(missing_retrofit)
+            )
 
     api_lines = component.sections.get("BFF-API", [])
     refs = bracket_refs(api_lines)
@@ -657,20 +674,29 @@ def validate_runtime_integration(component: object, contract: str) -> None:
 
     if not is_bff_mode(component) or component.bff_service is None:
         return
-    service = re.fullmatch(
-        rf"(component|shared)\s+\[({IDENTIFIER})\]", component.bff_service or ""
-    )
+    service = re.fullmatch(rf"\[({IDENTIFIER})\]", component.bff_service or "")
     if not service:
         raise ContractError("runtime integration has no valid BFF Service")
-    ownership, service_type = service.groups()
+    service_type = service.group(1)
     component_file = Path(component.component_file)
-    if ownership == "component":
-        part_name = f"{component_file.stem}.srv.dart"
-        if part_name not in component.parts:
-            raise ContractError(
-                f"component BFF service must be declared as `part '{part_name}';`"
-            )
-        require_file(component_file.with_name(part_name), "component BFF service")
+    service_name = f"{component_file.stem}.srv.dart"
+    if service_name not in component.imports:
+        raise ContractError(
+            f"BFF service must be imported as `import '{service_name}';`"
+        )
+    service_file = component_file.with_name(service_name)
+    service_source = require_file(service_file, "BFF service")
+    if not re.search(rf"\bclass\s+{re.escape(service_type)}\b", service_source):
+        raise ContractError(f"BFF service does not declare class {service_type}")
+    generated_name = f"{component_file.stem}.srv.g.dart"
+    if f"part '{generated_name}';" not in service_source:
+        raise ContractError(
+            f"BFF service must declare `part '{generated_name}';`"
+        )
+    require_file(
+        component_file.with_name(generated_name),
+        "generated Retrofit service implementation",
+    )
 
     if len(component.view_models) != 1:
         raise ContractError(

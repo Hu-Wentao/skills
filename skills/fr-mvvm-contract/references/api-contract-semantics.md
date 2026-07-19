@@ -113,31 +113,36 @@ field. Use `/// - none` only when the request DTO has no fields.
 
 ## BFF service declaration
 
-For BFF contracts that require runtime integration, declare service ownership:
+For BFF contracts that require runtime integration, reference the Dart class
+that the generator must create:
 
 ```dart
-/// BFF Service: component [SubmitOrderService]
-```
-
-```dart
-/// BFF Service: shared [OrdersApiService]
+/// BFF Service: [SubmitOrderService]
 ```
 
 Omit `BFF Service` entirely for contract-only delivery. Do not write
 `BFF Runtime` or `BFF Service: none`; both forms are obsolete.
 
-When `BFF Service` exists, final validation proves a component or declared
-shared service, ViewModel injection, an async registered data/command handler,
+When `BFF Service` exists, final validation proves the referenced Dart service
+class, ViewModel injection, an async registered data/command handler,
 request construction, awaited service invocation, response-backed state,
 failure state, submit/loading recovery, and no navigation before the successful
 response.
+
+When absent, `generate_bff.py` reads the generated BFF Markdown and creates an
+independent Retrofit `xxx.srv.dart` whose public wrapper class is `Type`. After
+that first generation, `.srv.dart` is project code and may change to match the
+backend; generation and refresh must preserve it. Run build_runner to generate
+`xxx.srv.g.dart`. Validation checks the class, import, part directive, and
+generated file, not template equality. Service reuse follows the owning
+component's reuse scope; the field carries no separate ownership prefix.
 
 ## Approval gate
 
 Before drafting DTOs, draw the cross-component state flow, classify each API,
 define data read-model behavior or business proof/effect/result/error behavior,
 and map every request field. Present the method/path, Req/Rsp/Error design,
-semantic section, provenance, and optional service ownership together.
+semantic section, provenance, and optional generated service class together.
 
 If any item is unknown, stop for user input or design approval. Keep the draft
 marker invalid; do not invent `/bootstrap`, `nextRoute`, proof tokens, success
