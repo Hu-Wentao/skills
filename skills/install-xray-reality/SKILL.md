@@ -27,6 +27,7 @@ Follow current official documentation when it conflicts with project documents, 
    - Effective public IPv4/IPv6 and approximate network location.
    - Existing Xray binary, version, unit files, configuration paths, and service status.
    - Listeners on the requested port and current firewall state.
+   - Other public or tailnet-bound services that a firewall change or reboot could affect.
 4. Never print SSH private keys, REALITY private keys, full existing client secrets, passwords, or tokens into project files or logs.
 
 Treat a request to install or repair the named server as authorization for normal in-scope package, configuration, and service changes. Stop for direction when a port is occupied, an existing configuration would be replaced, SSH access could be affected, the OS is unsupported by the official installer, or the requested change expands to firewall, panel, reverse proxy, DNS, or unrelated services.
@@ -35,6 +36,7 @@ Treat a request to install or repair the named server as authorization for norma
 
 - For target selection or replacement, read [references/target-selection.md](references/target-selection.md) and execute its measured evaluation workflow.
 - For installation, upgrade, repair, client configuration, or a share link, read [references/configuration.md](references/configuration.md) before making changes.
+- For host firewall changes, operating-system updates, SSH exposure reduction, or post-reboot verification, read [references/hardening-and-updates.md](references/hardening-and-updates.md) before making changes.
 - For an existing healthy node, modify only the fields required by the request. Do not rotate UUID, REALITY key, Short ID, target, or port without a concrete reason.
 - For inspection-only requests, run diagnostics and report; do not install, restart, or rewrite files.
 
@@ -47,6 +49,7 @@ Before installation or configuration:
 3. Record a rollback command or file restoration sequence.
 4. Confirm that TCP 443, or the requested alternative port, is not owned by another service.
 5. Preserve the active SSH path. Do not enable, reset, or broadly rewrite a firewall as a side effect.
+6. When the firewall change is in scope, verify a second management session and record dependent listeners before enabling it.
 
 If the host already has a panel-managed Xray installation, do not edit its generated files directly until the management boundary is known. Use the panel's supported mechanism or ask the user to choose between panel-managed and standalone Xray.
 
@@ -105,6 +108,8 @@ After a valid configuration:
 4. Confirm no unexpected management port was exposed.
 5. Test a real client connection and ordinary HTTPS traffic when a compatible client is available.
 6. Re-check service state after the client test.
+
+After a host reboot, verify sockets and end-to-end reachability rather than relying only on `systemctl active`. A service that binds a Tailscale address can remain active without listening if it started before that address existed; use the hardening reference to diagnose and prevent this race.
 
 Do not declare success based only on `systemctl active`; require a valid configuration, expected listener, clean startup log, and preferably an end-to-end client test.
 
