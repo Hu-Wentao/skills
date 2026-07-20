@@ -1,4 +1,4 @@
 interface:
   display_name: "Sync Skill Repo"
-  short_description: "Sync updated skills to local source repositories"
-  default_prompt: "Use $sync-skill-repo to sync this project skill back to its registered local source repository."
+  short_description: "Sync, publish, and reinstall project skills"
+  default_prompt: "Use $sync-skill-repo to publish this project skill to its source repository and reinstall it here."
