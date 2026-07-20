@@ -5,7 +5,7 @@ description: Manage the full Git worktree lifecycle. Use when Codex needs to lis
 
 # Git Worktree
 
-Manage worktrees from creation through merge and cleanup while preserving explicit user authorization for commits and destructive actions.
+Manage worktrees from creation through merge and cleanup while preserving explicit user authorization for user-owned destructive actions and automatically cleaning up agent-created temporary worktrees.
 
 ## Prepare
 
@@ -30,6 +30,15 @@ Use the JSON result to identify worktree paths, checked-out branches, detached w
 ## Create a Worktree
 
 Choose a short branch name aligned with repository conventions. Default the base to the current branch only when the user did not specify another base.
+
+Classify ownership when creating the worktree:
+
+- A worktree explicitly requested by the user is user-owned. Keep it until the
+  user explicitly requests cleanup or removal.
+- A worktree the agent creates only to isolate an internal temporary task is
+  agent-created temporary state. Record its path and automatically remove it
+  after the task finishes, before the final handoff. Its creation authorizes
+  that cleanup; do not ask the user for separate removal confirmation.
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> create \
@@ -66,7 +75,10 @@ If the merge pauses with conflicts, inspect conflicted files, preserve both bran
 
 ## Remove a Worktree
 
-Remove only when the user explicitly requests cleanup or removal:
+Remove a user-owned worktree only when the user explicitly requests cleanup or
+removal. Automatically remove an agent-created temporary worktree after its
+temporary use ends; do not ask for confirmation merely because removal is
+normally destructive.
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> remove \
@@ -74,6 +86,11 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> remove \
 ```
 
 Use `--require-merged-into` after a merge-and-cleanup flow. The CLI refuses to remove the main worktree, a dirty worktree, a worktree with a merge in progress, or a worktree whose branch is not merged into the required target.
+
+Before automatic temporary cleanup, verify that the worktree contains no
+user-authored or otherwise unpreserved changes and no Git operation is in
+progress. Never force removal. If safe cleanup fails, preserve the worktree and
+report the exact blocker instead of silently abandoning or deleting it.
 
 Removing a worktree does not delete its branch. Delete a branch only when the user explicitly requests that separate action. Do not use force, stash changes, push, rebase, or squash unless the user explicitly authorizes the exact operation.
 
