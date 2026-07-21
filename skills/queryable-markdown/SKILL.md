@@ -84,12 +84,7 @@ For an existing ordinary document:
 3. If competing interpretations produce different identities, ask the user to choose. Resolve lesser ambiguity conservatively and report it.
 4. Add only the contract control block and strictly necessary stable record markers. Do not rewrite business content merely to normalize it.
 
-Place a contract in one supported location:
-
-1. Merge `mdq` into complete YAML frontmatter.
-2. Insert an `<!-- mdq ... -->` YAML block at byte zero when there is no frontmatter, or immediately after complete YAML/TOML/JSON frontmatter.
-3. Put the comment contract at byte zero when frontmatter is damaged or unclosed; do not repair unrelated metadata.
-4. Add `<!-- mdq:record id="..." -->` only when authored headings cannot provide stable record boundaries.
+Place every contract in YAML Front Matter at byte zero, delimited by `---`, with the profile nested under the top-level `mdq` key. Merge `mdq` into an existing complete YAML Front Matter block. If the document has no YAML Front Matter, create one; do not use HTML comments, TOML, or JSON for the contract header. A damaged, unclosed, or non-YAML header requires an explicitly authorized conversion or repair before the document can become contracted. Add `<!-- mdq:record id="..." -->` only when authored headings cannot provide stable record boundaries; record markers are not contract headers.
 
 ## Edit a Contracted Document
 
@@ -108,7 +103,7 @@ Do not use a generic serializer to edit records. Fields backed by `regex` are qu
 
 ## Maintain or Repair a Contract
 
-Inspect before changing profile rules, markers, or index policy. Keep the contract minimal and declarative. Preserve existing frontmatter format and delimiters; never create a second frontmatter block or silently choose between conflicting profiles.
+Inspect before changing profile rules, markers, or index policy. Keep the contract minimal and declarative. Preserve an existing valid YAML Front Matter block and its `---` delimiters; never create a second frontmatter block or silently convert another header format without authorization.
 
 After any contract or contracted-record write, run:
 

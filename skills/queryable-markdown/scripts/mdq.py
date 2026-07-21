@@ -28,7 +28,7 @@ import regex as profile_regex
 from markdown_it import MarkdownIt
 
 
-ENGINE = "mdq.py/1"
+ENGINE = "mdq.py/2"
 INDEX_SCHEMA = 1
 MAX_PROFILE_BYTES = 64 * 1024
 MAX_PATTERN_LENGTH = 512
@@ -50,6 +50,7 @@ TEMPORARY_GENERIC_KEY_PATTERN = (
     r"(?=$|[ \t:：—–-])"
 )
 YAML_MDQ_DECLARATION_RE = re.compile(r"(?m)^mdq[ \t]*:")
+TOML_MDQ_DECLARATION_RE = re.compile(r"(?m)^(?:mdq[ \t]*=|\[mdq(?:\.|\]))")
 INFERRED_KEY_LABELS = {
     "id",
     "key",
@@ -417,6 +418,17 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                         line=1,
                     )
                 )
+            elif delimiter == "+++" and TOML_MDQ_DECLARATION_RE.search(
+                "".join(lines[1:])[:MAX_PROFILE_BYTES]
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_unsupported",
+                        "error",
+                        "mdq contracts must use YAML Front Matter delimited by ---",
+                        line=1,
+                    )
+                )
         else:
             excluded |= line_set(0, closing + 1)
             allowed_comment_anchors.append(
@@ -457,6 +469,15 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                                 line=1,
                             )
                         )
+            elif TOML_MDQ_DECLARATION_RE.search("".join(lines[1:closing])):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_unsupported",
+                        "error",
+                        "mdq contracts must use YAML Front Matter delimited by ---",
+                        line=1,
+                    )
+                )
     else:
         stripped = text.lstrip("\ufeff \t\r\n")
         if stripped.startswith("{"):
@@ -471,17 +492,14 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                 excluded |= line_set(0, closing_line + 1)
                 allowed_comment_anchors.append(closing_char)
                 if "mdq" in root:
-                    if isinstance(root["mdq"], dict):
-                        found.append(("json-frontmatter", root["mdq"]))
-                    else:
-                        diagnostics.append(
-                            diagnostic(
-                                "profile_invalid",
-                                "error",
-                                "JSON frontmatter mdq value must be an object",
-                                line=1,
-                            )
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_unsupported",
+                            "error",
+                            "mdq contracts must use YAML Front Matter delimited by ---",
+                            line=1,
                         )
+                    )
             except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
                 diagnostics.append(
                     diagnostic(
@@ -515,20 +533,14 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
         start_line = text.count("\n", 0, match.start())
         end_line = text.count("\n", 0, match.end()) + 1
         excluded |= line_set(start_line, end_line)
-        try:
-            root = load_yaml(match.group("body")) or {}
-            if not isinstance(root, dict):
-                raise TypeError("profile root must be a mapping")
-            found.append(("html-comment", root))
-        except (yaml.YAMLError, TypeError, RecursionError) as exc:
-            diagnostics.append(
-                diagnostic(
-                    "profile_invalid",
-                    "error",
-                    f"comment profile could not be parsed: {exc}",
-                    line=start_line + 1,
-                )
+        diagnostics.append(
+            diagnostic(
+                "profile_unsupported",
+                "error",
+                "mdq HTML comment contracts are unsupported; move the profile to YAML Front Matter",
+                line=start_line + 1,
             )
+        )
 
     if len(found) > 1:
         diagnostics.append(
@@ -541,7 +553,10 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
         )
         return ProfileLoad(None, None, excluded, diagnostics)
     if not found:
-        if not any(item["code"] == "profile_invalid" for item in diagnostics):
+        if not any(
+            item["code"] in {"profile_invalid", "profile_unsupported"}
+            for item in diagnostics
+        ):
             diagnostics.append(
                 diagnostic(
                     "profile_missing",

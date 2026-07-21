@@ -64,7 +64,7 @@ When creating a new document:
 5. Avoid empty example records, speculative fields, and generated indexes unless repeated or large-document queries justify one.
 6. Validate and query every initial record when the document is small; otherwise sample the first, last, incomplete, and irregular records.
 
-When converting an existing ordinary document, run `inspect` first. Prefer a profile that describes the existing document. Add markers only when its authored structure cannot delimit records reliably. Conversion does not authorize rewriting prose, headings, labels, or frontmatter for cosmetic consistency.
+When converting an existing ordinary document, run `inspect` first. Prefer a profile that describes the existing document and store it under `mdq` in YAML Front Matter at byte zero. Add markers only when its authored structure cannot delimit records reliably. Conversion does not authorize rewriting prose, headings, labels, or unrelated Front Matter fields for cosmetic consistency. Converting a damaged, TOML, or JSON header requires explicit repair or conversion authority.
 
 ## 4. Add a Record
 

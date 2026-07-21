@@ -12,22 +12,25 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "mdq.py"
 
 def profile(*, fields: str = "", index: bool = False) -> str:
     index_line = "index: .mdq/index.json\n" if index else ""
-    return f"""<!-- mdq
-version: 1
-records:
-  boundary:
-    source: heading
-    levels: [2]
-    level_tolerance: 1
-  key:
-    source: heading
-    pattern: '^(?P<id>REQ-[0-9]+)(?:[ ：:-]+(?P<title>.*))?$'
-    group: id
-fields:
-{fields or "  title:\n    source: heading\n    group: title"}
-tolerance:
-  incomplete: true
-{index_line}-->
+    field_block = fields or "  title:\n    source: heading\n    group: title"
+    nested_fields = "\n".join(f"  {line}" for line in field_block.splitlines())
+    return f"""---
+mdq:
+  version: 1
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+      level_tolerance: 1
+    key:
+      source: heading
+      pattern: '^(?P<id>REQ-[0-9]+)(?:[ ：:-]+(?P<title>.*))?$'
+      group: id
+  fields:
+{nested_fields}
+  tolerance:
+    incomplete: true
+{('  ' + index_line) if index_line else ''}---
 """
 
 
@@ -277,24 +280,25 @@ The detail refers to REQ-2.
     def test_label_key_recovers_heading_level_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            content = """<!-- mdq
-version: 1
-records:
-  boundary:
-    source: heading
-    levels: [2]
-    level_tolerance: 1
-  key:
-    source: label
-    labels: [ID, 编号]
-    pattern: '^(?P<id>REQ-[0-9]+)$'
-    group: id
-fields:
-  title:
-    source: heading
-tolerance:
-  incomplete: true
--->
+            content = """---
+mdq:
+  version: 1
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+      level_tolerance: 1
+    key:
+      source: label
+      labels: [ID, 编号]
+      pattern: '^(?P<id>REQ-[0-9]+)$'
+      group: id
+  fields:
+    title:
+      source: heading
+  tolerance:
+    incomplete: true
+---
 
 ### Login heading drifted one level
 
@@ -311,17 +315,18 @@ tolerance:
     def test_conflicting_label_keys_are_candidates_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            content = """<!-- mdq
-version: 1
-records:
-  boundary: {source: heading, levels: [2]}
-  key:
-    source: label
-    labels: [ID]
-    pattern: '^(REQ-[0-9]+)$'
-fields: {}
-tolerance: {incomplete: true}
--->
+            content = """---
+mdq:
+  version: 1
+  records:
+    boundary: {source: heading, levels: [2]}
+    key:
+      source: label
+      labels: [ID]
+      pattern: '^(REQ-[0-9]+)$'
+  fields: {}
+  tolerance: {incomplete: true}
+---
 
 ## Conflicting identity
 
@@ -367,22 +372,19 @@ tolerance: {incomplete: true}
                 "field_conflict", {item["code"] for item in result["diagnostics"]}
             )
 
-    def test_two_profiles_are_invalid(self) -> None:
+    def test_legacy_comment_profile_is_unsupported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            frontmatter = """---
-mdq:
-  version: 1
-  records:
-    boundary: {source: heading, levels: [2]}
-    key: {source: heading}
----
-"""
-            path = self.document(root, frontmatter + profile() + "\n## REQ-1: A\n")
+            legacy = profile().removeprefix("---\nmdq:\n").removesuffix("---\n")
+            legacy = "<!-- mdq\n" + "\n".join(
+                line.removeprefix("  ") for line in legacy.splitlines()
+            ) + "\n-->\n"
+            path = self.document(root, legacy + "\n## REQ-1: A\n")
             result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
             self.assertIn(
-                "profile_conflict", {item["code"] for item in result["diagnostics"]}
+                "profile_unsupported",
+                {item["code"] for item in result["diagnostics"]},
             )
 
     def test_missing_capture_group_is_profile_invalid(self) -> None:
@@ -405,15 +407,49 @@ mdq:
                 "frontmatter_invalid", {item["code"] for item in result["diagnostics"]}
             )
 
-    def test_comment_profile_after_json_frontmatter(self) -> None:
+    def test_json_mdq_profile_is_unsupported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            json_frontmatter = json.dumps({"title": "Requirements"}, indent=2) + "\n"
-            path = self.document(
-                root, json_frontmatter + profile() + "\n## REQ-1: JSON frontmatter\n"
+            json_frontmatter = json.dumps(
+                {
+                    "title": "Requirements",
+                    "mdq": {
+                        "version": 1,
+                        "records": {
+                            "boundary": {"source": "heading", "levels": [2]},
+                            "key": {"source": "heading"},
+                        },
+                    },
+                },
+                indent=2,
             )
-            result = self.run_cli(root, "query", str(path), "--id", "REQ-1")
-            self.assertEqual(result["status"], "matched")
+            path = self.document(
+                root, json_frontmatter + "\n\n## REQ-1: JSON frontmatter\n"
+            )
+            result = self.run_cli(
+                root, "query", str(path), "--id", "REQ-1", expected=3
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_unsupported",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_toml_mdq_profile_is_unsupported(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                "+++\ntitle = \"Requirements\"\n[mdq]\nversion = 1\n+++\n\n## REQ-1: TOML frontmatter\n",
+            )
+            result = self.run_cli(
+                root, "query", str(path), "--id", "REQ-1", expected=3
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_unsupported",
+                {item["code"] for item in result["diagnostics"]},
+            )
 
     def test_yaml_aliases_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -498,16 +534,17 @@ mdq:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             content = (
-                """<!-- mdq
-version: 1
-records:
-  boundary: {source: heading, levels: [2]}
-  key:
-    source: heading
-    pattern: '^(a|aa)+$'
-fields: {}
-tolerance: {incomplete: true}
--->
+                """---
+mdq:
+  version: 1
+  records:
+    boundary: {source: heading, levels: [2]}
+    key:
+      source: heading
+      pattern: '^(a|aa)+$'
+  fields: {}
+  tolerance: {incomplete: true}
+---
 
 ## """
                 + ("a" * 4000)

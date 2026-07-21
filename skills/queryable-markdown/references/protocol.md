@@ -59,9 +59,7 @@ The profile describes extraction, not business validity or field editability. A 
 
 ## 3. Profile Placement
 
-Prefer one profile per document.
-
-For complete YAML frontmatter, merge a namespaced key:
+Store exactly one profile in YAML Front Matter at byte zero. Delimit it with `---` and nest the profile under the top-level `mdq` key. For an existing complete YAML Front Matter block, merge the namespaced key:
 
 ```yaml
 ---
@@ -72,49 +70,41 @@ mdq:
 ---
 ```
 
-For documents without frontmatter, place a YAML comment block at byte zero. For complete YAML, TOML, or JSON frontmatter, place it immediately after the closing delimiter/object. For damaged or unclosed frontmatter, place it at byte zero rather than guessing where metadata ends:
-
-```md
-<!-- mdq
-version: 1
-# Remaining profile keys
--->
-```
-
-Do not create a second frontmatter block. Do not repair unrelated frontmatter merely to add a profile. A comment profile is active only at byte zero or immediately after recognized complete frontmatter; identical text inside prose or a code example is inert. If valid YAML frontmatter and a comment block both define a profile, reject the document with `profile_conflict`; do not choose a precedence silently. Match the comment sentinel only when `mdq` is followed by a newline, so record markers are never parsed as profiles.
+For documents without Front Matter, create the YAML block at byte zero. HTML comment profiles and TOML or JSON contract headers are unsupported. Treat a legacy `<!-- mdq ... -->` declaration or a non-YAML top-level `mdq` declaration as `profile_unsupported` rather than silently falling back to temporary selectors. A damaged, unclosed, or non-YAML header requires an explicitly authorized conversion or repair before adding the contract. Do not create a second Front Matter block or repair unrelated metadata merely to add a profile.
 
 ## 4. Complete Example
 
 ```yaml
-version: 1
-dialect: gfm
-records:
-  boundary:
-    source: heading
-    levels: [2]
-    level_tolerance: 1
-  key:
-    source: heading
-    pattern: '^(?P<id>REQ-[0-9]+)(?:[ ：:-]+(?P<title>.*))?$'
-    group: id
-fields:
-  title:
-    source: heading
-    group: title
-  status:
-    source: label
-    labels: [状态, Status]
-  detail:
-    source: section
-    headings: [详情, Description]
-  raw:
-    source: body
-tolerance:
-  incomplete: true
-index: .mdq/requirements.json
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+      level_tolerance: 1
+    key:
+      source: heading
+      pattern: '^(?P<id>REQ-[0-9]+)(?:[ ：:-]+(?P<title>.*))?$'
+      group: id
+  fields:
+    title:
+      source: heading
+      group: title
+    status:
+      source: label
+      labels: [状态, Status]
+    detail:
+      source: section
+      headings: [详情, Description]
+    raw:
+      source: body
+  tolerance:
+    incomplete: true
+  index: .mdq/requirements.json
+---
 ```
-
-For YAML frontmatter, nest this example under `mdq:`. For an HTML comment profile, use it directly.
 
 ## 5. Profile Schema
 
