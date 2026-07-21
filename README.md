@@ -12,7 +12,7 @@
 ### Skill 工具
 
 - [`skillcraft`](skills/skillcraft)：创建、更新、验证和测试可复用 Codex skill。
-- [`sync-skill-repo`](skills/sync-skill-repo)：将项目内更新的 skill 安全同步、提交并推送回其本机源仓库。
+- [`sync-skill-repo`](skills/sync-skill-repo)：将本地 skill 校验、提交并推送到 GitHub，然后自动重装该技能并刷新锁信息。
 
 ### Flutter & Dart
 

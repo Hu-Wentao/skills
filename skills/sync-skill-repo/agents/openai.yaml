@@ -1,4 +1,4 @@
 interface:
   display_name: "Sync Skill Repo"
-  short_description: "Sync, publish, and reinstall project skills"
-  default_prompt: "Use $sync-skill-repo to publish this project skill to its source repository and reinstall it here."
+  short_description: "Publish to GitHub and refresh the local skill"
+  default_prompt: "Use $sync-skill-repo to publish this local skill to GitHub, then reinstall that exact skill and refresh its lock entry."

@@ -1,23 +1,22 @@
 ---
 name: sync-skill-repo
-description: Sync a Codex skill updated inside a consuming project back to its registered local source repository, validate it with skillcraft, commit only that skill, and push the source branch. Also handle the `publish-skill` or "发布技能" workflow by reinstalling the pushed skill into the consuming project and refreshing its skills-lock.json entry. Use when the user asks to publish, return, synchronize, or publish-and-reinstall project-local skill changes, including skills installed through skills-lock.json.
+description: Publish a local Codex skill to GitHub, then automatically reinstall that exact skill and refresh its project or global lock metadata. If the skill is already in its source repository, validate it, commit only the intended skill changes, and push the current branch. If it is a project-local installed copy, synchronize it to its registered source repository first. Use when the user asks to publish a skill, `publish-skill`, "发布技能", push, return, or synchronize skill changes. A publish request includes the post-push reinstall; a plain sync or push request may stop after GitHub.
 ---
 
-# Sync Skill Repo
+# Publish or Sync a Skill
 
-Synchronize one project-local skill back to its local source checkout without mixing unrelated work.
+Publish one local skill to its GitHub source repository without mixing unrelated work.
 
-## Modes
+## Meaning of Publish
 
-- Use sync mode for requests to synchronize, return, or push a project skill.
-  Stop after the source repository push.
-- Use `publish-skill` mode for requests containing `publish-skill`, "发布技能",
-  or an equivalent request to sync, push, and reinstall the skill into the
-  current project. Complete the source push first, then refresh the named skill
-  from its pushed source through the project's existing `skills-lock.json`.
+Treat `publish-skill`, "发布技能", and equivalent requests as instructions to:
 
-Do not create a second skill named `publish-skill`; treat it as the concise
-operation name for this skill's publish-and-reinstall mode.
+1. push the local skill to GitHub;
+2. automatically reinstall that exact skill from the pushed source; and
+3. refresh and verify its matching project or global lock entry.
+
+Publishing is complete only when both the GitHub push and post-push refresh
+succeed. A request that says only sync or push may stop after GitHub.
 
 ## Source registry
 
@@ -41,12 +40,26 @@ Registration validates that the path is a Git worktree root.
 
 ## Workflow
 
-### 1. Resolve the project skill
+### 1. Resolve the local skill
 
 Accept an absolute or project-relative directory containing `SKILL.md`. Verify
 that its frontmatter `name` equals the folder name.
 
-### 2. Resolve its source checkout
+Determine whether the skill is already inside its source Git checkout:
+
+- If its Git worktree has a GitHub upstream and the skill is tracked there,
+  use the direct-source workflow.
+- Otherwise, treat it as a project-local installed copy and resolve its
+  registered source checkout.
+
+Never infer that a non-GitHub remote satisfies a request to publish to GitHub.
+Before pushing, identify the post-publish installation scope: prefer the
+originating project with a matching `skills-lock.json` entry; otherwise use the
+matching globally tracked installation. Do not update unrelated skills.
+
+### 2. Resolve an Installed Copy's Source Checkout
+
+Skip this step for the direct-source workflow.
 
 Run a dry run first:
 
@@ -66,12 +79,15 @@ If the lock entry is absent, require both `--repo <path>` and, when the source
 repository does not use `skills/<skill-name>`, `--destination <relative-path>`.
 Never guess between repositories or accept a destination escaping its Git root.
 
-### 3. Inspect Git state
+### 3. Inspect Git State
 
-Inspect the dry-run changes and both worktrees.
+Inspect the relevant worktrees and the exact GitHub upstream URL.
 
-- If the project skill has uncommitted changes, confirm that this is the
-  version to publish, then use `--allow-source-dirty`.
+- In the direct-source workflow, inspect all worktree changes and stage only
+  the intended skill paths. Follow repository governance for unrelated work.
+- For an installed copy, inspect the dry-run changes. If it has uncommitted
+  changes, confirm that this is the version to publish, then use
+  `--allow-source-dirty`.
 - If the source repository has unrelated changes, follow its `AGENTS.md` and
   ask the user to choose `先提交` or `先忽略`.
 - For `先忽略`, use `--allow-dirty`; never allow existing dirty changes that
@@ -79,11 +95,23 @@ Inspect the dry-run changes and both worktrees.
 - Report existing unpushed source-repository commits because the final push
   will publish them too.
 
-Synchronization copies new and changed files while preserving destination-only
-files. Remove an obsolete destination-only file explicitly only after reviewing
-it. Exclude Git metadata, secrets, caches, dependency folders, and build output.
+Installed-copy synchronization preserves destination-only files. Remove an
+obsolete destination-only file explicitly only after reviewing it. Exclude Git
+metadata, secrets, caches, dependency folders, and build output.
 
-### 4. Synchronize
+### 4. Validate, Commit, and Push
+
+For a skill already in its source checkout:
+
+1. Validate it with the installed `skillcraft` validator.
+2. Inspect the diff and stage only the intended skill files.
+3. Commit the staged skill changes when any exist.
+4. Report every existing unpushed commit that the push will also publish. Ask
+   before pushing when those commits are outside the user's approved scope.
+5. Push the current branch to its configured GitHub upstream without force.
+6. Verify that local `HEAD` equals the upstream branch after the push.
+
+For a project-local installed copy, synchronize and publish with:
 
 After resolving preflight findings, run:
 
@@ -105,48 +133,47 @@ Optional flags:
 
 The script copies the skill, validates it with the installed `skillcraft`,
 stages only the destination skill, commits it, and pushes the current branch.
-It never force-pushes. If content is unchanged, it creates no commit.
+It never force-pushes. If content is unchanged, it creates no commit; push any
+already-approved unpushed commits separately when needed.
 
-### 5. Reinstall After `publish-skill`
+### 5. Reinstall and Refresh After Publish
 
-Run this step only in `publish-skill` mode and only after the source push
-succeeds:
+Run this step automatically after a successful `publish-skill` or "发布技能"
+push. Do not run it for a plain sync or push request.
 
-1. Return to the consuming project root that owns the resolved
-   `skills-lock.json`. Do not run the installer from the source checkout.
-2. Capture the consuming worktree status so unrelated concurrent changes can
-   be distinguished from installation changes.
-3. Follow the consuming repository's Node and package-manager instructions.
-   Use its existing wrapper when available; otherwise run the project-scoped,
-   non-interactive equivalent of:
+Follow the owning repository's Node instructions and load its configured nvm
+runtime. Use pnpm and always name the exact skill:
 
-   ```bash
-   pnpm dlx skills update <skill-name> -p -y
-   ```
+```bash
+# Project installation and project skills-lock.json
+pnpm dlx skills update <skill-name> -p -y
 
-   Use `npx skills update <skill-name> -p -y` only when npm is the repository's
-   selected runner. Load the repository's configured `nvm` runtime first when
-   required.
-4. Verify the installed skill against the pushed source checkout, excluding
-   caches and generated metadata that the sync script already excludes. Verify
-   that the matching `skills-lock.json` entry has the refreshed content hash.
-5. Inspect the consuming worktree again. Preserve and report unrelated
-   changes; never stage, revert, or attribute them to the install without
-   evidence. Commit the installed skill or lock update only when the consuming
-   repository's governance requires it.
+# Globally tracked installation and global lock metadata
+pnpm dlx skills update <skill-name> -g -y
+```
 
-Never reinstall from the local source path in this mode: the purpose of the
-final step is to prove that the pushed source can be consumed. If installation
-fails after a successful push, report the two outcomes separately and do not
-claim the publish workflow completed.
+If the skill is not yet tracked in either scope, install only that skill from
+the pushed GitHub repository into the intended scope:
+
+```bash
+pnpm dlx skills add <owner>/<repo> --skill <skill-name> -g -y
+```
+
+Never run an unscoped `skills update`; it can update unrelated skills. After
+the command succeeds, compare the installed skill with the pushed source,
+excluding generated caches, and verify that the matching lock entry contains
+the refreshed content hash. Preserve unrelated worktree changes.
+
+If the push succeeds but reinstall or lock refresh fails, report the outcomes
+separately and do not claim that publishing completed.
 
 ### 6. Report
 
 Report source and destination paths, registry/lock resolution, validation,
 changed and preserved files, commit SHA and message, pushed branch/upstream,
-breaking changes, and compatibility configuration. In `publish-skill` mode,
-also report the project installer command, installed/source comparison, lock
-hash result, and any consuming-repository commit.
+breaking changes, and compatibility configuration. For publishing, also report
+the scoped installer command, installed/source comparison, refreshed lock hash,
+and any consuming-repository changes or commit.
 
 ## Resources
 
