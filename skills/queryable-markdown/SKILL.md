@@ -14,15 +14,15 @@ Use this matrix before acting:
 | Document state | Requested operation | Allowed behavior |
 | --- | --- | --- |
 | No valid `mdq` contract | Query, find, read, or summarize | Query read-only with inferred or explicit temporary selectors. Do not add metadata, markers, or indexes. |
-| No valid `mdq` contract | Ordinary content edit | Treat as outside this skill. Use the applicable general editing workflow. |
-| No valid `mdq` contract | Create or convert to a contracted document | Write only when explicitly requested; inspect existing content before conversion. |
+| No valid `mdq` contract | Ordinary content edit | Treat as outside this skill unless an applicable governance workflow requires a persistent contract for the authorized document edit. |
+| No valid `mdq` contract | Create or convert to a contracted document | Write when explicitly requested or when an applicable governance workflow requires a persistent contract for the authorized document creation or edit; inspect existing content before conversion. |
 | Valid `mdq` contract | Query, find, read, or summarize | Apply the contract read-only. Do not edit merely because the document has a contract. |
 | Valid `mdq` contract | Add, update, delete, rename, or reorganize records | Use the contracted-document edit transaction in [editing-workflow.md](references/editing-workflow.md). |
 | Drifted but valid `mdq` contract | Query or edit | Report recovery diagnostics; edit only when drift does not affect the target identity or boundary. |
 | Declared but invalid contract | Query | Report the contract error; use bounded inspection only if the user still needs a one-off answer. |
 | Declared but invalid contract | Repair or maintain | Repair only when explicitly requested, then validate representative operations. |
 
-Creating a new contracted document, converting an existing document, editing authored records, repairing a contract, and rebuilding an index are distinct write operations. Infer only the minimum write authority needed from the user's request.
+Creating a new contracted document, converting an existing document, editing authored records, repairing a contract, and rebuilding an index are distinct write operations. Infer only the minimum write authority needed from the user's request and any applicable upstream governance workflow. A governance workflow may make a minimal persistent contract part of an authorized governed-document creation or edit; it does not authorize unrelated content changes, bulk migration, index creation, or contract repair outside that document.
 
 ## Core Invariants
 

@@ -53,6 +53,35 @@ Ask for a decision when alternatives materially change implementation cost, depl
 
 ## Document Governance
 
+### Use Queryable Markdown
+
+Use `queryable-markdown` for every repository Markdown document that this
+skill creates or edits as a governed requirement, baseline, plan, archive,
+verification map, defect record, or other durable governance authority. A
+request that authorizes creating or editing such a document also authorizes
+adding or maintaining its minimal persistent `mdq` contract; the user does not
+need to separately ask for conversion.
+
+- Put the `mdq` declaration in YAML frontmatter when the document already uses
+  YAML frontmatter. Otherwise use the contract placement selected by
+  `queryable-markdown`; do not add decorative metadata unrelated to identity,
+  boundaries, fields, or lifecycle.
+- Derive the smallest stable record contract from the governance identities
+  already required by this skill, such as `REQ-*` or `DEF-*`. For a document
+  whose whole file is the durable record, use a file-level identity instead of
+  inventing nested records.
+- Follow the complete contracted-document create or edit transaction from
+  `queryable-markdown`, including its validation and representative queries,
+  in addition to this skill's governance validation.
+- Do not silently convert every legacy governance document encountered during
+  a narrow edit. Convert the edited document when a safe contract is
+  unambiguous. Treat repository-wide adoption or any ambiguous legacy shape as
+  a document-governance migration and present a migration plan first.
+- Keep governance semantics here and document mechanics in
+  `queryable-markdown`. An `mdq` contract improves deterministic access but
+  never becomes the authority for requirement status, baseline meaning, plan
+  completion, or defect classification.
+
 ### Classify Each Fact
 
 Assign every material statement to exactly one primary authority layer:
