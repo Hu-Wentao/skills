@@ -368,6 +368,33 @@ def copy_plan(
     return sorted(changes), sorted(preserved)
 
 
+def installed_content_changes(
+    source_skill: Path, installed_skill: Path
+) -> list[tuple[str, Path]]:
+    """Compare installed content while allowing installer-normalized file modes."""
+
+    changes: list[tuple[str, Path]] = []
+    for relative, source in source_entries(source_skill).items():
+        installed = installed_skill / relative
+        if not installed.exists() and not installed.is_symlink():
+            changes.append(("ADD", relative))
+        elif source.is_symlink():
+            if not installed.is_symlink() or os.readlink(source) != os.readlink(
+                installed
+            ):
+                changes.append(("UPDATE", relative))
+        elif source.is_dir():
+            if not installed.is_dir() or installed.is_symlink():
+                changes.append(("UPDATE", relative))
+        elif (
+            not installed.is_file()
+            or installed.is_symlink()
+            or not filecmp.cmp(source, installed, shallow=False)
+        ):
+            changes.append(("UPDATE", relative))
+    return sorted(changes)
+
+
 def replace_entry(source: Path, destination: Path) -> None:
     if source.is_dir() and not source.is_symlink():
         if destination.is_symlink() or (
@@ -560,7 +587,7 @@ def refresh_skill(args: argparse.Namespace) -> None:
             f"{args.attempts} attempts. Command: {' '.join(command)}\n{rendered}"
         )
 
-    changes, _ = copy_plan(source_skill, installed_skill)
+    changes = installed_content_changes(source_skill, installed_skill)
     if changes:
         detail = ", ".join(f"{action} {path}" for action, path in changes)
         raise SyncError(

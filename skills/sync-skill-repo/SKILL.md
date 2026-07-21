@@ -154,8 +154,8 @@ runtime. Never probe the Skills CLI with `skills update --help`: some released
 versions interpret it as an unscoped update and may refresh unrelated skills.
 Use the bundled deterministic refresh command, which always names exactly one
 skill, retries transient installer failures, preserves every attempt's output,
-compares the installed files with the pushed source, and verifies the lock
-hash:
+compares installed paths and file contents with the pushed source while
+allowing installer-normalized executable bits, and verifies the lock hash:
 
 ```bash
 # Project installation and project skills-lock.json. Run from the project root.

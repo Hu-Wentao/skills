@@ -307,6 +307,29 @@ class SyncSkillRepoTests(unittest.TestCase):
                     ):
                         MODULE.refresh_skill(args)
 
+    def test_installed_comparison_allows_normalized_executable_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            installed = root / "installed"
+            write_skill(source, "source")
+            write_skill(installed, "source")
+            source_script = source / "scripts" / "tool.py"
+            installed_script = installed / "scripts" / "tool.py"
+            source_script.parent.mkdir()
+            installed_script.parent.mkdir()
+            source_script.write_text("print('ok')\n", encoding="utf-8")
+            installed_script.write_text("print('ok')\n", encoding="utf-8")
+            source_script.chmod(0o755)
+            installed_script.chmod(0o644)
+
+            self.assertEqual(
+                MODULE.installed_content_changes(source, installed),
+                [],
+            )
+            changes, _ = MODULE.copy_plan(source, installed)
+            self.assertIn(("UPDATE", Path("scripts/tool.py")), changes)
+
     def test_push_retries_transient_failure_with_complete_diagnostics(self) -> None:
         failed = subprocess.CompletedProcess(
             args=[], returncode=1, stdout="", stderr="connection closed"
