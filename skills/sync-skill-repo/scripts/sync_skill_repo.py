@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -430,6 +431,148 @@ def validate_skill(destination: Path) -> None:
         raise SyncError(f"skillcraft validation failed for {destination}")
 
 
+def push_with_retry(repo: Path, attempts: int, retry_delay: float) -> None:
+    command = ["git", "-C", str(repo), "push"]
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        if result.returncode == 0:
+            if output:
+                print(output)
+            print(f"Pushed on attempt {attempt}/{attempts}.")
+            return
+        failures.append(
+            f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
+            f"{output or '<no git output>'}"
+        )
+        if attempt < attempts and retry_delay:
+            time.sleep(retry_delay)
+    rendered = "\n\n".join(failures)
+    raise SyncError(
+        f"git push failed after {attempts} attempts. "
+        f"Command: {' '.join(command)}\n{rendered}"
+    )
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        computed_hash = lock["skills"][skill_name]["computedHash"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SyncError(
+            f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
+        ) from exc
+    if not isinstance(computed_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", computed_hash
+    ):
+        raise SyncError(
+            f"Refresh succeeded but {lock_path} has an invalid {skill_name} hash"
+        )
+    return computed_hash
+
+
+def refresh_skill(args: argparse.Namespace) -> None:
+    installed_skill = Path(args.skill_dir).expanduser().resolve()
+    source_skill = Path(args.source_skill_dir).expanduser().resolve()
+    skill_name = read_skill_name(installed_skill)
+    if read_skill_name(source_skill) != skill_name:
+        raise SyncError("Installed and source skill names do not match")
+
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        raise SyncError(
+            "pnpm is not available; load the repository's configured nvm runtime first"
+        )
+    if args.scope == "project":
+        project_root = (
+            Path(args.project_root).expanduser().resolve()
+            if args.project_root
+            else git_root(installed_skill)
+        )
+        scope_flag = "-p"
+        lock_path = (
+            Path(args.lock).expanduser().resolve()
+            if args.lock
+            else project_root / "skills-lock.json"
+        )
+    else:
+        project_root = (
+            Path(args.project_root).expanduser().resolve()
+            if args.project_root
+            else installed_skill.parent
+        )
+        scope_flag = "-g"
+        lock_path = Path(args.lock).expanduser().resolve() if args.lock else None
+
+    command = [pnpm, "dlx", "skills", "update", skill_name, scope_flag, "-y"]
+    failures: list[str] = []
+    for attempt in range(1, args.attempts + 1):
+        result = subprocess.run(
+            command,
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        if result.returncode == 0:
+            if output:
+                print(output)
+            print(
+                f"Refreshed {skill_name} with scoped command on attempt "
+                f"{attempt}/{args.attempts}."
+            )
+            break
+        failures.append(
+            f"attempt {attempt}/{args.attempts}, exit {result.returncode}:\n"
+            f"{output or '<no installer output>'}"
+        )
+        if attempt < args.attempts and args.retry_delay:
+            time.sleep(args.retry_delay)
+    else:
+        rendered = "\n\n".join(failures)
+        raise SyncError(
+            "Scoped skill refresh failed after "
+            f"{args.attempts} attempts. Command: {' '.join(command)}\n{rendered}"
+        )
+
+    changes, _ = copy_plan(source_skill, installed_skill)
+    if changes:
+        detail = ", ".join(f"{action} {path}" for action, path in changes)
+        raise SyncError(
+            f"Refresh succeeded but installed {skill_name} differs from source: "
+            f"{detail}"
+        )
+    print(f"Verified installed skill matches source: {source_skill}")
+    if lock_path is not None:
+        computed_hash = _verified_lock_hash(lock_path, skill_name)
+        print(f"Verified lock hash: {computed_hash} ({lock_path})")
+
+
 def sync_skill(args: argparse.Namespace) -> None:
     skill_dir = Path(args.skill_dir).expanduser().resolve()
     skill_name = read_skill_name(skill_dir)
@@ -534,7 +677,7 @@ def sync_skill(args: argparse.Namespace) -> None:
         str(target.destination_relative),
     )
     commit_sha = run_git(target.repo, "rev-parse", "HEAD")
-    run_git(target.repo, "push")
+    push_with_retry(target.repo, args.push_attempts, args.push_retry_delay)
     print(f"Committed: {commit_sha} {message}")
     print(f"Pushed: {branch} -> {upstream}")
 
@@ -564,6 +707,23 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--allow-source-dirty", action="store_true")
     sync.add_argument("--allow-dirty", action="store_true")
     sync.add_argument("--dry-run", action="store_true")
+    sync.add_argument("--push-attempts", type=_positive_int, default=3)
+    sync.add_argument("--push-retry-delay", type=_non_negative_float, default=2.0)
+
+    refresh = subparsers.add_parser(
+        "refresh", help="retry and verify one scoped post-publish skill refresh"
+    )
+    refresh.add_argument("skill_dir", help="installed skill directory")
+    refresh.add_argument(
+        "--source-skill-dir",
+        required=True,
+        help="pushed source skill directory used for exact comparison",
+    )
+    refresh.add_argument("--scope", choices=("project", "global"), required=True)
+    refresh.add_argument("--project-root")
+    refresh.add_argument("--lock")
+    refresh.add_argument("--attempts", type=_positive_int, default=3)
+    refresh.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
     return parser
 
 
@@ -578,8 +738,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.alias,
             )
             print(json.dumps(entry, ensure_ascii=False, indent=2))
-        else:
+        elif args.command == "sync":
             sync_skill(args)
+        else:
+            refresh_skill(args)
     except SyncError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

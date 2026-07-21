@@ -111,6 +111,12 @@ For a skill already in its source checkout:
 5. Push the current branch to its configured GitHub upstream without force.
 6. Verify that local `HEAD` equals the upstream branch after the push.
 
+The bundled sync command retries a transient `git push` failure three times by
+default and retains every attempt's stdout/stderr. Do not create another commit
+or switch to an unscoped workflow after the first network failure. Use
+`--push-attempts` and `--push-retry-delay` only when the repository requires a
+different bounded retry policy.
+
 For a project-local installed copy, synchronize and publish with:
 
 After resolving preflight findings, run:
@@ -129,6 +135,8 @@ Optional flags:
 --allow-source-dirty
 --allow-dirty
 --dry-run
+--push-attempts <count>
+--push-retry-delay <seconds>
 ```
 
 The script copies the skill, validates it with the installed `skillcraft`,
@@ -142,15 +150,31 @@ Run this step automatically after a successful `publish-skill` or "发布技能"
 push. Do not run it for a plain sync or push request.
 
 Follow the owning repository's Node instructions and load its configured nvm
-runtime. Use pnpm and always name the exact skill:
+runtime. Never probe the Skills CLI with `skills update --help`: some released
+versions interpret it as an unscoped update and may refresh unrelated skills.
+Use the bundled deterministic refresh command, which always names exactly one
+skill, retries transient installer failures, preserves every attempt's output,
+compares the installed files with the pushed source, and verifies the lock
+hash:
 
 ```bash
-# Project installation and project skills-lock.json
-pnpm dlx skills update <skill-name> -p -y
+# Project installation and project skills-lock.json. Run from the project root.
+uv run python <skill-dir>/scripts/sync_skill_repo.py refresh \
+  <project-installed-skill-dir> \
+  --source-skill-dir <source-repo-skill-dir> \
+  --scope project --project-root .
 
-# Globally tracked installation and global lock metadata
-pnpm dlx skills update <skill-name> -g -y
+# Globally tracked installation. Pass --lock when a global lock file exists.
+uv run python <skill-dir>/scripts/sync_skill_repo.py refresh \
+  <global-installed-skill-dir> \
+  --source-skill-dir <source-repo-skill-dir> \
+  --scope global [--lock <global-lock-path>]
 ```
+
+The helper runs only `pnpm dlx skills update <skill-name> <-p|-g> -y` and
+defaults to three attempts with a two-second delay. A failed attempt is not a
+reason to run an unscoped update. If all attempts fail, report the exact
+command and complete per-attempt output emitted by the helper.
 
 If the skill is not yet tracked in either scope, install only that skill from
 the pushed GitHub repository into the intended scope:
@@ -178,6 +202,6 @@ and any consuming-repository changes or commit.
 ## Resources
 
 - `scripts/sync_skill_repo.py`: register source checkouts and safely synchronize
-  one skill.
+  one skill, then retry and verify its scoped post-publish refresh.
 - `scripts/tests/test_sync_skill_repo.py`: focused registry, resolution, and
   copy-plan tests.

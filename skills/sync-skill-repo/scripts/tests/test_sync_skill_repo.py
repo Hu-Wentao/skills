@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "sync_skill_repo.py"
@@ -210,6 +212,120 @@ class SyncSkillRepoTests(unittest.TestCase):
                 text=True,
             ).stdout.strip()
             self.assertEqual(message, "feat: sync demo-skill skill")
+
+    def test_refresh_retries_exact_scoped_skill_and_verifies_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            init_repo(project)
+            installed = project / ".agents" / "skills" / "demo-skill"
+            source = root / "source" / "demo-skill"
+            write_skill(installed, "demo-skill", "published")
+            write_skill(source, "demo-skill", "published")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "computedHash": "a" * 64,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                skill_dir=str(installed),
+                source_skill_dir=str(source),
+                scope="project",
+                project_root=str(project),
+                lock=None,
+                attempts=3,
+                retry_delay=0,
+            )
+            failed = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="temporary failure", stderr=""
+            )
+            succeeded = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="updated", stderr=""
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    side_effect=[failed, succeeded],
+                ) as run:
+                    MODULE.refresh_skill(args)
+
+            self.assertEqual(run.call_count, 2)
+            command = run.call_args.args[0]
+            self.assertEqual(
+                command,
+                [
+                    "/bin/pnpm",
+                    "dlx",
+                    "skills",
+                    "update",
+                    "demo-skill",
+                    "-p",
+                    "-y",
+                ],
+            )
+            self.assertNotIn("--help", command)
+
+    def test_refresh_failure_reports_every_attempt_and_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "installed" / "demo-skill"
+            source = root / "source" / "demo-skill"
+            write_skill(installed, "demo-skill")
+            write_skill(source, "demo-skill")
+            args = SimpleNamespace(
+                skill_dir=str(installed),
+                source_skill_dir=str(source),
+                scope="global",
+                project_root=str(root),
+                lock=None,
+                attempts=2,
+                retry_delay=0,
+            )
+            failed = subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="network error", stderr="detail"
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    side_effect=[failed, failed],
+                ):
+                    with self.assertRaisesRegex(
+                        MODULE.SyncError,
+                        "(?s)attempt 1/2.*network error.*attempt 2/2",
+                    ):
+                        MODULE.refresh_skill(args)
+
+    def test_push_retries_transient_failure_with_complete_diagnostics(self) -> None:
+        failed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="connection closed"
+        )
+        succeeded = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="pushed", stderr=""
+        )
+        with patch.object(
+            MODULE.subprocess,
+            "run",
+            side_effect=[failed, succeeded],
+        ) as run:
+            MODULE.push_with_retry(Path("/source/repo"), 3, 0)
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args.args[0],
+            ["git", "-C", "/source/repo", "push"],
+        )
 
 
 if __name__ == "__main__":
