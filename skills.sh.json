@@ -35,6 +35,13 @@
       ]
     },
     {
+      "title": "Infrastructure & Security",
+      "description": "Skills for provisioning and hardening infrastructure services.",
+      "skills": [
+        "install-xray-reality"
+      ]
+    },
+    {
       "title": "Python UI",
       "description": "Skills for building and refining Python-based application interfaces.",
       "skills": [
@@ -46,7 +53,8 @@
       "title": "Knowledge & Documents",
       "description": "Skills for querying and maintaining structured knowledge in documents.",
       "skills": [
-        "queryable-markdown"
+        "queryable-markdown",
+        "write-technical-docs"
       ]
     }
   ]

@@ -25,6 +25,10 @@
 
 - [`git-worktree`](skills/git-worktree)：管理 Git worktree 的创建、分支合并与安全清理完整流程。
 
+### 基础设施与安全
+
+- [`install-xray-reality`](skills/install-xray-reality)：安装、配置并加固 Xray REALITY 服务。
+
 ### Python UI
 
 - [`edit-streamlit`](skills/edit-streamlit)：构建、调试和重构 Streamlit 应用。
