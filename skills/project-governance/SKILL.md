@@ -17,6 +17,8 @@ For a read-only review, inspect and report without editing. For a change, presen
 
 Treat a plan as governed when it is written into the repository, referenced as an implementation authority, linked to requirements or baselines, assigned lifecycle status, or expected to be completed and archived. Do not treat a temporary pre-implementation explanation as a governed plan.
 
+By default, require every Markdown document created or materially revised under any Project Governance domain to use a valid persistent `mdq` query contract. Apply `queryable-markdown` when creating, converting, editing, querying, or validating these documents. Preserve an explicit project convention or user-approved exception that excludes `mdq`; do not add a contract during a read-only review.
+
 ## Select a Governance Domain
 
 Treat these as peer capabilities rather than placing Git or skill governance under documentation:
