@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Tests for the nextjs-performance-optimization project configuration resolver."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+SKILL_NAME = "nextjs-performance-optimization"
+SOURCE_SKILL = Path(__file__).resolve().parents[2]
+
+
+class ResolverTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix=f"{SKILL_NAME}-resolve-")
+        self.root = Path(self.temp.name)
+        (self.root / ".git").mkdir()
+        self.skill = self.root / ".agents" / "skills" / SKILL_NAME
+        self.skill.parent.mkdir(parents=True)
+        shutil.copytree(SOURCE_SKILL, self.skill)
+        self.resolver = self.skill / "scripts" / "resolve.py"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def run_resolver(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(self.resolver), "--cwd", str(self.root), *args],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def write_config(self, profile: str = "project.md") -> Path:
+        config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True)
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v1
+profile: test-project
+tasks:
+  default:
+    base: references/default.md
+    profile: {profile}
+    commands:
+      validate: uv run python -m unittest
+""",
+            encoding="utf-8",
+        )
+        return config_root
+
+    def create_configured_project(
+        self, name: str, behavior: str, command: str
+    ) -> tuple[Path, Path]:
+        root = Path(self.temp.name) / name
+        (root / ".git").mkdir(parents=True)
+        skill = root / ".agents" / "skills" / SKILL_NAME
+        skill.parent.mkdir(parents=True)
+        shutil.copytree(SOURCE_SKILL, skill)
+        config_root = root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True)
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v1
+profile: {name}
+tasks:
+  default:
+    base: references/default.md
+    profile: project.md
+    commands:
+      validate: {command}
+""",
+            encoding="utf-8",
+        )
+        (config_root / "project.md").write_text(behavior, encoding="utf-8")
+        return root, skill / "scripts" / "resolve.py"
+
+    def test_generic_fallback_and_stable_id(self) -> None:
+        first = self.run_resolver("--task", "default")
+        second = self.run_resolver("--task", "default")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("profile: generic", first.stdout)
+        first_id = next(
+            line for line in first.stdout.splitlines() if line.startswith("instructions_id:")
+        )
+        second_id = next(
+            line for line in second.stdout.splitlines() if line.startswith("instructions_id:")
+        )
+        self.assertEqual(first_id, second_id)
+
+    def test_project_profile_is_composed(self) -> None:
+        config_root = self.write_config()
+        (config_root / "project.md").write_text(
+            "# Repository Rules\n\nUse the project validator.\n", encoding="utf-8"
+        )
+        result = self.run_resolver("--task", "default", "--emit", "instructions")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## Generic Instructions", result.stdout)
+        self.assertIn("## Project Instructions", result.stdout)
+        self.assertIn("Use the project validator.", result.stdout)
+        self.assertIn("uv run python -m unittest", result.stdout)
+
+    def test_same_skill_has_different_behavior_in_two_projects(self) -> None:
+        project_a, resolver_a = self.create_configured_project(
+            "project-a", "Use behavior A.\n", "validate-a"
+        )
+        project_b, resolver_b = self.create_configured_project(
+            "project-b", "Use behavior B.\n", "validate-b"
+        )
+
+        def resolve(root: Path, resolver: Path) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(resolver), "--cwd", str(root), "--task", "default"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        result_a = resolve(project_a, resolver_a)
+        result_b = resolve(project_b, resolver_b)
+        self.assertEqual(result_a.returncode, 0, result_a.stderr)
+        self.assertEqual(result_b.returncode, 0, result_b.stderr)
+        self.assertIn("profile: project-a", result_a.stdout)
+        self.assertIn("profile: project-b", result_b.stdout)
+        self.assertIn("validate: validate-a", result_a.stdout)
+        self.assertIn("validate: validate-b", result_b.stdout)
+
+        id_a = next(
+            line for line in result_a.stdout.splitlines() if line.startswith("instructions_id:")
+        )
+        id_b = next(
+            line for line in result_b.stdout.splitlines() if line.startswith("instructions_id:")
+        )
+        self.assertNotEqual(id_a, id_b)
+
+        instructions_a = next(
+            line.removeprefix("  path: ")
+            for line in result_a.stdout.splitlines()
+            if line.startswith("  path: ")
+        )
+        instructions_b = next(
+            line.removeprefix("  path: ")
+            for line in result_b.stdout.splitlines()
+            if line.startswith("  path: ")
+        )
+        text_a = (project_a / instructions_a).read_text(encoding="utf-8")
+        text_b = (project_b / instructions_b).read_text(encoding="utf-8")
+        self.assertIn("Use behavior A.", text_a)
+        self.assertNotIn("Use behavior B.", text_a)
+        self.assertIn("Use behavior B.", text_b)
+        self.assertNotIn("Use behavior A.", text_b)
+
+    def test_invalid_schema_is_rejected(self) -> None:
+        config_root = self.write_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                f"{SKILL_NAME}.config.v1", "wrong.config.v1"
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "default")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("schema must be", result.stderr)
+
+    def test_missing_configured_task_is_rejected(self) -> None:
+        config_root = self.write_config()
+        (config_root / "project.md").write_text(
+            "# Repository Rules\n", encoding="utf-8"
+        )
+        result = self.run_resolver("--task", "not-configured")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("tasks.not-configured must be a mapping", result.stderr)
+
+    def test_profile_path_escape_is_rejected(self) -> None:
+        self.write_config("../../outside.md")
+        (self.root / ".agents" / "outside.md").write_text(
+            "outside", encoding="utf-8"
+        )
+        result = self.run_resolver("--task", "default")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("escapes its allowed root", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
