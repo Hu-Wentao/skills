@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +29,21 @@ def compose_config(path: Path) -> dict[str, Any]:
 
 def present(value: Any) -> bool:
     return value not in (None, "", 0, "0", False)
+
+
+STARTUP_BUILD = re.compile(
+    r"(?:\bnext\s+build\b|\bpnpm(?:\s+[^;&|\n]+)?\s+build\b|"
+    r"\bnpm\s+(?:run\s+)?build\b|\byarn\s+build\b)",
+    re.IGNORECASE,
+)
+
+
+def command_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(part, str) for part in value):
+        return " ".join(value)
+    return ""
 
 
 def check_service(name: str, service: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -54,6 +70,13 @@ def check_service(name: str, service: dict[str, Any]) -> tuple[list[str], list[s
     restart = service.get("restart")
     if not present(restart) or str(restart).lower() == "no":
         warnings.append(f"{name}: restart is absent or disabled; confirm this is intentional")
+
+    for field in ("command", "entrypoint"):
+        if STARTUP_BUILD.search(command_text(service.get(field))):
+            errors.append(
+                f"{name}: {field} runs a build at container startup; "
+                "move the build to a Dockerfile stage"
+            )
     return errors, warnings
 
 

@@ -1,6 +1,6 @@
 ---
 name: docker-compose-guardrails
-description: Create, modify, review, or deploy Docker Compose services with enforceable resource boundaries. Use when working with Dockerfiles, compose.yaml/docker-compose.yml files, container deployment configuration, or incidents involving container CPU, memory, process, and restart behavior.
+description: Create, modify, review, or deploy Docker Compose services with enforceable resource boundaries and production-ready startup behavior. Use when working with Dockerfiles, compose.yaml/docker-compose.yml files, container deployment configuration, or incidents involving container CPU, memory, process, restart behavior, or startup-time builds.
 ---
 
 # Docker Compose Guardrails
@@ -21,6 +21,21 @@ Prefer the service-level fields above because they map directly to the local Doc
 Choose conservative initial limits from the service's known workload. Do not invent precision: if the workload is unknown, state that the values are provisional and name the metric or load test that will guide adjustment.
 
 Allow an unbounded value only for a short-lived, manually invoked task with an explicit reason and owner. Never silently leave a long-running service unlimited.
+
+## Build before runtime
+
+Treat a build command in a long-running service's `command` or `entrypoint` as
+a deployment defect. Build application artifacts in the Dockerfile, normally
+with a multi-stage build, and make the Compose service start only the built
+runtime artifact. This keeps build-resource demand separate from runtime
+limits, makes the image reproducible, and prevents every restart from building
+again.
+
+The bundled static check rejects common startup build commands, including
+`next build`, `pnpm build`, `npm run build`, and `yarn build`. Move the build
+to the image build stage before deployment. A short-lived, manually invoked
+build task is the only exception; do not give it a restart policy and document
+its purpose and owner.
 
 ## Review before deployment
 

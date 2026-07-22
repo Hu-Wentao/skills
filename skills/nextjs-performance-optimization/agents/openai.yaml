@@ -1,4 +1,4 @@
 interface:
   display_name: "Next.js Performance Optimization"
-  short_description: "Prevent unbounded Next.js data loading regressions."
-  default_prompt: "Review or implement this Next.js data surface for scalable query, API, and rendering performance."
+  short_description: "Scale Next.js data paths and production containers."
+  default_prompt: "Use $nextjs-performance-optimization to optimize this Next.js data path or production container image."

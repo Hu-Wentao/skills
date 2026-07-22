@@ -1,6 +1,6 @@
 ---
 name: nextjs-performance-optimization
-description: Design, implement, review, and migrate performance-sensitive Next.js App Router data surfaces. Use when changing or diagnosing RSC pages, Route Handlers, Server Actions, TanStack Query/Table, tables, directories, search results, feeds, pagination, caching, N+1 queries, payload size, rendering bounds, TTFB, or scalability regressions.
+description: Design, implement, review, and migrate performance-sensitive Next.js App Router data surfaces and production container images. Use when changing or diagnosing RSC pages, Route Handlers, Server Actions, TanStack Query/Table, tables, directories, search results, feeds, pagination, caching, N+1 queries, payload size, rendering bounds, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
 # Next.js Performance Optimization
@@ -40,6 +40,29 @@ materially changing a project profile or resolver task.
   a allowlist and bounded values.
 - Verify the query shape and data boundary with focused tests. A rendered UI
   page alone is not evidence that the backend read is bounded.
+
+## Production container builds
+
+When a Next.js Dockerfile or Compose deployment is in scope, automatically
+move production builds into the Dockerfile. Do not leave `next build`, `pnpm
+build`, or equivalent commands in a long-running service's `command` or
+`entrypoint`.
+
+- Use a multi-stage Dockerfile: dependency installation, build, then a minimal
+  runtime stage. Preserve lockfile-based, reproducible dependency installation.
+- Enable and use Next.js standalone output when it fits the application. Copy
+  the actual standalone server and required static/public assets into the
+  runtime stage; derive monorepo paths from the build output instead of
+  assuming a single-app layout.
+- Make the runtime command start the built server only. Keep development
+  overrides on `next dev`; do not make development behavior the production
+  image contract.
+- Keep runtime configuration injectable at container start. Do not bake
+  secrets into image layers. If a public build-time variable is required,
+  declare and document it explicitly.
+- Run the Compose guardrail check when available, then render the production
+  Compose model. Validate the image build and start the resulting runtime
+  container before handoff.
 
 ## Task Flow
 
