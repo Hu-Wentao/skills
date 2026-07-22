@@ -1,0 +1,4 @@
+interface:
+  display_name: "Docker Compose Guardrails"
+  short_description: "Guard Docker Compose resource boundaries"
+  default_prompt: "Use $docker-compose-guardrails to review this Compose deployment for resource safety."
