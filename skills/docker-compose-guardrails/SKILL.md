@@ -62,6 +62,9 @@ containers at the host cgroup layer; constraining only the `docker build` or
 Compose client process is insufficient. A project may use a remote builder
 instead. Stop or reject a build when its resolved admission or pressure gate
 fails, and return a stable error that identifies the failed resource check.
+When a project requires an official Registry to remain primary, do not treat a
+BuildKit `mirrors` entry as an ordered official-first fallback. Follow the
+resolved policy's explicit Registry probe and fallback rules.
 
 ## Review before deployment
 
@@ -104,5 +107,6 @@ cgroups, so protection that is applied only once by hand is not durable.
 State, per service, its resource class and configured CPU, memory, PID, and
 restart values; whether Docker and host-cgroup runtime verification passed; and
 any compatibility note. Report the admission budget and builder boundary when
-minimum-resource protection is enabled. List all exceptions explicitly with
-their reason, owner, and expected duration.
+minimum-resource protection is enabled. Also report the active builder Registry
+mode when a fallback is configured. List all exceptions explicitly with their
+reason, owner, and expected duration.

@@ -73,6 +73,29 @@ when the project pressure gate crosses its threshold, preserve the original
 build failure output, and report that resource protection stopped the build.
 Do not stop critical runtime services to make room for a build.
 
+## Prefer the primary Registry
+
+Treat a BuildKit `mirrors` entry as mirror-first routing, not as a declaration
+that the official Registry must be tried first. When a project requires the
+official Registry to remain primary:
+
+1. Probe the official Registry from the builder's effective network path with
+   bounded connection and total timeouts.
+2. Use the official Registry without a mirror when the project-declared healthy
+   response is observed.
+3. Apply the configured mirror only when that probe establishes an official
+   Registry transport or availability failure.
+4. Return to official mode during the next builder calibration after the probe
+   recovers, preserving builder state when the driver supports it.
+5. Verify and report the builder's effective Registry mode after calibration.
+
+Do not activate a Registry mirror because compilation, tests, an unrelated
+package Registry, admission, PSI, OOM, CPU, or disk checks failed. Keep the
+official endpoint, accepted health response, mirror endpoint, timeout, and
+builder reconfiguration mechanism in the resolved project profile. If the
+project does not declare an official-first policy, do not invent a probe or
+fallback provider.
+
 ## Verify effective state
 
 After container creation, verify both Docker HostConfig and host cgroups:
