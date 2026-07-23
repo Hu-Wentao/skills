@@ -13,7 +13,18 @@ from typing import Any
 
 
 def compose_config(path: Path) -> dict[str, Any]:
-    command = ["docker", "compose", "-f", str(path), "config", "--format", "json"]
+    path = path.resolve()
+    command = [
+        "docker",
+        "compose",
+        "--project-directory",
+        str(path.parent),
+        "-f",
+        str(path),
+        "config",
+        "--format",
+        "json",
+    ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip()
