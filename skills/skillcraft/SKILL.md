@@ -421,8 +421,12 @@ Write instructions for using the skill and its bundled resources.
 Once development of the skill is complete, validate the skill folder to catch basic issues early:
 
 ```bash
-scripts/quick_validate.py <path/to/skill-folder>
+uv run --script scripts/quick_validate.py <path/to/skill-folder>
 ```
+
+Always invoke `quick_validate.py` through `uv run --script` so uv reads its
+PEP 723 dependency metadata. Do not run it with `python`, `python3`, or
+`uv run python`.
 
 The validation script checks YAML frontmatter format, required fields, and naming rules. If validation fails, fix the reported issues and run the command again.
 

@@ -17,6 +17,16 @@ from quick_validate import validate_skill  # noqa: E402
 
 
 class QuickValidateTest(unittest.TestCase):
+    def test_validator_requires_uv_script_execution(self) -> None:
+        source = (SCRIPTS / "quick_validate.py").read_text(encoding="utf-8")
+
+        self.assertTrue(source.startswith("#!/usr/bin/env -S uv run --script\n"))
+        self.assertIn('#   "PyYAML>=6,<7",', source)
+        self.assertIn(
+            "Usage: uv run --script quick_validate.py <skill_directory>",
+            source,
+        )
+
     def write_skill(self, root: Path, resolver: str) -> Path:
         skill = root / "example-skill"
         (skill / "references").mkdir(parents=True)
