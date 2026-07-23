@@ -1,11 +1,25 @@
 ---
 name: docker-compose-guardrails
-description: Create, modify, review, or deploy Docker Compose services with enforceable resource boundaries and production-ready startup behavior. Use when working with Dockerfiles, compose.yaml/docker-compose.yml files, container deployment configuration, or incidents involving container CPU, memory, process, restart behavior, or startup-time builds.
+description: Create, modify, review, or deploy Docker Compose services with enforceable per-container limits, host-level minimum-resource protection, bounded builds, and production-ready startup behavior. Use when working with Dockerfiles, compose.yaml/docker-compose.yml files, container deployment configuration, host cgroups/systemd slices, or incidents involving container CPU, memory, OOM, process, restart, or build pressure.
 ---
 
 # Docker Compose Guardrails
 
 Treat an omitted resource limit as a deployment defect for every long-running service. Do not approve or deploy it until a documented exception exists.
+
+## Resolve deployment policy
+
+Before reviewing, changing, or deploying container resources, run:
+
+```sh
+uv run python .agents/skills/docker-compose-guardrails/scripts/resolve.py --task deploy
+```
+
+Read the returned instruction path once per new `instructions_id`. Without
+project configuration, the resolver returns the generic deployment policy.
+Projects may define topology, resource classes, budgets, and validation
+commands under `.agents/skills-config/docker-compose-guardrails/`; see
+[references/project_config.md](references/project_config.md).
 
 ## Set boundaries
 
@@ -22,6 +36,12 @@ Choose conservative initial limits from the service's known workload. Do not inv
 
 Allow an unbounded value only for a short-lived, manually invoked task with an explicit reason and owner. Never silently leave a long-running service unlimited.
 
+Compose limits provide ceilings, not guaranteed minimums. When a deployment
+must preserve minimum resources for selected containers, enforce the resolved
+host-level cgroup policy in addition to these service limits. Do not claim that
+`mem_limit`, `deploy.resources.reservations`, or CPU quota alone provides a
+minimum guarantee.
+
 ## Build before runtime
 
 Treat a build command in a long-running service's `command` or `entrypoint` as
@@ -36,6 +56,12 @@ The bundled static check rejects common startup build commands, including
 to the image build stage before deployment. A short-lived, manually invoked
 build task is the only exception; do not give it a restart policy and document
 its purpose and owner.
+
+Treat builds as best-effort work. Bound the builder daemon and its executor
+containers at the host cgroup layer; constraining only the `docker build` or
+Compose client process is insufficient. A project may use a remote builder
+instead. Stop or reject a build when its resolved admission or pressure gate
+fails, and return a stable error that identifies the failed resource check.
 
 ## Review before deployment
 
@@ -53,6 +79,10 @@ Render the exact Compose model used for deployment before reviewing it:
 docker compose -f compose.yaml config
 ```
 
+Run every preflight command declared by the resolved deployment policy before
+changing live containers. Resolution only declares commands; it never executes
+them.
+
 ## Verify the running container
 
 After `docker compose up -d`, verify Docker's effective HostConfig rather than trusting YAML:
@@ -63,6 +93,16 @@ docker inspect <container> --format 'Memory={{.HostConfig.Memory}} NanoCPUs={{.H
 
 For constrained services, `Memory` and `NanoCPUs` must be non-zero; `PidsLimit` must not be `0` or absent. `0` means unlimited. Report the observed values in the deployment handoff.
 
+For deployments with minimum-resource protection, also verify the effective
+leaf cgroup and every relevant ancestor after containers start. Confirm the
+resolved resource class, `memory.min`, `memory.low`, `memory.max`, CPU control,
+and builder containment from the host. Recreated containers receive new
+cgroups, so protection that is applied only once by hand is not durable.
+
 ## Review output
 
-State, per service, the configured CPU, memory, PID, and restart values; whether Docker runtime verification passed; and any compatibility note. List all exceptions explicitly with their reason, owner, and expected duration.
+State, per service, its resource class and configured CPU, memory, PID, and
+restart values; whether Docker and host-cgroup runtime verification passed; and
+any compatibility note. Report the admission budget and builder boundary when
+minimum-resource protection is enabled. List all exceptions explicitly with
+their reason, owner, and expected duration.

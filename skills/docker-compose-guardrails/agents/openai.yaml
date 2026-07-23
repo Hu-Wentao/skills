@@ -1,4 +1,4 @@
 interface:
   display_name: "Docker Compose Guardrails"
-  short_description: "Guard Compose resources and startup builds."
-  default_prompt: "Use $docker-compose-guardrails to review this Compose deployment for resource safety and startup-time builds."
+  short_description: "Guard Compose and host resource guarantees."
+  default_prompt: "Use $docker-compose-guardrails to review this deployment's container limits, host-level minimum-resource protection, and bounded build behavior."
