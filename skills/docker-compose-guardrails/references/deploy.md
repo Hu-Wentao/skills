@@ -53,6 +53,14 @@ Also evaluate the project's declared memory-pressure signal, such as PSI, and
 any existing OOM or cgroup pressure condition. Return a stable, actionable
 error naming the failed invariant and observed versus allowed values.
 
+When PSI is the declared pressure signal, use a kernel-provided time-window
+average such as `some|full avg10`, `avg60`, or `avg300`, with the exact scope
+and window selected by the project profile. Do not derive an instantaneous
+rate from the cumulative `total` field or treat one poll interval as the
+pressure average. Document the selected PSI class, window, threshold, and poll
+interval separately; repeated polling does not itself create an averaged PSI
+signal.
+
 ## Isolate builds
 
 Place BuildKit and its executor containers in a bounded best-effort cgroup or
