@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
@@ -26,6 +27,24 @@ class Worktree:
     locked: bool = False
     prunable: bool = False
     main: bool = False
+
+
+@dataclass(frozen=True)
+class BranchAudit:
+    branch: str
+    commit: str
+    committed_at: str
+    committed_at_unix: int
+    subject: str
+    upstream: str | None
+    ahead: int
+    behind: int
+    unique_non_merge_commits: int
+    patch_equivalent_commits: int
+    patch_unique_commits: int
+    patch_equivalent_to_target: bool
+    protected: bool
+    worktrees: tuple[dict[str, object], ...]
 
 
 def run_git(
@@ -142,12 +161,50 @@ def ensure_affected_worktrees_clean(repo: Path, *branches: str) -> None:
             )
 
 
-def unmerged_candidates(repo: Path, target: str) -> list[str]:
-    branches = run_git(
-        repo, "for-each-ref", "--format=%(refname:short)", "refs/heads"
-    ).stdout.splitlines()
-    candidates: list[str] = []
-    for branch in branches:
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
+def protected_branch(branch: str) -> bool:
+    return branch.startswith(("release/", "hotfix/"))
+
+
+def worktree_evidence(repo: Path, branch: str) -> tuple[dict[str, object], ...]:
+    evidence: list[dict[str, object]] = []
+    for worktree in affected_worktrees(repo, branch):
+        path = Path(worktree.path)
+        exists = path.exists()
+        changes = status_lines(path) if exists else []
+        evidence.append(
+            {
+                "path": worktree.path,
+                "dirty": bool(changes),
+                "changes": changes,
+                "locked": worktree.locked,
+                "prunable": worktree.prunable,
+                "main": worktree.main,
+            }
+        )
+    return tuple(evidence)
+
+
+def branch_audits(repo: Path, target: str) -> list[BranchAudit]:
+    if not local_branch_exists(repo, target):
+        raise WorkflowError(f"Target branch does not exist locally: {target}")
+
+    fields = (
+        "%(refname:short)%00%(objectname)%00%(committerdate:unix)%00"
+        "%(committerdate:iso8601-strict)%00%(subject)%00%(upstream:short)"
+    )
+    output = run_git(
+        repo, "for-each-ref", f"--format={fields}", "refs/heads"
+    ).stdout
+    audits: list[BranchAudit] = []
+    for line in output.splitlines():
+        branch, commit, unix, committed_at, subject, upstream = line.split("\0")
         if branch == target:
             continue
         if (
@@ -162,10 +219,56 @@ def unmerged_candidates(repo: Path, target: str) -> list[str]:
             == 0
         ):
             continue
-        ahead = int(run_git(repo, "rev-list", "--count", f"{target}..{branch}").stdout)
-        if ahead >= 1:
-            candidates.append(branch)
-    return sorted(candidates)
+
+        behind, ahead = (
+            int(value)
+            for value in run_git(
+                repo, "rev-list", "--left-right", "--count", f"{target}...{branch}"
+            ).stdout.split()
+        )
+        unique_non_merge = int(
+            run_git(
+                repo, "rev-list", "--count", "--no-merges", f"{target}..{branch}"
+            ).stdout
+        )
+        cherry_lines = [
+            item
+            for item in run_git(repo, "cherry", target, branch).stdout.splitlines()
+            if item
+        ]
+        equivalent = sum(item.startswith("-") for item in cherry_lines)
+        unique = sum(item.startswith("+") for item in cherry_lines)
+        audits.append(
+            BranchAudit(
+                branch=branch,
+                commit=commit,
+                committed_at=committed_at,
+                committed_at_unix=int(unix),
+                subject=subject,
+                upstream=upstream or None,
+                ahead=ahead,
+                behind=behind,
+                unique_non_merge_commits=unique_non_merge,
+                patch_equivalent_commits=equivalent,
+                patch_unique_commits=unique,
+                patch_equivalent_to_target=(
+                    unique_non_merge > 0
+                    and equivalent == unique_non_merge
+                    and unique == 0
+                ),
+                protected=protected_branch(branch),
+                worktrees=worktree_evidence(repo, branch),
+            )
+        )
+    return sorted(
+        audits,
+        key=lambda item: (item.committed_at_unix, item.branch),
+        reverse=True,
+    )
+
+
+def unmerged_candidates(repo: Path, target: str) -> list[str]:
+    return sorted(item.branch for item in branch_audits(repo, target) if item.ahead)
 
 
 def emit(payload: object) -> None:
@@ -174,6 +277,32 @@ def emit(payload: object) -> None:
 
 def command_list(repo: Path, _args: argparse.Namespace) -> None:
     emit({"worktrees": [asdict(worktree) for worktree in parse_worktrees(repo)]})
+
+
+def command_branch_audit(repo: Path, args: argparse.Namespace) -> None:
+    target = args.target or current_branch(repo)
+    audits = branch_audits(repo, target)
+    if args.recent_count is not None:
+        selected = audits[: args.recent_count]
+        selection = {"kind": "recent_count", "value": args.recent_count}
+    else:
+        cutoff = int(time.time()) - args.recent_days * 86_400
+        selected = [item for item in audits if item.committed_at_unix >= cutoff]
+        selection = {
+            "kind": "recent_days",
+            "value": args.recent_days,
+            "cutoff_unix": cutoff,
+        }
+    emit(
+        {
+            "action": "branch_audit",
+            "target": target,
+            "scope": "local_unmerged",
+            "selection": selection,
+            "total_unmerged": len(audits),
+            "branches": [asdict(item) for item in selected],
+        }
+    )
 
 
 def command_create(repo: Path, args: argparse.Namespace) -> None:
@@ -316,6 +445,81 @@ def command_remove(repo: Path, args: argparse.Namespace) -> None:
     )
 
 
+def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
+    branch = args.branch
+    target = args.target or current_branch(repo)
+    if branch == target:
+        raise WorkflowError("The target branch cannot be deleted.")
+    for name in (branch, target):
+        if not local_branch_exists(repo, name):
+            raise WorkflowError(f"Local branch does not exist: {name}")
+    if protected_branch(branch) and not args.allow_protected:
+        raise WorkflowError(
+            f"Protected branch '{branch}' requires --allow-protected."
+        )
+
+    commit = run_git(repo, "rev-parse", f"{branch}^{{commit}}").stdout.strip()
+    merged = (
+        run_git(
+            repo,
+            "merge-base",
+            "--is-ancestor",
+            branch,
+            target,
+            check=False,
+        ).returncode
+        == 0
+    )
+    if not merged and not args.allow_unmerged:
+        raise WorkflowError(
+            f"Branch '{branch}' is not merged into '{target}'; "
+            "use --allow-unmerged only after evidence-based maintenance analysis."
+        )
+
+    removed_worktrees: list[str] = []
+    for worktree in affected_worktrees(repo, branch):
+        requested = Path(worktree.path)
+        if worktree.main:
+            raise WorkflowError(
+                "A branch checked out in the main worktree cannot be deleted."
+            )
+        if worktree.locked:
+            raise WorkflowError(f"Locked worktree cannot be removed: {requested}")
+        if worktree.prunable or not requested.exists():
+            raise WorkflowError(
+                f"Prunable or missing worktree requires separate review: {requested}"
+            )
+        if merge_in_progress(requested):
+            raise WorkflowError(f"A merge is in progress in worktree: {requested}")
+        changes = status_lines(requested)
+        if changes:
+            raise WorkflowError(
+                f"Worktree is dirty and cannot be removed: {requested}\n"
+                + "\n".join(changes)
+            )
+        if not args.remove_worktree:
+            raise WorkflowError(
+                f"Branch '{branch}' is checked out in {requested}; "
+                "pass --remove-worktree to remove the clean worktree."
+            )
+        run_git(repo, "worktree", "remove", str(requested))
+        removed_worktrees.append(str(requested))
+
+    run_git(repo, "branch", "-d" if merged else "-D", "--", branch)
+    emit(
+        {
+            "action": "branch_deleted",
+            "branch": branch,
+            "commit": commit,
+            "merged_into_target": merged,
+            "reason": args.reason,
+            "remote_branch_untouched": True,
+            "removed_worktrees": removed_worktrees,
+            "target": target,
+        }
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -325,6 +529,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = commands.add_parser("list", help="List registered worktrees")
     list_parser.set_defaults(handler=command_list)
+
+    branch_audit = commands.add_parser(
+        "branch-audit", help="Inventory recent unmerged local branches"
+    )
+    branch_audit.add_argument("--target")
+    branch_window = branch_audit.add_mutually_exclusive_group(required=True)
+    branch_window.add_argument("--recent-count", type=positive_int)
+    branch_window.add_argument("--recent-days", type=positive_int)
+    branch_audit.set_defaults(handler=command_branch_audit)
 
     create = commands.add_parser("create", help="Create a branch and worktree")
     create.add_argument("--branch", required=True)
@@ -341,6 +554,17 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--worktree", required=True)
     remove.add_argument("--require-merged-into")
     remove.set_defaults(handler=command_remove)
+
+    branch_delete = commands.add_parser(
+        "branch-delete", help="Safely delete one classified local branch"
+    )
+    branch_delete.add_argument("--branch", required=True)
+    branch_delete.add_argument("--target")
+    branch_delete.add_argument("--reason", required=True)
+    branch_delete.add_argument("--allow-unmerged", action="store_true")
+    branch_delete.add_argument("--allow-protected", action="store_true")
+    branch_delete.add_argument("--remove-worktree", action="store_true")
+    branch_delete.set_defaults(handler=command_branch_delete)
     return parser
 
 

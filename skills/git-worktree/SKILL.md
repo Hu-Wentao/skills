@@ -1,11 +1,12 @@
 ---
 name: git-worktree
-description: Manage the full Git worktree lifecycle. Use when Codex needs to list worktrees, create an isolated worktree and branch, merge a worktree or local branch into the current branch with an explicit merge commit, finish a worktree flow, or safely remove a worktree. Checks affected worktrees for dirty state, auto-detects a merge source only when unambiguous, and leaves branch deletion, pushing, rebasing, squashing, stashing, and forced removal outside the default workflow.
+description: Manage Git worktrees and local branch maintenance. Use when Codex needs to list or create worktrees, merge a worktree or local branch with an explicit merge commit, safely remove a worktree, or analyze the most recent N or last N days of unmerged branches and merge, retain, or delete each branch from evidence. Checks affected worktrees for dirty state, inventories patch equivalence and divergence, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced worktree removal outside the workflow.
 ---
 
 # Git Worktree
 
-Manage worktrees from creation through merge and cleanup while preserving explicit user authorization for user-owned destructive actions and automatically cleaning up agent-created temporary worktrees.
+Manage worktrees from creation through merge and cleanup, and maintain bounded
+sets of unmerged local branches from evidence.
 
 ## Prepare
 
@@ -48,6 +49,59 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> create \
 The default path is a sibling of the main worktree named `<project>-T-<branch>`, with `/` in branch names converted to `-`.
 
 The CLI performs only Git creation. Afterward, inspect the new worktree's repository instructions and initialize dependencies only when appropriate. Follow the target repository's tools; for example, use FVM for Flutter, nvm plus pnpm for Node, and uv for Python. Do not fall back to global `flutter`, `npm`, or `pip` merely because a manifest exists.
+
+## Maintain Recent Branches
+
+Treat “最近 N 个未合并分支” as the N newest local unmerged branches by
+committer time. Treat “最近 N 天” as branches whose newest commit is within the
+last N×24 hours. Default the integration target to the current branch.
+
+Inventory exactly one bounded window:
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> branch-audit \
+  --recent-count <N> [--target <branch>]
+
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> branch-audit \
+  --recent-days <N> [--target <branch>]
+```
+
+The result covers local unmerged branches only and reports divergence, patch
+equivalence, upstream, commit identity, and associated worktree state. Refresh
+remote refs first only when current remote state is relevant and the user's
+request permits it. Do not interpret age alone as evidence for deletion.
+
+For every selected branch, inspect its unique commits, diff, current code,
+governing requirements or baselines, later replacement commits, tests, and
+review history when available. Assign exactly one decision:
+
+- **merge**: unique behavior is still required and compatible with current
+  authority. Validate it, merge it, then delete the merged topic branch unless
+  ongoing work requires retaining it.
+- **retain**: the branch remains valuable but is incomplete, actively used,
+  semantically unresolved, protected, or unsafe to integrate or delete.
+- **delete**: the change is already integrated or patch-equivalent, is
+  demonstrably superseded by accepted behavior, or has no remaining value.
+  Record the evidence and the branch's final commit before deletion.
+
+A request to maintain branches and merge/retain/delete them authorizes those
+actions only for the selected local window. It does not authorize remote branch
+deletion, pushing, tag changes, or cleanup of unrelated worktrees.
+
+Use the normal merge workflow for `merge`. Delete one classified branch with:
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> branch-delete \
+  --branch <branch> [--target <branch>] --reason "<evidence summary>" \
+  [--allow-unmerged] [--remove-worktree]
+```
+
+Use `--allow-unmerged` only for a branch explicitly classified `delete` from
+evidence. Use `--remove-worktree` only after the command's clean-state checks
+can safely remove every linked non-main worktree. The command refuses dirty,
+locked, prunable, missing, main, or merge-in-progress worktrees and leaves
+remote branches untouched. `release/*` and `hotfix/*` require separate explicit
+`--allow-protected` authorization; otherwise retain them.
 
 ## Merge a Branch
 
@@ -92,7 +146,10 @@ user-authored or otherwise unpreserved changes and no Git operation is in
 progress. Never force removal. If safe cleanup fails, preserve the worktree and
 report the exact blocker instead of silently abandoning or deleting it.
 
-Removing a worktree does not delete its branch. Delete a branch only when the user explicitly requests that separate action. Do not use force, stash changes, push, rebase, or squash unless the user explicitly authorizes the exact operation.
+Removing a worktree does not delete its branch. Delete a branch only through an
+explicit cleanup request or the bounded maintenance workflow above. Do not use
+force on a worktree, stash changes, push, rebase, or squash unless the user
+explicitly authorizes the exact operation.
 
 ## Report
 
@@ -102,9 +159,13 @@ Report:
 - source, target, and merge commit for a merge;
 - initialization or validation commands run outside the CLI;
 - unresolved dirty state or conflicts;
-- whether the branch was retained;
+- each maintained branch's merge, retain, or delete decision and evidence;
+- the commit identity of every deleted branch and whether a linked worktree was
+  removed;
+- whether remote branches were left untouched;
 - breaking or compatibility effects.
 
 ## Resource
 
-- `scripts/git_worktree.py`: deterministic list, create, merge, and remove operations with cross-worktree safety checks.
+- `scripts/git_worktree.py`: deterministic worktree lifecycle, branch audit,
+  merge, and classified local-branch deletion with cross-worktree safety checks.

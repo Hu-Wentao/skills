@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -12,7 +14,11 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "git_worktree.py"
 
 
 def run(
-    command: list[str], cwd: Path, *, check: bool = True
+    command: list[str],
+    cwd: Path,
+    *,
+    check: bool = True,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
@@ -20,6 +26,7 @@ def run(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
         check=False,
     )
     if check and result.returncode != 0:
@@ -63,6 +70,25 @@ class GitWorktreeCliTests(unittest.TestCase):
         (worktree / filename).write_text(contents)
         run(["git", "add", filename], worktree)
         run(["git", "commit", "-m", f"add {filename}"], worktree)
+
+    def commit_file_at(
+        self,
+        worktree: Path,
+        filename: str,
+        contents: str,
+        committed_at: datetime,
+    ) -> None:
+        (worktree / filename).write_text(contents)
+        run(["git", "add", filename], worktree)
+        environment = os.environ.copy()
+        timestamp = committed_at.isoformat()
+        environment["GIT_AUTHOR_DATE"] = timestamp
+        environment["GIT_COMMITTER_DATE"] = timestamp
+        run(
+            ["git", "commit", "-m", f"add {filename}"],
+            worktree,
+            env=environment,
+        )
 
     def test_create_and_list_worktree_with_sanitized_default_path(self) -> None:
         worktree = self.create()
@@ -113,6 +139,152 @@ class GitWorktreeCliTests(unittest.TestCase):
             0,
         )
         run(["git", "merge", "--abort"], self.repo)
+
+    def test_branch_audit_selects_recent_count_by_commit_time(self) -> None:
+        older = self.create("older")
+        self.commit_file_at(
+            older,
+            "older.txt",
+            "older\n",
+            datetime.now(UTC) - timedelta(hours=2),
+        )
+        newer = self.create("newer")
+        self.commit_file_at(
+            newer,
+            "newer.txt",
+            "newer\n",
+            datetime.now(UTC) - timedelta(hours=1),
+        )
+
+        result = json.loads(
+            self.cli("branch-audit", "--recent-count", "1").stdout
+        )
+        self.assertEqual(result["scope"], "local_unmerged")
+        self.assertEqual(result["total_unmerged"], 2)
+        self.assertEqual([item["branch"] for item in result["branches"]], ["newer"])
+        self.assertEqual(result["branches"][0]["ahead"], 1)
+
+    def test_branch_audit_selects_recent_days(self) -> None:
+        old = self.create("old")
+        self.commit_file_at(
+            old,
+            "old.txt",
+            "old\n",
+            datetime.now(UTC) - timedelta(days=3),
+        )
+        recent = self.create("recent")
+        self.commit_file(recent, "recent.txt", "recent\n")
+
+        result = json.loads(
+            self.cli("branch-audit", "--recent-days", "1").stdout
+        )
+        self.assertEqual([item["branch"] for item in result["branches"]], ["recent"])
+
+    def test_branch_audit_detects_patch_equivalent_commit(self) -> None:
+        worktree = self.create("equivalent")
+        self.commit_file(worktree, "equivalent.txt", "equivalent\n")
+        source_commit = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        (self.repo / "main-only.txt").write_text("main\n")
+        run(["git", "add", "main-only.txt"], self.repo)
+        run(["git", "commit", "-m", "advance main"], self.repo)
+        run(["git", "cherry-pick", source_commit], self.repo)
+
+        result = json.loads(
+            self.cli("branch-audit", "--recent-count", "1").stdout
+        )
+        branch = result["branches"][0]
+        self.assertEqual(branch["branch"], "equivalent")
+        self.assertTrue(branch["patch_equivalent_to_target"])
+        self.assertEqual(branch["patch_unique_commits"], 0)
+
+    def test_branch_delete_requires_explicit_unmerged_authorization(self) -> None:
+        worktree = self.create("obsolete")
+        self.commit_file(worktree, "obsolete.txt", "obsolete\n")
+        source_commit = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        rejected = self.cli(
+            "branch-delete",
+            "--branch",
+            "obsolete",
+            "--reason",
+            "superseded",
+            check=False,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("--allow-unmerged", rejected.stderr)
+
+        deleted = json.loads(
+            self.cli(
+                "branch-delete",
+                "--branch",
+                "obsolete",
+                "--reason",
+                "superseded",
+                "--allow-unmerged",
+                "--remove-worktree",
+            ).stdout
+        )
+        self.assertFalse(deleted["merged_into_target"])
+        self.assertEqual(deleted["commit"], source_commit)
+        self.assertFalse(worktree.exists())
+        self.assertNotIn(
+            "obsolete",
+            run(["git", "branch", "--format=%(refname:short)"], self.repo).stdout,
+        )
+
+    def test_branch_delete_refuses_dirty_worktree(self) -> None:
+        worktree = self.create("dirty-delete")
+        self.commit_file(worktree, "tracked.txt", "tracked\n")
+        (worktree / "dirty.txt").write_text("dirty\n")
+
+        rejected = self.cli(
+            "branch-delete",
+            "--branch",
+            "dirty-delete",
+            "--reason",
+            "obsolete",
+            "--allow-unmerged",
+            "--remove-worktree",
+            check=False,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("dirty", rejected.stderr)
+
+    def test_branch_delete_protects_release_and_hotfix_branches(self) -> None:
+        worktree = self.create("release/v1.0.0")
+        self.commit_file(worktree, "release.txt", "release\n")
+
+        rejected = self.cli(
+            "branch-delete",
+            "--branch",
+            "release/v1.0.0",
+            "--reason",
+            "obsolete",
+            "--allow-unmerged",
+            "--remove-worktree",
+            check=False,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("--allow-protected", rejected.stderr)
+        self.assertTrue(worktree.exists())
+
+    def test_branch_delete_removes_merged_branch_and_clean_worktree(self) -> None:
+        worktree = self.create("merged-cleanup")
+        self.commit_file(worktree, "merged.txt", "merged\n")
+        self.cli("merge", "--source", "merged-cleanup")
+
+        deleted = json.loads(
+            self.cli(
+                "branch-delete",
+                "--branch",
+                "merged-cleanup",
+                "--reason",
+                "merged into main",
+                "--remove-worktree",
+            ).stdout
+        )
+        self.assertTrue(deleted["merged_into_target"])
+        self.assertFalse(worktree.exists())
 
     def test_remove_requires_merged_branch_when_requested(self) -> None:
         worktree = self.create("cleanup")

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Git Worktree"
-  short_description: "Create, merge, and safely clean up Git worktrees"
-  default_prompt: "Use $git-worktree to manage this repository worktree from creation through merge and cleanup."
+  display_name: "Git Worktree & Branch Maintenance"
+  short_description: "Audit, merge, retain, and clean up Git branches"
+  default_prompt: "Use $git-worktree to maintain recent unmerged branches and safely manage related worktrees."
