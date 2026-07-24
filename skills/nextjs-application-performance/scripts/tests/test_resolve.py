@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the nextjs-performance-optimization project configuration resolver."""
+"""Tests for the nextjs-application-performance project configuration resolver."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 
-SKILL_NAME = "nextjs-performance-optimization"
+SKILL_NAME = "nextjs-application-performance"
 SOURCE_SKILL = Path(__file__).resolve().parents[2]
 
 

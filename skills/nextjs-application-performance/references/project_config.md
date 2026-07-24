@@ -4,7 +4,7 @@ This skill supports optional repository-owned configuration so the same skill
 can behave differently in different projects:
 
 ```text
-.agents/skills-config/nextjs-performance-optimization/
+.agents/skills-config/nextjs-application-performance/
 ├── config.yaml
 └── <profile>.md
 ```
@@ -12,7 +12,7 @@ can behave differently in different projects:
 Example:
 
 ```yaml
-schema: nextjs-performance-optimization.config.v1
+schema: nextjs-application-performance.config.v1
 profile: example-project
 tasks:
   review:
@@ -25,12 +25,12 @@ tasks:
 Run the resolver before a configured task:
 
 ```bash
-uv run python .agents/skills/nextjs-performance-optimization/scripts/resolve.py --task review
+uv run python .agents/skills/nextjs-application-performance/scripts/resolve.py --task review
 ```
 
 Read the returned instruction path once per new `instructions_id`. Resolution
 does not execute declared commands. The target repository owns `skills-config`;
-resolved output belongs under `.agents/.cache/nextjs-performance-optimization/` and should not be
+resolved output belongs under `.agents/.cache/nextjs-application-performance/` and should not be
 tracked.
 
 Project instructions override generic configurable defaults when both address

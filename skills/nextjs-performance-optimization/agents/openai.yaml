@@ -1,4 +1,0 @@
-interface:
-  display_name: "Next.js Performance Optimization"
-  short_description: "Optimize Next.js data, table scrolling, and containers."
-  default_prompt: "Use $nextjs-performance-optimization to review this Next.js data surface, table layout, or production container."

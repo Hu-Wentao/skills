@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve generic and repository-owned instructions for nextjs-performance-optimization."""
+"""Resolve generic and repository-owned instructions for nextjs-application-performance."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_NAME = "nextjs-performance-optimization"
+SKILL_NAME = "nextjs-application-performance"
 RESOLVER_VERSION = "1"
 
 

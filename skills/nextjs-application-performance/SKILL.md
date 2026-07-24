@@ -1,20 +1,21 @@
 ---
-name: nextjs-performance-optimization
-description: Design, implement, review, and migrate performance-sensitive Next.js App Router data surfaces and production container images. Use when changing or diagnosing RSC pages, Route Handlers, Server Actions, TanStack Query/Table, tables, directories, search results, feeds, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, third-party table adapters, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
+name: nextjs-application-performance
+description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, real-user monitoring (RUM), click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
-# Next.js Performance Optimization
+# Next.js Application Performance
 
-Prevent unbounded data loading, transport, and rendering in Next.js without
-trading away authorization, data correctness, or URL-addressable state.
+Keep Next.js applications responsive and scalable across data access,
+transport, rendering, user-perceived actions, and production runtime without
+trading away authorization, correctness, or URL-addressable state.
 
 ## Resolve Project Behavior
 
-Select one task: `design`, `implement`, `review`, or `migrate`. Before acting,
-resolve the current repository's instructions:
+Select one task: `design`, `implement`, `review`, `migrate`, or `monitor`.
+Before acting, resolve the current repository's instructions:
 
 ```bash
-uv run python .agents/skills/nextjs-performance-optimization/scripts/resolve.py --task <task>
+uv run python .agents/skills/nextjs-application-performance/scripts/resolve.py --task <task>
 ```
 
 Read the returned `instructions.path` whenever `instructions_id` changes.
@@ -38,6 +39,11 @@ materially changing a project profile or resolver task.
   is bounded by the current page.
 - Treat cursor tokens as opaque and validate all public query parameters with
   a allowlist and bounded values.
+- Reuse the shared interactive select/combobox for both a remote candidate
+  query and its committed selection. Its search text is transient UI state;
+  it may drive a debounced, paged query but must not update the business value
+  until an option is committed. Do not compose a separate search input and
+  select for the same field.
 - Declare one vertical scroll owner for every rendered data surface. Do not let
   a shared or third-party table silently add a viewport-sized nested scroller;
   sticky headers and virtualization must preserve the surrounding shell's
@@ -76,17 +82,19 @@ build`, or equivalent commands in a long-running service's `command` or
 
 ## Task Flow
 
-1. Resolve instructions and inspect the data path from request URL through
-   authorization, Repository/ORM query, projection, response/RSC, and UI.
-2. State the growing-collection classification, user-visible contract, and
-   first incorrect unbounded decision when reviewing an existing path.
-3. Use the selected task reference. Keep framework-neutral method in the
-   reference and repository-specific commands in the profile.
-4. Run the smallest relevant query-shape test first, then configured static,
-   type, integration, and E2E checks in proportion to the changed boundary.
-5. Report the paging strategy, bounded query, stable ordering, payload/UI
-   behavior, scroll owner when relevant, cache implications, verification, and
-   remaining performance limits.
+1. Resolve instructions and use the selected task reference.
+2. For a data surface, inspect the path from request URL through authorization,
+   Repository/ORM query, projection, response/RSC, and UI. State the collection
+   classification and first incorrect unbounded decision.
+3. For user-perceived monitoring, define the stable business action, explicit
+   start and completion conditions, terminal results, privacy boundary, and
+   focused verification before selecting instrumentation.
+4. Keep reusable method in the reference and repository-specific policy,
+   commands, and authoritative sources in the profile.
+5. Run the smallest relevant focused test first, then configured static, type,
+   integration, browser, and E2E checks in proportion to the changed boundary.
+6. Report the relevant data bound or measurement contract, UI behavior,
+   runtime implications, verification, and remaining performance limits.
 
 ## Resources
 
@@ -98,5 +106,7 @@ build`, or equivalent commands in a long-running service's `command` or
   misleading client-only pagination.
 - [migrate.md](references/migrate.md): inventory and safely convert legacy
   whole-collection surfaces.
+- [monitor.md](references/monitor.md): measure user actions from explicit
+  intent until the business result is visible and usable.
 - [project_config.md](references/project_config.md): project profile schema,
   resolver behavior, and validation requirements.

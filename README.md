@@ -66,7 +66,7 @@ npx skills add flutter/skills
 ```
 
 ### Web & 浏览器
-- [`nextjs-performance-optimization`](skills/nextjs-performance-optimization)：治理 Next.js App Router 数据面性能、分页、查询边界和回归门禁。
+- [`nextjs-application-performance`](skills/nextjs-application-performance)：设计、检测和优化 Next.js 应用的数据、渲染、用户感知与生产运行性能。
 - Next.js 网站开发
 ```bash
 npx skills add vercel-labs/agent-skills
