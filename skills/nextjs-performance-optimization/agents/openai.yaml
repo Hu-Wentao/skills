@@ -1,4 +1,4 @@
 interface:
   display_name: "Next.js Performance Optimization"
-  short_description: "Scale Next.js data paths and production containers."
-  default_prompt: "Use $nextjs-performance-optimization to optimize this Next.js data path or production container image."
+  short_description: "Optimize Next.js data, table scrolling, and containers."
+  default_prompt: "Use $nextjs-performance-optimization to review this Next.js data surface, table layout, or production container."

@@ -1,6 +1,6 @@
 ---
 name: nextjs-performance-optimization
-description: Design, implement, review, and migrate performance-sensitive Next.js App Router data surfaces and production container images. Use when changing or diagnosing RSC pages, Route Handlers, Server Actions, TanStack Query/Table, tables, directories, search results, feeds, pagination, caching, N+1 queries, payload size, rendering bounds, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
+description: Design, implement, review, and migrate performance-sensitive Next.js App Router data surfaces and production container images. Use when changing or diagnosing RSC pages, Route Handlers, Server Actions, TanStack Query/Table, tables, directories, search results, feeds, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, third-party table adapters, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
 # Next.js Performance Optimization
@@ -38,8 +38,18 @@ materially changing a project profile or resolver task.
   is bounded by the current page.
 - Treat cursor tokens as opaque and validate all public query parameters with
   a allowlist and bounded values.
+- Declare one vertical scroll owner for every rendered data surface. Do not let
+  a shared or third-party table silently add a viewport-sized nested scroller;
+  sticky headers and virtualization must preserve the surrounding shell's
+  scroll contract.
+- Audit the rendered container styles of third-party table/grid adapters,
+  including generated `height`, `max-height`, `overflow`, and overscroll
+  behavior. Shared adapters own these defaults; do not repair them with
+  consumer-specific CSS.
 - Verify the query shape and data boundary with focused tests. A rendered UI
   page alone is not evidence that the backend read is bounded.
+- Verify scroll geometry in a real browser when sticky headers, virtualization,
+  nested overflow, or viewport-relative sizing can change the scroll owner.
 
 ## Production container builds
 
@@ -75,8 +85,8 @@ build`, or equivalent commands in a long-running service's `command` or
 4. Run the smallest relevant query-shape test first, then configured static,
    type, integration, and E2E checks in proportion to the changed boundary.
 5. Report the paging strategy, bounded query, stable ordering, payload/UI
-   behavior, cache implications, verification, and remaining performance
-   limits.
+   behavior, scroll owner when relevant, cache implications, verification, and
+   remaining performance limits.
 
 ## Resources
 

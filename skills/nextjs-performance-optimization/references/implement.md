@@ -16,3 +16,14 @@ policy; do not optimistic-update append-only or financially sensitive facts.
 
 Use the project's shared pagination/table components. Do not claim compliance
 because a client table hides all but one local page.
+
+Keep the shared table adapter as the owner of third-party table container
+defaults. Explicitly normalize generated viewport-relative height, overflow,
+sticky-header, and overscroll behavior there instead of adding page-specific
+CSS. Preserve one vertical scroll owner unless the design explicitly calls for
+a bounded internal grid viewport.
+
+When scroll ownership can change, verify representative full and maximum page
+sizes in a real browser. Assert that the intended container scrolls, the root
+document does not gain accidental overflow, and fixed shell regions do not move
+when the table reaches its boundary.
