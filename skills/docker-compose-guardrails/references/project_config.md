@@ -22,6 +22,10 @@ tasks:
       verify: <post-start effective cgroup check>
 ```
 
+`base` is relative to the installed skill directory containing `SKILL.md`;
+`profile` is relative to the repository-owned
+`.agents/skills-config/docker-compose-guardrails/` directory.
+
 The profile should declare service-to-class mapping, host reserve, critical
 memory minima, maximum commitments, CPU isolation requirements, builder
 placement and pressure thresholds. Keep credentials, transient measurements,
@@ -30,7 +34,9 @@ generated output, and secrets out of configuration.
 Run the resolver before resource review, change, or deployment:
 
 ```sh
-uv run python .agents/skills/docker-compose-guardrails/scripts/resolve.py --task deploy
+uv run python <docker-compose-guardrails-skill-directory>/scripts/resolve.py \
+  --cwd <project-root> \
+  --task deploy
 ```
 
 Read the returned instruction path once per new `instructions_id`. Resolution

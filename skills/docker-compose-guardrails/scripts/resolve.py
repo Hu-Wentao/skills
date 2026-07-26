@@ -111,7 +111,7 @@ def display_path(path: Path, repo_root: Path) -> str:
 
 def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
     repo_root = find_repo_root(cwd)
-    skill_root = repo_root / ".agents" / "skills" / SKILL_NAME
+    skill_root = Path(__file__).resolve().parents[1]
     config_root = repo_root / ".agents" / "skills-config" / SKILL_NAME
     config_path = config_root / "config.yaml"
     cache_root = repo_root / ".agents" / ".cache" / SKILL_NAME

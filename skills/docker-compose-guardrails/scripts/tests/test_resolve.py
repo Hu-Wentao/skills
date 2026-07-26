@@ -94,6 +94,29 @@ tasks:
         )
         self.assertEqual(first_id, second_id)
 
+    def test_global_install_resolves_without_project_skill_copy(self) -> None:
+        shutil.rmtree(self.skill)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SOURCE_SKILL / "scripts" / "resolve.py"),
+                "--cwd",
+                str(self.root),
+                "--task",
+                "deploy",
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("profile: generic", result.stdout)
+        self.assertIn(
+            str(SOURCE_SKILL / "references" / "deploy.md"),
+            result.stdout,
+        )
+
     def test_project_profile_is_composed(self) -> None:
         config_root = self.write_config()
         (config_root / "host-policy.md").write_text(
