@@ -83,11 +83,30 @@ UI must read job state through worker API, not worker SQLite
 
 When documenting project versioning:
 
-- Use SemVer in `MAJOR.MINOR.PATCH` form.
-- Use `0.0.1` as the initial project version.
-- Treat major version `0` as unreleased.
-- For unreleased projects, do not add compatibility configuration by default; replace old configuration with the new configuration.
-- Still list all breaking changes and compatibility/configuration decisions after every change.
+- Use SemVer in `MAJOR.MINOR.PATCH` form for every independently versioned first-party project and first-party submodule. Do not apply this project's release policy to third-party dependency versions.
+- Treat APIs, CLIs, configuration, persistent payloads, stored-data semantics, and database schemas as public compatibility surfaces.
+- Use `0.0.1` as the initial project version and treat major version `0` as unstable:
+  - Use `PATCH` for backward-compatible fixes.
+  - An incompatible `0.x` change may use a `MINOR` bump, but explicitly document the breaking change, migration, and rollback path.
+- At or after `1.0.0`, apply the following rules:
+  - Use `PATCH` only for backward-compatible fixes.
+  - Use `MINOR` only for backward-compatible functionality, additive schema evolution, and deprecation.
+  - Use `MAJOR` for incompatible API, configuration, behavior, data-semantics, or schema changes.
+  - Treat every `PATCH` or `MINOR` change as compatible with supported earlier versions in the same major version unless the user explicitly authorizes incompatibility before implementation. An authorized incompatible change must use a `MAJOR` bump, never `PATCH` or `MINOR`.
+  - Introduce deprecation in a `MINOR` release and remove the deprecated surface only in a later `MAJOR` release.
+- Limit the default compatibility promise to versions within the same major version. Declare any broader promise separately.
+
+For database schema evolution:
+
+- Require new code to open and losslessly upgrade databases created by supported earlier versions in the same major version.
+- Prefer additive schema changes and use an explicit schema version with idempotent migrations.
+- Do not silently discard data, reinterpret existing values, or change persisted ownership.
+- Treat primary-key changes, field or table removal or rename, stored-value semantic changes, table split or merge, and persistence-ownership changes as incompatible by default.
+- Require explicit user authorization and a `MAJOR` bump for an incompatible schema change at or after `1.0.0`.
+- Provide migration verification, a backup step, and failure recovery or rollback instructions.
+- Interpret database backward compatibility as new code opening and upgrading an old database. Do not promise that old code can open the upgraded database or that mixed-version rolling operation is supported unless separately declared and verified.
+
+After every change, list breaking changes and compatibility/configuration decisions explicitly, including when there are none.
 
 ## Implementation Prompt
 

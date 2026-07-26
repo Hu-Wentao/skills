@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, establish, review, and maintain software project design and governance across architecture, scaffolding, documents, Git versions, project skills, runtime port allocation, and defects. Use when turning product discussions or an existing codebase into implementation-ready architecture docs, module/data ownership, package/runtime/Docker conventions, project scripts, or an implementation prompt; governing requirements, baselines, formal plans, verification traceability, branches, commits, worktrees, releases, version tags, deployment refs, hotfix lineage, or PPISS project ports; deciding whether repeated work should become a project skill; diagnosing or repairing defects, recurrence, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design, authority, or another tracked artifact."
+description: "Bootstrap, review, and maintain software project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing first-party version bumps, public compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, releases, tags, deployment refs, hotfix lineage, or PPISS ports; deciding whether repeated work should become a project skill; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
 ---
 
 # Project Governance
@@ -24,6 +24,7 @@ By default, require every Markdown document created or materially revised under 
 Treat these as peer capabilities rather than placing Git or skill governance under documentation:
 
 - **Project design and bootstrap**: project intent, architecture, module and data ownership, scaffolding conventions, and implementation-ready handoff.
+- **Version and compatibility governance**: SemVer classification, first-party compatibility surfaces, schema evolution, migrations, deprecations, and breaking-change authorization.
 - **Document governance**: requirements, baselines, plans, archives, and verification traceability.
 - **Git version governance**: change isolation, commit lineage, integration branches, release commits, immutable tags, fixed deployment refs, and hotfix ancestry.
 - **Project-skill governance**: extraction and maintenance of repeated, specialized, or high-risk operational knowledge.
@@ -50,6 +51,20 @@ Read [legacy-extraction.md](references/legacy-extraction.md) only when an existi
 Project design defines a target architecture and initial engineering shape. Document governance controls the authority, lifecycle, status, and archival of those decisions after they become governed project sources. Apply both domains when bootstrap outputs become durable project authority.
 
 Ask for a decision when alternatives materially change implementation cost, deployability, security, or data ownership. When terminology or constraints change, update every affected design source and remove stale terms. Keep project-specific commands, topology, and policy in repository-owned instructions or skill configuration rather than making them universal defaults.
+
+## Version and Compatibility Governance
+
+Apply SemVer to every independently versioned first-party project and first-party submodule. Treat APIs, configuration, persistent payloads, stored-data semantics, and database schemas as public compatibility surfaces. Third-party dependency versions remain governed by their publishers.
+
+For any versioned change:
+
+1. Identify the affected compatibility surfaces and the currently supported major-version boundary.
+2. Classify the change as backward-compatible or incompatible before choosing the version bump.
+3. At or after `1.0.0`, require `PATCH` and `MINOR` changes to remain backward-compatible. Require current, explicit user authorization and a `MAJOR` bump for any incompatible change.
+4. Define database migrations in the forward direction: new code must open and losslessly upgrade older schemas within the same supported major version. Do not imply that old code can read an upgraded database or that mixed-version rolling operation is safe unless the project separately promises it.
+5. Document migration verification, backup, recovery, deprecation, and removal decisions with the release.
+
+Read [design-doc-rules.md](references/design-doc-rules.md) before selecting a version bump or changing a compatibility promise, public surface, stored-data meaning, database schema, or migration policy.
 
 ## Port Allocation Governance
 
