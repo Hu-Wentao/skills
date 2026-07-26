@@ -82,8 +82,45 @@ tasks:
         (config_root / "project.md").write_text(behavior, encoding="utf-8")
         return root
 
+    def write_port_config(self) -> Path:
+        config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True, exist_ok=True)
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v2
+profile: test-project
+ports:
+  project_segment: "42"
+  instances:
+    local_dev: 0
+    local_e2e: 1
+    local_preproduction: 2
+    remote_preproduction: 5
+    remote_production: 6
+  services:
+    allocation: sequential
+    start: 0
+    capacity: 100
+    assignments:
+      api: 0
+      worker: 1
+tasks:
+  defect-diagnosis:
+    base: references/defect-governance.md
+  defect-history-review:
+    base: references/defect-governance.md
+  port-allocation:
+    base: references/port-allocation.md
+""",
+            encoding="utf-8",
+        )
+        return config_root
+
     def test_generic_fallback_and_stable_id_for_both_tasks(self) -> None:
-        for task in ("defect-diagnosis", "defect-history-review"):
+        for task in (
+            "defect-diagnosis",
+            "defect-history-review",
+            "port-allocation",
+        ):
             first = self.run_resolver("--task", task)
             second = self.run_resolver("--task", task)
             self.assertEqual(first.returncode, 0, first.stderr)
@@ -115,6 +152,59 @@ tasks:
         self.assertIn("## Project Instructions", result.stdout)
         self.assertIn("Use the project history source.", result.stdout)
         self.assertIn("uv run python -m unittest", result.stdout)
+
+    def test_port_config_is_validated_and_rendered(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "port-allocation", "--emit", "instructions"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("## Resolved Port Allocation", result.stdout)
+        self.assertIn("| local_dev | 0 | api | 00 | 42000 |", result.stdout)
+        self.assertIn(
+            "| remote_production | 6 | worker | 01 | 42601 |", result.stdout
+        )
+
+    def test_v1_config_cannot_configure_ports(self) -> None:
+        self.write_config()
+        result = self.run_resolver("--task", "port-allocation")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires project-governance.config.v2", result.stderr)
+
+    def test_port_service_ids_must_be_sequential(self) -> None:
+        config_root = self.write_port_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace("worker: 1", "worker: 2"),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "port-allocation")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("sequential from 0 without gaps", result.stderr)
+
+    def test_port_instance_mapping_is_fixed(self) -> None:
+        config_root = self.write_port_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace("local_dev: 0", "local_dev: 1"),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "port-allocation")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ports.instances.local_dev must be 0", result.stderr)
+
+    def test_project_segment_must_preserve_full_production_range(self) -> None:
+        config_root = self.write_port_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'project_segment: "42"', 'project_segment: "65"'
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "port-allocation")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be between 01 and 64", result.stderr)
 
     def test_same_installed_skill_differs_across_two_projects(self) -> None:
         project_a = self.configured_project("project-a", "Use behavior A.\n", "validate-a")

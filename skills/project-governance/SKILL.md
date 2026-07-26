@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, establish, review, and maintain software project design and governance across architecture, scaffolding, documents, Git versions, project skills, and defects. Use when turning product discussions or an existing codebase into implementation-ready architecture docs, module/data ownership, package/runtime/Docker conventions, project scripts, or an implementation prompt; governing requirements, baselines, formal plans, verification traceability, branches, commits, worktrees, releases, version tags, deployment refs, or hotfix lineage; deciding whether repeated work should become a project skill; diagnosing or repairing defects, recurrence, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design, authority, or another tracked artifact."
+description: "Bootstrap, establish, review, and maintain software project design and governance across architecture, scaffolding, documents, Git versions, project skills, runtime port allocation, and defects. Use when turning product discussions or an existing codebase into implementation-ready architecture docs, module/data ownership, package/runtime/Docker conventions, project scripts, or an implementation prompt; governing requirements, baselines, formal plans, verification traceability, branches, commits, worktrees, releases, version tags, deployment refs, hotfix lineage, or PPISS project ports; deciding whether repeated work should become a project skill; diagnosing or repairing defects, recurrence, root cause, test escape, defect ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design, authority, or another tracked artifact."
 ---
 
 # Project Governance
@@ -50,6 +50,26 @@ Read [legacy-extraction.md](references/legacy-extraction.md) only when an existi
 Project design defines a target architecture and initial engineering shape. Document governance controls the authority, lifecycle, status, and archival of those decisions after they become governed project sources. Apply both domains when bootstrap outputs become durable project authority.
 
 Ask for a decision when alternatives materially change implementation cost, deployability, security, or data ownership. When terminology or constraints change, update every affected design source and remove stale terms. Keep project-specific commands, topology, and policy in repository-owned instructions or skill configuration rather than making them universal defaults.
+
+## Port Allocation Governance
+
+Before allocating, reviewing, or migrating project service ports, run:
+
+```bash
+uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task port-allocation
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes.
+Require repository-owned `project-governance.config.v2` configuration before
+assigning concrete project ports. Keep the universal `PPISS` format and
+validation rules in the reusable skill; keep the project segment, instance
+mapping, and sequential service assignments in `skill-config`.
+
+Read [port-allocation.md](references/port-allocation.md) when designing or
+reviewing a port map. Treat an established port change as a breaking
+operational migration: update code, tests, examples, Compose and deployment
+configuration, firewall rules, and the authoritative operations document
+together. Search for stale ports before completion.
 
 ## Document Governance
 
@@ -166,7 +186,7 @@ uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <pro
 
 Read the returned `instructions.path` whenever `instructions_id` changes, then perform the requested task from those resolved instructions. Without project configuration, use the generic behavior. A repository may specialize either task through `.agents/skills-config/project-governance/config.yaml` without changing the reusable skill.
 
-Configuration discovery and composition are infrastructure supplied by `skillcraft`. They are not a Project Governance domain or a Project-Skill Governance capability; Defect Governance only consumes the resolved instructions.
+Configuration discovery and composition are infrastructure supplied by `skillcraft`. They are not a Project Governance domain or a Project-Skill Governance capability; Defect Governance and Port Allocation Governance only consume the resolved instructions.
 
 Project instructions override configurable generic defaults when both address the same choice. They cannot broaden user authorization, turn a read-only diagnosis into implementation, weaken secret or privacy protection, override external authority, replace non-configurable safety invariants, or bypass resolver schema and path-containment rules. Resolution declares commands but never executes them.
 
