@@ -156,8 +156,8 @@ def normalize_port_config(value: Any) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9]{2}", project_segment):
         raise ResolveError("ports.project_segment must be exactly two digits")
     project_number = int(project_segment)
-    if not 1 <= project_number <= 64:
-        raise ResolveError("ports.project_segment must be between 01 and 64")
+    if not 10 <= project_number <= 64:
+        raise ResolveError("ports.project_segment must be between 10 and 64")
 
     instances = require_mapping(ports.get("instances"), "ports.instances")
     require_exact_keys(instances, set(PORT_INSTANCES), "ports.instances")

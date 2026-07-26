@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain software project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing first-party version bumps, public compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, releases, tags, deployment refs, hotfix lineage, or PPISS ports; deciding whether repeated work should become a project skill; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
+description: "Bootstrap, review, and maintain software project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing first-party version bumps, public compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, releases, tags, deployment refs, hotfix lineage, PPISS ports, or machine-local project-number allocations; deciding whether repeated work should become a project skill; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
 ---
 
 # Project Governance
@@ -68,17 +68,36 @@ Read [design-doc-rules.md](references/design-doc-rules.md) before selecting a ve
 
 ## Port Allocation Governance
 
-Before allocating, reviewing, or migrating project service ports, run:
+Reserve project segments `01` through `09` for system applications. Allocate
+ordinary projects only from `10` through `64`.
+
+Before creating port configuration for a new project, reserve the lowest free
+machine-local project segment:
+
+```bash
+uv run --script <project-governance-skill-directory>/scripts/project-segments.py allocate --cwd <project-root>
+```
+
+Use the returned `project_segment` in repository-owned
+`project-governance.config.v2`. For an existing configured project, run
+`project-segments.py claim --segment <PP>` once to register its current segment;
+the command must stop on any cross-project conflict. For read-only review, use
+`check --segment <PP>` and do not allocate or claim. Use `list` to inspect all
+machine-local allocations.
+
+Then run:
 
 ```bash
 uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task port-allocation
 ```
 
 Read the returned `instructions.path` whenever `instructions_id` changes.
-Require repository-owned `project-governance.config.v2` configuration before
-assigning concrete project ports. Keep the universal `PPISS` format and
-validation rules in the reusable skill; keep the project segment, instance
-mapping, and sequential service assignments in `skill-config`.
+Require repository-owned `project-governance.config.v2` before assigning
+concrete ports. Keep cross-project segment uniqueness in the machine-local
+registry, keep this project's segment and service assignments in repository
+configuration, and keep the universal `PPISS` rules in the reusable skill.
+Never silently replace an established segment or reuse a segment registered to
+another project.
 
 Read [port-allocation.md](references/port-allocation.md) when designing or
 reviewing a port map. Treat an established port change as a breaking

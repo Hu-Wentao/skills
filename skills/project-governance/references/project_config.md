@@ -12,6 +12,18 @@ Governance capability.
 └── <profile>.md
 ```
 
+The repository configuration above is distinct from the machine-local segment
+registry:
+
+```text
+~/.agents/skills-config/project-governance/project-segments.yaml
+```
+
+The repository owns its selected segment and service map. The machine-local
+registry prevents two local projects from selecting the same segment and lets
+a new project obtain the lowest free segment. Do not copy the global registry
+into a repository or commit it.
+
 Schema `project-governance.config.v1` remains supported for defect-only
 configuration. Use `project-governance.config.v2` when configuring project
 ports. Configure only supported tasks. `base` is relative to the installed
@@ -51,9 +63,24 @@ tasks:
 
 Run the resolver adjacent to the installed skill and pass the target repository with `--cwd`. It composes generic instructions before project instructions, writes derived output below `.agents/.cache/project-governance/`, returns a stable `instructions_id`, and never executes declared commands.
 
-The v2 resolver requires project segment `01` through `64`, the standard
+The v2 resolver requires project segment `10` through `64`, reserves `01`
+through `09` for system applications, requires the standard
 instance mapping, and sequential unique service identifiers beginning at `0`.
 It renders the derived port for every configured environment and service.
+
+Before writing a new v2 configuration, run:
+
+```bash
+uv run --script <skill-root>/scripts/project-segments.py allocate --cwd <project-root>
+```
+
+For a project that already has v2 configuration, register its current segment
+with `claim --segment <PP>`; use `check --segment <PP>` for read-only
+validation. Allocation and claim use an exclusive lock and atomic replacement.
+They are idempotent for the same canonical Git root and segment, reject
+cross-project conflicts, and never renumber another project. The registry
+schema is `project-governance.project-segments.v1` and its allocation keys are
+canonical absolute Git roots.
 
 Project instructions may specialize terminology, authoritative sources,
 history locations, commands, topology, and project-only policy. They cannot

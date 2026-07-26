@@ -6,13 +6,33 @@ Use one host-visible port namespace for every governed project.
 
 Represent every assigned port as `PPISS`:
 
-- `PP`: two-digit project segment from `01` through `64`;
+- `PP`: two-digit project segment from `10` through `64`;
 - `I`: one-digit instance identifier;
 - `SS`: two-digit service identifier from `00` through `99`.
 
-Calculate the port as `PP * 1000 + I * 100 + SS`. Restrict project segments to
-`01` through `64` so instance `6` retains all 100 service ports without
-exceeding port `65535`.
+Calculate the port as `PP * 1000 + I * 100 + SS`. Reserve `01` through `09`
+for system applications. Restrict ordinary project segments to `10` through
+`64` so instance `6` retains all 100 service ports without exceeding port
+`65535`.
+
+## Machine-Local Project Segments
+
+Use
+`~/.agents/skills-config/project-governance/project-segments.yaml` as the
+machine-local registry of canonical Git roots and their segments. Before
+creating port configuration for a new project, run:
+
+```bash
+uv run --script <skill-root>/scripts/project-segments.py allocate --cwd <project-root>
+```
+
+The allocator returns an existing segment for a known project or reserves the
+lowest free segment for a new project. For a project that already has a
+configured segment, use `claim --segment <PP>` to add the same mapping or detect
+a conflict. Use `check --segment <PP>` during read-only review. Do not edit the
+registry concurrently by hand, copy it into a repository, infer that a missing
+directory frees its segment, or silently renumber either project after a
+conflict.
 
 ## Instance Allocation
 
@@ -38,8 +58,9 @@ the highest assigned service identifier.
 Keep the project segment, the complete instance mapping, and the service
 assignment map in
 `.agents/skills-config/project-governance/config.yaml`. Treat that file as the
-machine-readable source for derived ports and keep the operations document as
-the human-readable authority.
+project-owned machine-readable source for derived ports, require it to agree
+with the machine-local registry, and keep the operations document as the
+human-readable authority.
 
 ## Migration and Review
 

@@ -204,7 +204,20 @@ tasks:
         )
         result = self.run_resolver("--task", "port-allocation")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("must be between 01 and 64", result.stderr)
+        self.assertIn("must be between 10 and 64", result.stderr)
+
+    def test_system_application_project_segment_is_rejected(self) -> None:
+        config_root = self.write_port_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                'project_segment: "42"', 'project_segment: "09"'
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "port-allocation")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be between 10 and 64", result.stderr)
 
     def test_same_installed_skill_differs_across_two_projects(self) -> None:
         project_a = self.configured_project("project-a", "Use behavior A.\n", "validate-a")
