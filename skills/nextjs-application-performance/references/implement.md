@@ -23,7 +23,17 @@ sticky-header, and overscroll behavior there instead of adding page-specific
 CSS. Preserve one vertical scroll owner unless the design explicitly calls for
 a bounded internal grid viewport.
 
+Before adding or changing overflow, sticky positioning, or a bounded scroller,
+inventory every floating descendant opened from that surface. Use the shared
+menu, popover, combobox, or tooltip primitive so it owns portal mounting,
+collision handling, focus, and scroll/resize positioning. Do not place an
+absolute popup inside a clipping ancestor and try to recover it with a larger
+`z-index` or consumer-specific overflow override.
+
 When scroll ownership can change, verify representative full and maximum page
 sizes in a real browser. Assert that the intended container scrolls, the root
 document does not gain accidental overflow, and fixed shell regions do not move
-when the table reaches its boundary.
+when the table reaches its boundary. Open each floating-content class from a
+trigger near the container and viewport edges; verify that it remains reachable,
+unclipped, correctly positioned after ancestor scroll or resize, and usable by
+keyboard at narrow widths and short viewport heights.

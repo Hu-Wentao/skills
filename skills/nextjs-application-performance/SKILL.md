@@ -1,6 +1,6 @@
 ---
 name: nextjs-application-performance
-description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, real-user monitoring (RUM), click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
+description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, overlay clipping, real-user monitoring (RUM), click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
 # Next.js Application Performance
@@ -52,10 +52,16 @@ materially changing a project profile or resolver task.
   including generated `height`, `max-height`, `overflow`, and overscroll
   behavior. Shared adapters own these defaults; do not repair them with
   consumer-specific CSS.
+- Treat every new or changed clipping or scroll container as an overlay
+  boundary. Inventory menus, popovers, comboboxes, tooltips, and other floating
+  descendants. Let a shared overlay primitive own its portal and positioning,
+  or prove that the floating content is intentionally contained; `z-index`
+  cannot escape an ancestor's overflow clipping.
 - Verify the query shape and data boundary with focused tests. A rendered UI
   page alone is not evidence that the backend read is bounded.
 - Verify scroll geometry in a real browser when sticky headers, virtualization,
-  nested overflow, or viewport-relative sizing can change the scroll owner.
+  nested overflow, viewport-relative sizing, or floating descendants can
+  change scroll ownership, clipping, or overlay position.
 
 ## Production container builds
 
