@@ -232,10 +232,17 @@ deployment ref, or turn an unverified deployment into a successful one.
 1. Confirm that the workflow is repeated, specialized, high-risk, or expensive to rediscover.
 2. Keep universal governance here and project-specific commands, topology, terminology, and safety boundaries in a repository-owned project profile or focused project skill.
 3. Prefer a concise procedural `SKILL.md`; move detailed knowledge to references and deterministic operations to tested scripts.
-4. Decide whether the skill needs project configuration before selecting an authoring capability.
-5. When creating or materially revising a skill, prefer `skillcraft` whenever it is available in the current session. If it is unavailable and the skill does not need project configuration, use the system `skill-creator` as the fallback.
-6. If `skillcraft` is unavailable but the skill needs `.agents/skills-config`, a project-profile resolver, resolved-instruction caching, or another `skillcraft` project-configuration mechanism, stop and ask the user to install `skillcraft`. Do not install it without approval, reproduce its mechanism with `skill-creator`, or modify the system `skill-creator`.
-7. Do not turn one-time plans, ordinary coding conventions, or unstable product proposals into skills.
+4. 对于“更新项目内技能（如 flowr-usage / fr-mvvm-contract）”的操作，优先走 `skills` CLI：
+
+```bash
+skills update -p flowr-usage fr-mvvm-contract
+```
+
+必要时可添加 `-y` 跳过确认；若目标不明确先 `skills list -p` 核对可更新集合。若未显式指定版本更新范围，`skills update -p` 仅刷新项目已安装技能；避免手工从远端仓库拷贝 skill 目录。
+5. Decide whether the skill needs project configuration before selecting an authoring capability.
+6. When creating or materially revising a skill, prefer `skillcraft` whenever it is available in the current session. If it is unavailable and the skill does not need project configuration, use the system `skill-creator` as the fallback.
+7. If `skillcraft` is unavailable but the skill needs `.agents/skills-config`, a project-profile resolver, resolved-instruction caching, or another `skillcraft` project-configuration mechanism, stop and ask the user to install `skillcraft`. Do not install it without approval, reproduce its mechanism with `skill-creator`, or modify the system `skill-creator`.
+8. Do not turn one-time plans, ordinary coding conventions, or unstable product proposals into skills.
 
 Read [project-skill-design.md](references/project-skill-design.md).
 
