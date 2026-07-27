@@ -97,9 +97,13 @@ build`, or equivalent commands in a long-running service's `command` or
    focused verification before selecting instrumentation.
 4. Keep reusable method in the reference and repository-specific policy,
    commands, and authoritative sources in the profile.
-5. Run the smallest relevant focused test first, then configured static, type,
+5. When a project declares an overlay contract manifest, run
+   `scripts/audit-overlay-contract.mjs` as a deterministic source/config gate
+   and use `scripts/overlay-geometry-probe.mjs` to generate the page expression
+   for real-browser geometry evidence.
+6. Run the smallest relevant focused test first, then configured static, type,
    integration, browser, and E2E checks in proportion to the changed boundary.
-6. Report the relevant data bound or measurement contract, UI behavior,
+7. Report the relevant data bound or measurement contract, UI behavior,
    runtime implications, verification, and remaining performance limits.
 
 ## Resources
@@ -116,3 +120,8 @@ build`, or equivalent commands in a long-running service's `command` or
   intent until the business result is visible and usable.
 - [project_config.md](references/project_config.md): project profile schema,
   resolver behavior, and validation requirements.
+- `scripts/audit-overlay-contract.mjs`: validate project-owned overlay source,
+  focused-test, CSS ownership, and geometry-probe contracts.
+- `scripts/overlay-geometry-probe.mjs`: generate a self-contained browser-page
+  expression for portal, viewport, clipping-ancestor, position, and focus
+  checks without adding a browser test framework dependency.

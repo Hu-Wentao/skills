@@ -37,3 +37,11 @@ when the table reaches its boundary. Open each floating-content class from a
 trigger near the container and viewport edges; verify that it remains reachable,
 unclipped, correctly positioned after ancestor scroll or resize, and usable by
 keyboard at narrow widths and short viewport heights.
+
+When the project owns an overlay contract manifest, run the generic
+`scripts/audit-overlay-contract.mjs` gate before browser inspection. Generate
+the page-evaluation expression with `scripts/overlay-geometry-probe.mjs` for
+each affected contract and execute it against the already-open overlay at every
+declared viewport. Keep navigation, authentication, viewport control, and
+trigger interaction in the connected browser; the probe only measures and
+reports geometry, portal ownership, clipping ancestors, position, and focus.

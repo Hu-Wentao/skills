@@ -6,7 +6,8 @@ can behave differently in different projects:
 ```text
 .agents/skills-config/nextjs-application-performance/
 ├── config.yaml
-└── <profile>.md
+├── <profile>.md
+└── <project-owned manifests>.json
 ```
 
 Example:
@@ -36,3 +37,10 @@ tracked.
 Project instructions override generic configurable defaults when both address
 the same choice. They cannot override external authority, non-configurable
 safety invariants, schema validation, or path-containment rules.
+
+Repository-specific inventories and selectors belong in project-owned
+manifests, not in the reusable skill. For overlay boundaries, use schema
+`nextjs-overlay-contracts.v1` and declare each shared owner, focused test,
+required source evidence, forbidden consumer CSS selectors, and browser
+geometry selectors/viewports. The generic audit and probe scripts consume this
+manifest; they do not embed project component names or route selectors.

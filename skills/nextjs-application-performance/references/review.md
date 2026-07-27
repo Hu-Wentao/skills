@@ -35,3 +35,9 @@ rendered page. Use browser geometry rather than jsdom assertions for scroll
 ownership and overlay clipping. When a clipping or scroll contract changes,
 inventory every floating-content class opened from the affected surface and
 exercise triggers near container and viewport edges.
+
+If the repository provides an overlay contract manifest, run
+`scripts/audit-overlay-contract.mjs` to detect removed portal/focus evidence or
+consumer CSS repairs, then use `scripts/overlay-geometry-probe.mjs` for the
+real-browser geometry verdict. Treat the static audit as recurrence prevention,
+not as proof of layout: viewport containment and clipping remain browser facts.
