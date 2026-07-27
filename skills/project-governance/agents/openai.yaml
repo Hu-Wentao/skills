@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern project design, ports, and lifecycle"
-  default_prompt: "Use $project-governance to bootstrap this project or govern its requirements, PPISS ports, Git lineage, skills, defects, and verification."
+  short_description: "Govern project design, releases, and lifecycle"
+  default_prompt: "Use $project-governance to govern this project's design, requirements, PPISS ports, Git and release lineage, deployments, skills, defects, and verification."

@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain software project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing first-party version bumps, public compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, releases, tags, deployment refs, hotfix lineage, PPISS ports, or machine-local project-number allocations; deciding whether repeated work should become a project skill; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
+description: "Bootstrap, review, and maintain project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, releases and deployments, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing version bumps, compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, release or deployment tags, environment promotion, fixed-tag retries, hotfix lineage, PPISS ports, or machine-local allocations; deciding whether repeated work should become a project skill or profile; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
 ---
 
 # Project Governance
@@ -27,6 +27,7 @@ Treat these as peer capabilities rather than placing Git or skill governance und
 - **Version and compatibility governance**: SemVer classification, first-party compatibility surfaces, schema evolution, migrations, deprecations, and breaking-change authorization.
 - **Document governance**: requirements, baselines, plans, archives, and verification traceability.
 - **Git version governance**: change isolation, commit lineage, integration branches, release commits, immutable tags, fixed deployment refs, and hotfix ancestry.
+- **Release and deployment governance**: application-artifact scope, current authorization, frozen commit/tag identity, isolated worktrees, environment promotion, fixed-tag retry, deployment success evidence, and failure boundaries.
 - **Project-skill governance**: extraction and maintenance of repeated, specialized, or high-risk operational knowledge.
 - **Defect governance**: evidence-backed diagnosis, repair history, recurring-defect escalation, test escape, and proof that a repair eliminates its failure generator.
 
@@ -197,10 +198,39 @@ Never leave a release commit reachable only through a tag created on detached `H
 
 Read [git-version-governance.md](references/git-version-governance.md) before changing commit, branch, tag, release, deployment-ref, retry, or hotfix policy.
 
+## Release and Deployment Governance
+
+Before planning, reviewing, changing, or executing an application release,
+deployment, environment promotion, or fixed-tag retry, resolve the effective
+instructions for the current repository:
+
+```bash
+uv run python <project-governance-skill-directory>/scripts/resolve.py \
+  --cwd <project-root> \
+  --task release-deployment
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes.
+Without project configuration, use the generic application release and
+deployment workflow. A repository may specialize commands, target topology,
+environment gates, runtime evidence, and project-only safety boundaries through
+`.agents/skills-config/project-governance/config.yaml`.
+
+Always distinguish application-artifact operations from instance-state
+operations before entering the workflow. Freeze the full commit id, isolate
+work in fresh worktrees, preserve immutable release and successful deployment
+tags, promote the same artifact, and keep every retry fixed to the recorded
+release tag and commit.
+
+Read [release-deployment.md](references/release-deployment.md) through the
+resolved instructions. Project configuration cannot broaden current user
+authorization, weaken tag immutability or secret protection, permit a moving
+deployment ref, or turn an unverified deployment into a successful one.
+
 ## Project-Skill Governance
 
 1. Confirm that the workflow is repeated, specialized, high-risk, or expensive to rediscover.
-2. Keep universal governance here and project-specific commands, topology, terminology, and safety boundaries in the project skill.
+2. Keep universal governance here and project-specific commands, topology, terminology, and safety boundaries in a repository-owned project profile or focused project skill.
 3. Prefer a concise procedural `SKILL.md`; move detailed knowledge to references and deterministic operations to tested scripts.
 4. Decide whether the skill needs project configuration before selecting an authoring capability.
 5. When creating or materially revising a skill, prefer `skillcraft` whenever it is available in the current session. If it is unavailable and the skill does not need project configuration, use the system `skill-creator` as the fallback.

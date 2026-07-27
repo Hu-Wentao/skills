@@ -1,0 +1,160 @@
+# Release and Deployment Governance
+
+## Separate Application Releases from Instance State
+
+Use this workflow only when the requested object is a committed application
+artifact, release identity, deployed code or image, or environment promotion.
+Do not enter it for a one-off instance-state operation such as changing rows,
+restoring a backup, importing data, rotating a credential through an existing
+workflow, or migrating archived data.
+
+For an instance-state request:
+
+1. Perform a read-only feasibility check before creating code or changing
+   remote state.
+2. Stop when there are no actionable records.
+3. Prefer, in order, an existing operational command, a read-only plan, a
+   pinned one-off artifact with focused verification, and only then a permanent
+   product command when the capability is repeated.
+4. Keep application versions, release tags, images, schema, and unrelated
+   services unchanged unless the request independently requires them.
+
+Treat committing a one-off operational artifact as separate from releasing or
+deploying the application.
+
+## Require Current Authorization
+
+Release, deploy, publish, promote, retry, roll back, restore, migrate live
+state, and move or delete tags are separate external mutations. Perform only
+the operations explicitly authorized in the current request. A prior request,
+an existing automation, a prepared commit, or a failed earlier attempt does not
+provide current authority for another mutation.
+
+Resolve ambiguity before acting when the requested object could be either
+application code or instance state. A target name, production host, or the word
+“update” does not by itself authorize an application deployment.
+
+## Freeze the Release Identity
+
+1. Read repository instructions and inspect the control worktree without
+   modifying it.
+2. Resolve the intended source once to a full commit id and record it.
+3. Require committed state. Never synthesize a release from uncommitted or
+   untracked files.
+4. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
+   frozen.
+5. Keep the release tag, full commit id, and deployment target together in
+   every plan, command boundary, retry, and report.
+
+For a full release, require the primary integration worktree to be clean,
+checked out on its integration branch, and still at the frozen source commit
+before it is advanced. For deploy-only work, use the exact user-authorized
+commit or immutable tag and do not mutate the control worktree.
+
+## Isolate Work in Fresh Worktrees
+
+Use a new temporary worktree for release planning, release preparation,
+deploy-only work, and every retry. Verify its exact `HEAD` and cleanliness
+before running checks, builds, version edits, or deployment commands.
+
+- Use a detached worktree for a preview, deploy-only operation, or retry.
+- Use a temporary `release/v<version>` branch at the frozen source for a full
+  release.
+- Run release checks, version edits, builds, and deployment from the isolated
+  worktree.
+- Never use `stash`, `reset`, `clean`, or forced removal to prepare the user's
+  control worktree.
+- Remove a successful clean worktree when it is no longer needed. Preserve and
+  report a failed or dirty worktree while its evidence is still useful.
+
+## Create and Preserve Git Identities
+
+Use these tag formats:
+
+```text
+release tag:
+  v<version>
+
+successful deployment tag:
+  deploy/<target>/<UTC timestamp>/v<version>
+```
+
+The UTC timestamp must be an unambiguous, filename-safe UTC instant. A project
+profile may select a precise rendering, but it must preserve UTC ordering and
+must not replace the target or release version components.
+
+For a release:
+
+1. Create the version commit on the temporary release branch.
+2. Revalidate that the integration worktree is clean and unchanged.
+3. Fast-forward or apply the project's explicitly approved integration policy.
+4. Create the annotated `v<version>` tag only after the release commit is in
+   integration history.
+5. Verify the release worktree, integration branch, and peeled release tag
+   resolve to the same full commit.
+
+Create a successful deployment tag only after the project's required health,
+identity, and acceptance evidence declares that target verified. Point it to
+the same release commit. A failed or unverified deployment must not receive a
+successful deployment tag.
+
+Treat release and successful deployment tags as immutable records. Do not move,
+delete, replace, or reuse them without explicit authorization for that exact
+tag operation.
+
+## Promote the Same Artifact
+
+Promote one immutable release identity through environments. Resolve the
+release tag and full commit before the first environment and use that exact
+pair for every later environment. Do not rebuild from a branch, infer a newer
+commit, or create a second release merely because promotion occurs later.
+
+Run every environment-specific gate from a clean checkout of the same commit.
+Advance to the next environment only after the preceding environment satisfies
+its configured completion evidence. A partial, failed, or unverified
+environment blocks automatic promotion but does not authorize rollback or
+another commit.
+
+## Retry Only a Fixed Tag
+
+After a deployment failure:
+
+1. Preserve the recorded release tag and full commit.
+2. Require the tag to remain immutable and reachable from the integration
+   branch.
+3. Create a fresh detached worktree at that exact tag/commit.
+4. Re-run the project-configured retry gates and deployment command against the
+   same target unless the user explicitly authorizes another target.
+5. Never retry from a branch name, a newer `HEAD`, a reused uncertain
+   worktree, or a newly inferred version.
+
+Retry authorization does not include diagnosis, repair, rollback, database
+restore, source retirement, or tag mutation. Obtain current authority for each
+additional action.
+
+## Respect Failure Boundaries
+
+- Before integration: leave the integration branch and release tags unchanged;
+  preserve the isolated worktree and relevant safe logs.
+- After integration but before release tagging: report the exact partial state
+  and stop; do not choose another commit or version.
+- After release tagging but before verified deployment: keep the tag and commit
+  fixed. Report the target as failed or deployed but unverified according to
+  project evidence.
+- After a failed acceptance check: do not print a success marker, create a
+  successful deployment tag, promote, retry, or roll back automatically.
+- Never infer permission to restore a database, retire source data, change
+  credentials, or run a live migration from release or deployment authority.
+
+Treat project release and deployment commands as automation boundaries. Wait
+for the invoked command to finish, resume only the same yielded process, and do
+not duplicate its internal build, migration, health, or smoke-test steps.
+
+## Report Completion
+
+Report the frozen source commit, release version and tag, deployment target,
+successful deployment tag when one was created, environment-gate results,
+verification evidence, safe log paths, preserved failure worktrees, and every
+operation that remains unauthorized or incomplete. Never report secrets,
+authorization headers, request or response bodies, or private captured
+payloads.

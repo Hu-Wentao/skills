@@ -120,6 +120,7 @@ tasks:
             "defect-diagnosis",
             "defect-history-review",
             "port-allocation",
+            "release-deployment",
         ):
             first = self.run_resolver("--task", task)
             second = self.run_resolver("--task", task)
@@ -152,6 +153,34 @@ tasks:
         self.assertIn("## Project Instructions", result.stdout)
         self.assertIn("Use the project history source.", result.stdout)
         self.assertIn("uv run python -m unittest", result.stdout)
+
+    def test_release_deployment_profile_is_composed_with_commands_and_tags(self) -> None:
+        config_root = self.write_config(
+            task="release-deployment",
+            profile="release.md",
+            command="node ops/deployment/release-deploy.mjs",
+        )
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "references/defect-governance.md",
+                "references/release-deployment.md",
+            ),
+            encoding="utf-8",
+        )
+        (config_root / "release.md").write_text(
+            "# Repository Release Rules\n\nUse preproduction before production.\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_resolver(
+            "--task", "release-deployment", "--emit", "instructions"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deploy/<target>/<UTC timestamp>/v<version>", result.stdout)
+        self.assertIn("Use preproduction before production.", result.stdout)
+        self.assertIn("node ops/deployment/release-deploy.mjs", result.stdout)
 
     def test_port_config_is_validated_and_rendered(self) -> None:
         self.write_port_config()

@@ -13,11 +13,12 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "2"
+RESOLVER_VERSION = "3"
 DEFAULT_BASES = {
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
     "port-allocation": "references/port-allocation.md",
+    "release-deployment": "references/release-deployment.md",
 }
 PORT_INSTANCES = {
     "local_dev": 0,
@@ -267,6 +268,7 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
             allowed_tasks = {
                 "defect-diagnosis",
                 "defect-history-review",
+                "release-deployment",
             }
         elif schema == f"{SKILL_NAME}.config.v2":
             require_exact_keys(
