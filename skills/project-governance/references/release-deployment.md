@@ -210,6 +210,13 @@ For a repair release:
    user authorization. `main` is the later integration destination, never the
    source of an in-progress repair.
 
+If deployment of the new repair tag fails without requiring another source
+change, a project retry contract may accept the retained exact
+`repair/v<version>` branch as its reachability anchor. The peeled tag commit and
+the retained branch head must match exactly. This exception does not permit a
+moving branch ref, a different repair commit, or a retry before the immutable
+repair tag exists.
+
 A request to fix and republish a failed release authorizes neither unrelated
 integration content nor a normal release from the latest integration branch.
 Changing the frozen base tag, target, or repair version requires a new explicit
@@ -221,7 +228,8 @@ After a deployment failure:
 
 1. Preserve the recorded release tag and full commit.
 2. Require the tag to remain immutable and reachable from the integration
-   branch.
+   branch or, for an isolated repair release, from the project-approved exact
+   repair branch whose head equals the peeled tag commit.
 3. Create a fresh detached worktree at that exact tag/commit.
 4. Re-run the project-configured retry gates and deployment command against the
    same target unless the user explicitly authorizes another target.
