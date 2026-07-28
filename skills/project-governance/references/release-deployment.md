@@ -34,6 +34,37 @@ Resolve ambiguity before acting when the requested object could be either
 application code or instance state. A target name, production host, or the word
 “update” does not by itself authorize an application deployment.
 
+## Keep Authorized Work Moving
+
+When the current request explicitly authorizes a sequence such as completing
+named pending changes, committing them, releasing the resulting commit, and
+deploying it, treat every named step as current authority for that sequence.
+Do not request the same authorization again between those steps. Do not extend
+the sequence to an unnamed mutation.
+
+If the release is blocked before its source is frozen:
+
+1. Identify the exact blocker and the next release stage it prevents.
+2. Perform only the smallest already-authorized action needed to clear it.
+3. Return immediately to the next incomplete release stage after it clears.
+4. Freeze the source as soon as the authorized changes are committed and the
+   integration worktree satisfies the project rules.
+
+Classify a discovery as a hard blocker only when it prevents producing the
+explicitly requested committed source, leaves the source or target identity
+ambiguous, violates a non-configurable safety invariant, or fails a required
+project gate or release-automation boundary. Treat adjacent defect suspicions,
+opportunistic cleanup, optional hardening, unrelated documentation drift, and
+exploratory analysis not required by a failed gate as follow-up work.
+
+Only a hard blocker or superseding user instruction may pause an authorized
+release workflow. When clearing a hard blocker requires an operation outside
+the current authorization or a source change after the release identity is
+frozen, stop and request that exact authority. Otherwise, report non-blocking
+findings separately and continue. Do not start a general code review, broad
+root-cause investigation, refactor, or documentation cleanup while a
+currently authorized release is waiting to advance.
+
 ## Freeze the Release Identity
 
 1. Read repository instructions and inspect the control worktree without
