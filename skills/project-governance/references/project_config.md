@@ -1,3 +1,23 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [1]
+      pattern: '^Project Configuration$'
+    key:
+      source: marker
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: true
+---
+<!-- mdq:record id="GOV-PROJECT-CONFIGURATION" -->
 # Project Configuration
 
 This skill consumes optional repository-owned configuration for

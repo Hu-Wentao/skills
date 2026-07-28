@@ -1,3 +1,23 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [1]
+      pattern: '^Defect Feedback Lifecycle$'
+    key:
+      source: marker
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: true
+---
+<!-- mdq:record id="GOV-DEFECT-FEEDBACK-LIFECYCLE" -->
 # Defect Feedback Lifecycle
 
 Use this workflow to coordinate a user-reported defect from submission through
