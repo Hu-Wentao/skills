@@ -65,6 +65,25 @@ For any versioned change:
 4. Define database migrations in the forward direction: new code must open and losslessly upgrade older schemas within the same supported major version. Do not imply that old code can read an upgraded database or that mixed-version rolling operation is safe unless the project separately promises it.
 5. Document migration verification, backup, recovery, deprecation, and removal decisions with the release.
 
+When one repository has a project release version plus independently versioned
+modules or deployable services:
+
+- Treat the project version as the identity of the complete source release; do
+  not automatically copy its bump to every module.
+- Bump a module only when its produced runtime artifact changes because of a
+  direct runtime input, a transitively changed first-party runtime dependency,
+  or a shared build/runtime input proven to affect that artifact.
+- Treat a root manifest, workspace file, lockfile, base TypeScript config, or
+  shared Dockerfile as an input to impact analysis, not as unconditional proof
+  that every module changed. Compute the affected production dependency closure
+  or compare a canonical per-module runtime-input manifest.
+- Keep an unaffected module's version unchanged and reuse its existing
+  immutable artifact. Never rebuild unchanged source under the same module
+  version or assign a new module version merely to match the project release.
+- Require focused tests for direct changes, transitive runtime propagation,
+  test/document-only changes, unrelated lockfile changes, target-specific
+  shared inputs, and genuinely artifact-wide inputs.
+
 Read [design-doc-rules.md](references/design-doc-rules.md) before selecting a version bump or changing a compatibility promise, public surface, stored-data meaning, database schema, or migration policy.
 
 ## Port Allocation Governance

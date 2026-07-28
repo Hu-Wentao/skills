@@ -67,6 +67,10 @@ Key points:
 
 - First build may still download packages because the Docker BuildKit cache starts empty.
 - Later builds can reuse the `pnpm-store` cache and the `pnpm fetch` layer.
+- A changed workspace lockfile invalidates this shared Docker cache layer, but
+  cache invalidation alone does not prove that every independently versioned
+  module artifact changed. Release planning must still resolve each module's
+  production dependency closure or runtime-input manifest.
 - `pnpm install --offline` should not access the registry; if it fails, the fetch layer did not fully populate the store.
 - Use `--frozen-lockfile` in image builds. Do not use `--frozen-lockfile=false` to hide lockfile drift.
 - Runtime `node_modules` volumes can speed local dev containers, but they do not make build-time `pnpm install` reuse the host store.

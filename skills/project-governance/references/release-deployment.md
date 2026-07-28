@@ -82,6 +82,34 @@ checked out on its integration branch, and still at the frozen source commit
 before it is advanced. For deploy-only work, use the exact user-authorized
 commit or immutable tag and do not mutate the control worktree.
 
+## Separate Project Releases from Module Artifacts
+
+In a repository with a project release version and independently versioned
+modules, freeze both identities without collapsing them:
+
+- The project version and release tag identify the complete committed source
+  release.
+- A module version identifies that module's immutable runtime artifact.
+- Bump a module only when its artifact changes through its direct runtime
+  inputs, transitive first-party runtime dependencies, or a shared input proven
+  to affect that artifact.
+- Keep unaffected module versions unchanged across project releases and reuse
+  their existing immutable artifacts during deployment.
+
+Do not treat a repository-wide lockfile, root manifest, workspace file,
+compiler base config, or shared Dockerfile as automatic evidence that every
+module artifact changed. Resolve the production dependency closure or compare a
+canonical per-module runtime-input manifest. A shared input may bump every
+module only when its semantic delta actually changes every artifact, such as a
+runtime base-image or universal build-output change.
+
+Require release automation tests that prove direct and transitive changes bump
+the correct modules, test/document-only and unrelated lockfile changes do not,
+target-specific shared inputs affect only their targets, and genuinely global
+runtime changes affect all modules. Artifact reuse must use the unchanged
+module identity; rebuilding different bytes under an unchanged module version
+is forbidden.
+
 ## Isolate Work in Fresh Worktrees
 
 Use a new temporary worktree for release planning, release preparation,

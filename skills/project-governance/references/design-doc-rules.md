@@ -84,6 +84,7 @@ UI must read job state through worker API, not worker SQLite
 When documenting project versioning:
 
 - Use SemVer in `MAJOR.MINOR.PATCH` form for every independently versioned first-party project and first-party submodule. Do not apply this project's release policy to third-party dependency versions.
+- When a project release contains independently versioned modules, keep the project release version separate from module artifact versions. Advance an unaffected module only when its produced runtime artifact changes; a root lockfile or workspace file alone is not sufficient evidence.
 - Treat APIs, CLIs, configuration, persistent payloads, stored-data semantics, and database schemas as public compatibility surfaces.
 - Use `0.0.1` as the initial project version and treat major version `0` as unstable:
   - Use `PATCH` for backward-compatible fixes.
