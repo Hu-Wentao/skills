@@ -7,17 +7,20 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "4"
+RESOLVER_VERSION = "5"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
+    "document-audit": "references/document-audit.md",
+    "git-snapshot": "references/git-snapshot.md",
     "port-allocation": "references/port-allocation.md",
     "release-deployment": "references/release-deployment.md",
 }
@@ -124,6 +127,12 @@ def require_integer(value: Any, field: str) -> int:
     raise ResolveError(f"{field} must be an integer")
 
 
+def require_boolean(value: Any, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ResolveError(f"{field} must be a boolean")
+    return value
+
+
 def require_exact_keys(mapping: dict[str, Any], allowed: set[str], field: str) -> None:
     unknown = sorted(set(mapping) - allowed)
     if unknown:
@@ -144,6 +153,245 @@ def display_path(path: Path, repo_root: Path) -> str:
     if is_relative_to(resolved, repo_root.resolve()):
         return str(resolved.relative_to(repo_root.resolve()))
     return str(resolved)
+
+
+def load_json(path: Path, field: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ResolveError(f"{field} is not valid JSON: {exc}") from exc
+    return require_mapping(value, field)
+
+
+def expand_contract_path(value: str, repo_root: Path, skill_root: Path) -> str:
+    return value.replace("<project-root>", str(repo_root)).replace(
+        "<skill-root>", str(skill_root)
+    )
+
+
+def validate_command(
+    command: list[str], repo_root: Path, skill_root: Path, field: str
+) -> list[str]:
+    if not command:
+        raise ResolveError(f"{field} must not be empty")
+    expanded = [
+        expand_contract_path(require_string(value, f"{field} item"), repo_root, skill_root)
+        for value in command
+    ]
+    executable = expanded[0]
+    if "/" in executable:
+        executable_path = Path(executable)
+        if not executable_path.is_absolute():
+            executable_path = (repo_root / executable_path).resolve()
+        if not executable_path.is_file():
+            raise ResolveError(f"{field} executable not found: {executable_path}")
+    elif shutil.which(executable) is None:
+        raise ResolveError(f"{field} executable not found on PATH: {executable}")
+
+    executable_name = Path(executable).name
+    if (
+        executable_name == "node" or executable_name.startswith("python")
+    ) and len(expanded) > 1:
+        script = next((item for item in expanded[1:] if not item.startswith("-")), "")
+        if script:
+            script_path = Path(script)
+            if not script_path.is_absolute():
+                script_path = (repo_root / script_path).resolve()
+            if not script_path.is_file():
+                raise ResolveError(f"{field} script not found: {script_path}")
+    if executable_name == "uv" and expanded[1:3] == ["run", "python"]:
+        if len(expanded) < 4:
+            raise ResolveError(f"{field} is missing the Python script")
+        script_path = Path(expanded[3])
+        if not script_path.is_absolute():
+            script_path = (repo_root / script_path).resolve()
+        if not script_path.is_file():
+            raise ResolveError(f"{field} script not found: {script_path}")
+    if executable_name == "pnpm" and len(expanded) > 1 and not expanded[1].startswith("-"):
+        package_path = repo_root / "package.json"
+        if not package_path.is_file():
+            raise ResolveError(f"{field} requires package.json")
+        package = load_json(package_path, "package.json")
+        scripts = require_mapping(package.get("scripts", {}), "package.json scripts")
+        if expanded[1] not in scripts:
+            raise ResolveError(
+                f"{field} references missing package.json script: {expanded[1]}"
+            )
+    return expanded
+
+
+def normalize_parameter(value: Any, field: str) -> dict[str, Any]:
+    parameter = require_mapping(value, field)
+    require_exact_keys(
+        parameter,
+        {"flag", "type", "required", "enum", "pattern", "default"},
+        field,
+    )
+    flag = require_string(parameter.get("flag"), f"{field}.flag")
+    if not re.fullmatch(r"--[a-z][a-z0-9-]*", flag):
+        raise ResolveError(f"{field}.flag must be a long option")
+    parameter_type = require_string(parameter.get("type"), f"{field}.type")
+    if parameter_type not in {"string", "integer", "boolean"}:
+        raise ResolveError(f"{field}.type must be string, integer, or boolean")
+    normalized: dict[str, Any] = {
+        "flag": flag,
+        "type": parameter_type,
+        "required": require_boolean(parameter.get("required", False), f"{field}.required"),
+    }
+    if "enum" in parameter:
+        enum = parameter["enum"]
+        if not isinstance(enum, list) or not enum:
+            raise ResolveError(f"{field}.enum must be a non-empty list")
+        normalized["enum"] = [
+            require_string(item, f"{field}.enum item") for item in enum
+        ]
+    if "pattern" in parameter:
+        pattern = require_string(parameter["pattern"], f"{field}.pattern")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ResolveError(f"{field}.pattern is invalid: {exc}") from exc
+        normalized["pattern"] = pattern
+    if "default" in parameter:
+        default = parameter["default"]
+        if parameter_type == "string" and not isinstance(default, str):
+            raise ResolveError(f"{field}.default must be a string")
+        if parameter_type == "integer" and (
+            isinstance(default, bool) or not isinstance(default, int)
+        ):
+            raise ResolveError(f"{field}.default must be an integer")
+        if parameter_type == "boolean" and not isinstance(default, bool):
+            raise ResolveError(f"{field}.default must be a boolean")
+        if "enum" in normalized and default not in normalized["enum"]:
+            raise ResolveError(f"{field}.default must be present in enum")
+        if "pattern" in normalized and not re.fullmatch(
+            normalized["pattern"], str(default)
+        ):
+            raise ResolveError(f"{field}.default does not match pattern")
+        normalized["default"] = default
+    return normalized
+
+
+def normalize_contract(
+    value: dict[str, Any],
+    *,
+    task: str,
+    repo_root: Path,
+    skill_root: Path,
+    field: str,
+) -> dict[str, Any]:
+    require_exact_keys(value, {"schema", "id", "task", "operations"}, field)
+    if require_string(value.get("schema"), f"{field}.schema") != (
+        "project-governance.task-contract.v1"
+    ):
+        raise ResolveError(
+            f"{field}.schema must be project-governance.task-contract.v1"
+        )
+    contract_task = require_string(value.get("task"), f"{field}.task")
+    if contract_task != task:
+        raise ResolveError(f"{field}.task must equal {task}")
+    operations = require_mapping(value.get("operations"), f"{field}.operations")
+    if not operations:
+        raise ResolveError(f"{field}.operations must not be empty")
+    normalized_operations: dict[str, Any] = {}
+    for operation_name, raw_operation in operations.items():
+        seen_flags: set[str] = set()
+        name = require_string(operation_name, f"{field}.operations key")
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+            raise ResolveError(f"{field}.operations key is invalid: {name}")
+        operation_field = f"{field}.operations.{name}"
+        operation = require_mapping(raw_operation, operation_field)
+        require_exact_keys(
+            operation,
+            {
+                "description",
+                "command",
+                "mutability",
+                "authorization",
+                "parameters",
+                "output_schema",
+                "exit_codes",
+                "next_states",
+            },
+            operation_field,
+        )
+        command_raw = operation.get("command")
+        if not isinstance(command_raw, list):
+            raise ResolveError(f"{operation_field}.command must be an argv list")
+        mutability = require_string(
+            operation.get("mutability"), f"{operation_field}.mutability"
+        )
+        if mutability not in {
+            "read_only",
+            "repository_write",
+            "external_write",
+            "destructive",
+        }:
+            raise ResolveError(f"{operation_field}.mutability is unsupported")
+        authorization = require_string(
+            operation.get("authorization"), f"{operation_field}.authorization"
+        )
+        if authorization not in {"none", "current_user"}:
+            raise ResolveError(f"{operation_field}.authorization is unsupported")
+        if mutability != "read_only" and authorization != "current_user":
+            raise ResolveError(
+                f"{operation_field} writes state and must require current_user authorization"
+            )
+        parameters_raw = require_mapping(
+            operation.get("parameters", {}), f"{operation_field}.parameters"
+        )
+        parameters: dict[str, Any] = {}
+        for parameter_name, raw_parameter in parameters_raw.items():
+            parameter = normalize_parameter(
+                raw_parameter, f"{operation_field}.parameters.{parameter_name}"
+            )
+            if parameter["flag"] in seen_flags:
+                raise ResolveError(
+                    f"{operation_field} reuses parameter flag {parameter['flag']}"
+                )
+            seen_flags.add(parameter["flag"])
+            parameters[str(parameter_name)] = parameter
+        exit_codes_raw = require_mapping(
+            operation.get("exit_codes"), f"{operation_field}.exit_codes"
+        )
+        exit_codes: dict[str, str] = {}
+        for raw_code, raw_state in exit_codes_raw.items():
+            code = str(raw_code)
+            if not re.fullmatch(r"[0-9]{1,3}", code):
+                raise ResolveError(f"{operation_field}.exit_codes key must be numeric")
+            exit_codes[code] = require_string(
+                raw_state, f"{operation_field}.exit_codes.{code}"
+            )
+        if "0" not in exit_codes:
+            raise ResolveError(f"{operation_field}.exit_codes must define 0")
+        next_states_raw = operation.get("next_states", [])
+        if not isinstance(next_states_raw, list):
+            raise ResolveError(f"{operation_field}.next_states must be a list")
+        normalized_operations[name] = {
+            "description": require_string(
+                operation.get("description"), f"{operation_field}.description"
+            ),
+            "command": validate_command(
+                command_raw, repo_root, skill_root, f"{operation_field}.command"
+            ),
+            "mutability": mutability,
+            "authorization": authorization,
+            "parameters": parameters,
+            "output_schema": require_string(
+                operation.get("output_schema"), f"{operation_field}.output_schema"
+            ),
+            "exit_codes": exit_codes,
+            "next_states": [
+                require_string(item, f"{operation_field}.next_states item")
+                for item in next_states_raw
+            ],
+        }
+    return {
+        "schema": "project-governance.task-contract.v1",
+        "id": require_string(value.get("id"), f"{field}.id"),
+        "task": contract_task,
+        "operations": normalized_operations,
+    }
 
 
 def normalize_port_config(value: Any) -> dict[str, Any]:
@@ -244,7 +492,39 @@ def render_port_config(ports: dict[str, Any]) -> list[str]:
     return lines
 
 
-def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
+def render_manifest(manifest: dict[str, Any], output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+
+    lines: list[str] = []
+
+    def emit(mapping: dict[str, Any], indent: int = 0) -> None:
+        prefix = " " * indent
+        for key, value in mapping.items():
+            if isinstance(value, dict):
+                lines.append(f"{prefix}{key}:")
+                emit(value, indent + 2)
+            elif isinstance(value, list):
+                lines.append(f"{prefix}{key}:")
+                for item in value:
+                    if isinstance(item, dict):
+                        lines.append(f"{prefix}  -")
+                        emit(item, indent + 4)
+                    else:
+                        lines.append(f"{prefix}  - {item}")
+            else:
+                lines.append(f"{prefix}{key}: {value}")
+
+    emit(manifest)
+    return "\n".join(lines) + "\n"
+
+
+def resolve_task(
+    task: str,
+    cwd: Path,
+    output_format: str = "yaml",
+    selected_operation: str | None = None,
+) -> tuple[str, Path | None, str]:
     if task not in DEFAULT_BASES:
         raise ResolveError(f"unsupported task: {task}")
 
@@ -258,9 +538,11 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
     profile = "generic"
     task_config: dict[str, Any] = {}
     port_config: dict[str, Any] | None = None
+    config_schema = ""
     if config:
         schema = config.get("schema")
         if schema == f"{SKILL_NAME}.config.v1":
+            config_schema = schema
             require_exact_keys(config, {"schema", "profile", "tasks"}, "config.yaml")
             if task == "port-allocation":
                 raise ResolveError(
@@ -268,23 +550,36 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
                 )
             allowed_tasks = set(DEFAULT_BASES) - {"port-allocation"}
         elif schema == f"{SKILL_NAME}.config.v2":
+            config_schema = schema
             require_exact_keys(
                 config, {"schema", "profile", "ports", "tasks"}, "config.yaml"
             )
             allowed_tasks = set(DEFAULT_BASES)
             port_config = normalize_port_config(config.get("ports"))
+        elif schema == f"{SKILL_NAME}.config.v3":
+            config_schema = schema
+            require_exact_keys(config, {"schema", "profile", "ports", "tasks"}, "config.yaml")
+            allowed_tasks = set(DEFAULT_BASES)
+            if "ports" in config:
+                port_config = normalize_port_config(config.get("ports"))
         else:
             raise ResolveError(
                 "config.yaml schema must be "
-                "project-governance.config.v1 or project-governance.config.v2"
+                "project-governance.config.v1, project-governance.config.v2, "
+                "or project-governance.config.v3"
             )
         profile = require_string(config.get("profile"), "profile")
         tasks = require_mapping(config.get("tasks"), "tasks")
         require_exact_keys(tasks, allowed_tasks, "tasks")
         task_config = require_mapping(tasks.get(task), f"tasks.{task}")
-        require_exact_keys(
-            task_config, {"base", "profile", "commands"}, f"tasks.{task}"
-        )
+        if config_schema == f"{SKILL_NAME}.config.v3":
+            require_exact_keys(
+                task_config, {"base", "profile", "contract"}, f"tasks.{task}"
+            )
+        else:
+            require_exact_keys(
+                task_config, {"base", "profile", "commands"}, f"tasks.{task}"
+            )
         sources_configured = True
     else:
         sources_configured = False
@@ -306,6 +601,94 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
         )
         profile_text = profile_path.read_text(encoding="utf-8").strip()
         sources["profile"] = display_path(profile_path, repo_root)
+
+    if config_schema == f"{SKILL_NAME}.config.v3":
+        contract_path = resolve_path(
+            require_string(task_config.get("contract"), f"tasks.{task}.contract"),
+            config_root,
+            f"tasks.{task}.contract",
+        )
+        contract = normalize_contract(
+            load_json(contract_path, f"tasks.{task}.contract"),
+            task=task,
+            repo_root=repo_root,
+            skill_root=skill_root,
+            field=f"tasks.{task}.contract",
+        )
+        if selected_operation is not None and selected_operation not in contract["operations"]:
+            raise ResolveError(
+                f"operation {selected_operation!r} is not declared for task {task}"
+            )
+        sources["contract"] = display_path(contract_path, repo_root)
+        policy_paths = [display_path(base_path, repo_root)]
+        if profile_text:
+            policy_paths.append(sources["profile"])
+        state = {
+            "schema": "project-governance.resolved-task.v1",
+            "status": "ready",
+            "skill": SKILL_NAME,
+            "task": task,
+            "profile": profile,
+            "state": "resolved",
+            "contract": contract,
+            "policy_refs": policy_paths,
+            "sources": sources,
+        }
+        hash_input = {
+            "resolver_version": RESOLVER_VERSION,
+            "state": state,
+            "ports": port_config,
+            "config": config_text,
+        }
+        digest = hashlib.sha256(
+            json.dumps(hash_input, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        instructions_id = f"{SKILL_NAME}/{task}@{digest}"
+        state["instructions_id"] = instructions_id
+        state["entry_command"] = [
+            "uv",
+            "run",
+            "python",
+            str(skill_root / "scripts" / "project-governance.py"),
+            "--cwd",
+            str(repo_root),
+            "execute",
+            "--task",
+            task,
+            "--operation",
+            "<operation>",
+        ]
+        state_text = json.dumps(state, indent=2, sort_keys=True) + "\n"
+        contract_view = contract
+        if selected_operation is not None:
+            contract_view = {
+                **contract,
+                "operations": {
+                    selected_operation: contract["operations"][selected_operation]
+                },
+            }
+        manifest = {
+            "status": "ready",
+            "skill": SKILL_NAME,
+            "task": task,
+            "profile": profile,
+            "state": "resolved",
+            "instructions_id": instructions_id,
+            "policy_refs": policy_paths,
+            "contract": contract_view,
+            "entry_command": state["entry_command"],
+            "sources": sources,
+        }
+        if selected_operation is not None:
+            manifest["selected_operation"] = selected_operation
+            manifest["entry_command"][-1] = selected_operation
+        if task == "port-allocation" and port_config is not None:
+            manifest["ports"] = {
+                "project_segment": port_config["project_segment"],
+                "instance_count": len(port_config["instances"]),
+                "service_count": len(port_config["services"]),
+            }
+        return render_manifest(manifest, output_format), None, state_text
 
     commands_raw = task_config.get("commands", {})
     commands = require_mapping(commands_raw, f"tasks.{task}.commands")
@@ -362,35 +745,24 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(instructions, encoding="utf-8")
 
-    manifest_lines = [
-        "status: ready",
-        f"skill: {SKILL_NAME}",
-        f"task: {task}",
-        f"profile: {profile}",
-        f"instructions_id: {instructions_id}",
-        "instructions:",
-        f"  path: {display_path(cache_path, repo_root)}",
-        "sources:",
-    ]
-    manifest_lines.extend(
-        f"  {name}: {value}" for name, value in sorted(sources.items())
-    )
+    manifest: dict[str, Any] = {
+        "status": "ready",
+        "skill": SKILL_NAME,
+        "task": task,
+        "profile": profile,
+        "instructions_id": instructions_id,
+        "instructions": {"path": display_path(cache_path, repo_root)},
+        "sources": dict(sorted(sources.items())),
+    }
     if normalized_commands:
-        manifest_lines.append("commands:")
-        manifest_lines.extend(
-            f"  {name}: {value}"
-            for name, value in sorted(normalized_commands.items())
-        )
+        manifest["commands"] = dict(sorted(normalized_commands.items()))
     if task == "port-allocation" and port_config is not None:
-        manifest_lines.extend(
-            [
-                "ports:",
-                f"  project_segment: {port_config['project_segment']}",
-                f"  instance_count: {len(port_config['instances'])}",
-                f"  service_count: {len(port_config['services'])}",
-            ]
-        )
-    return "\n".join(manifest_lines) + "\n", cache_path, instructions
+        manifest["ports"] = {
+            "project_segment": port_config["project_segment"],
+            "instance_count": len(port_config["instances"]),
+            "service_count": len(port_config["services"]),
+        }
+    return render_manifest(manifest, output_format), cache_path, instructions
 
 
 def main() -> int:
@@ -402,9 +774,13 @@ def main() -> int:
     parser.add_argument(
         "--emit", choices=("manifest", "instructions"), default="manifest"
     )
+    parser.add_argument("--format", choices=("yaml", "json"), default="yaml")
+    parser.add_argument("--operation")
     args = parser.parse_args()
     try:
-        manifest, _, instructions = resolve_task(args.task, args.cwd)
+        manifest, _, instructions = resolve_task(
+            args.task, args.cwd, args.format, args.operation
+        )
     except ResolveError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

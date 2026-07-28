@@ -44,14 +44,14 @@ registry prevents two local projects from selecting the same segment and lets
 a new project obtain the lowest free segment. Do not copy the global registry
 into a repository or commit it.
 
-Schema `project-governance.config.v1` remains supported for configured tasks
-other than port allocation. Use `project-governance.config.v2` when configuring
-project ports. Configure only supported tasks. `base` is relative to the
-installed `project-governance` skill root; `profile` is relative to the
+Schemas `project-governance.config.v1` and `v2` remain supported as legacy
+composed-instruction profiles. Use `project-governance.config.v3` for
+executable task contracts. Configure only supported tasks. `base` is relative
+to the installed skill root; `profile` and `contract` are relative to the
 repository configuration root.
 
 ```yaml
-schema: project-governance.config.v2
+schema: project-governance.config.v3
 profile: example-project
 ports:
   project_segment: "42"
@@ -72,35 +72,73 @@ tasks:
   defect-feedback-lifecycle:
     base: references/defect-feedback-lifecycle.md
     profile: project-feedback.md
+    contract: defect-feedback.contract.json
   defect-diagnosis:
     base: references/defect-governance.md
     profile: project-defects.md
-    commands:
-      focused: pnpm test
+    contract: defect-diagnosis.contract.json
   defect-history-review:
     base: references/defect-governance.md
     profile: project-defects.md
+    contract: defect-history.contract.json
   release-deployment:
     base: references/release-deployment.md
     profile: project-release.md
+    contract: release-deployment.contract.json
   port-allocation:
     base: references/port-allocation.md
+    contract: port-allocation.contract.json
 ```
 
-Run the resolver adjacent to the installed skill and pass the target repository with `--cwd`. It composes generic instructions before project instructions, writes derived output below `.agents/.cache/project-governance/`, returns a stable `instructions_id`, and never executes declared commands.
+Run the resolver adjacent to the installed skill and pass the target repository
+with `--cwd`. For v3 it validates the selected JSON task contract, returns a
+small resolved state with policy references, mutability, authorization,
+parameter and output schemas, exit states, and an entry command without writing
+project files or a runtime cache. It never executes project code. Pass
+`--operation <name>` to return only the operation needed for the current stage.
+The separate task runner executes only validated argv arrays. Legacy v1/v2
+resolution retains its ignored instruction cache for compatibility.
 
-The v2 resolver requires project segment `10` through `64`, reserves `01`
+Each v3 contract uses:
+
+```json
+{
+  "schema": "project-governance.task-contract.v1",
+  "id": "example.defect-diagnosis.v1",
+  "task": "defect-diagnosis",
+  "operations": {
+    "collect": {
+      "description": "Collect allowlisted evidence.",
+      "command": ["pnpm", "ops:collect-evidence", "--"],
+      "mutability": "read_only",
+      "authorization": "none",
+      "parameters": {},
+      "output_schema": "example.evidence.v1",
+      "exit_codes": {"0": "evidence_collected"},
+      "next_states": ["semantic_classification"]
+    }
+  }
+}
+```
+
+Commands must be argv arrays. The resolver verifies executables and direct
+script or pnpm entry points when possible. Every write operation must declare
+`current_user` authorization. The runner additionally requires `--authorized`;
+that flag is a mechanical gate and never replaces the AI's current-turn
+authorization judgment.
+
+The v2/v3 resolver requires project segment `10` through `64`, reserves `01`
 through `09` for system applications, requires the standard
 instance mapping, and sequential unique service identifiers beginning at `0`.
 It renders the derived port for every configured environment and service.
 
-Before writing a new v2 configuration, run:
+Before writing a new v2/v3 port configuration, run:
 
 ```bash
 uv run --script <skill-root>/scripts/project-segments.py allocate --cwd <project-root>
 ```
 
-For a project that already has v2 configuration, register its current segment
+For a project that already has v2/v3 port configuration, register its current segment
 with `claim --segment <PP>`; use `check --segment <PP>` for read-only
 validation. Allocation and claim use an exclusive lock and atomic replacement.
 They are idempotent for the same canonical Git root and segment, reject

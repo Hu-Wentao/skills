@@ -6,6 +6,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 
@@ -19,14 +20,16 @@ class GovernanceValidatorTest(unittest.TestCase):
         self.docs = self.root / "docs"
         (self.docs / "defects").mkdir(parents=True)
         (self.docs / "requirements.md").write_text("## REQ-TEST-001 Example\n", encoding="utf-8")
-        (self.docs / "defects" / "README.md").write_text("# Defects\n", encoding="utf-8")
+        (self.docs / "defects" / "README.md").write_text(
+            "---\nmdq:\n  version: 1\n---\n# Defects\n", encoding="utf-8"
+        )
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def run_validator(self) -> subprocess.CompletedProcess[str]:
+    def run_validator(self, *extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["node", str(VALIDATOR), "--root", str(self.root)],
+            ["node", str(VALIDATOR), "--root", str(self.root), *extra],
             cwd=self.root,
             capture_output=True,
             text=True,
@@ -37,6 +40,8 @@ class GovernanceValidatorTest(unittest.TestCase):
         compatibility = "\n## Compatibility\n\nNo breaking changes.\n" if include_compatibility else ""
         (self.docs / "defects" / f"{identifier}.md").write_text(
             f"""---
+mdq:
+  version: 1
 id: {identifier}
 status: implemented
 date: 2026-07-16
@@ -82,6 +87,15 @@ Focused verification owns the invariant.
         self.assertEqual(result.returncode, 1)
         self.assertIn("defect record missing heading: Compatibility", result.stdout)
         self.assertIn("prior defect DEF-20260715-missing is not declared", result.stdout)
+
+    def test_emits_stable_json_audit(self) -> None:
+        self.write_defect("DEF-20260716-example")
+        result = self.run_validator("--json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["schema"], "project-governance.document-audit.v1")
+        self.assertEqual(report["state"], "audit_completed")
+        self.assertEqual(report["counts"]["defectRecords"], 1)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 
@@ -115,6 +116,61 @@ tasks:
         )
         return config_root
 
+    def write_v3_config(self, *, mutability: str = "read_only") -> Path:
+        config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True, exist_ok=True)
+        (self.root / "collect.py").write_text(
+            "import json\nprint(json.dumps({'schema': 'test.evidence.v1'}))\n",
+            encoding="utf-8",
+        )
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v3
+profile: test-project
+tasks:
+  defect-diagnosis:
+    base: references/defect-governance.md
+    profile: project.md
+    contract: defect.contract.json
+""",
+            encoding="utf-8",
+        )
+        (config_root / "project.md").write_text(
+            "# Project Defect Policy\n", encoding="utf-8"
+        )
+        (config_root / "defect.contract.json").write_text(
+            json.dumps(
+                {
+                    "schema": "project-governance.task-contract.v1",
+                    "id": "test.defect.v1",
+                    "task": "defect-diagnosis",
+                    "operations": {
+                        "collect": {
+                            "description": "Collect evidence.",
+                            "command": [sys.executable, "collect.py"],
+                            "mutability": mutability,
+                            "authorization": (
+                                "none" if mutability == "read_only" else "current_user"
+                            ),
+                            "parameters": {
+                                "request_id": {
+                                    "flag": "--request-id",
+                                    "type": "string",
+                                    "required": True,
+                                    "pattern": "^req_[A-Za-z0-9_-]+$",
+                                }
+                            },
+                            "output_schema": "test.evidence.v1",
+                            "exit_codes": {"0": "evidence_collected"},
+                            "next_states": ["semantic_classification"],
+                        }
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return config_root
+
     def test_generic_fallback_and_stable_id_for_both_tasks(self) -> None:
         for task in (
             "defect-feedback-lifecycle",
@@ -154,6 +210,74 @@ tasks:
         self.assertIn("## Project Instructions", result.stdout)
         self.assertIn("Use the project history source.", result.stdout)
         self.assertIn("uv run python -m unittest", result.stdout)
+
+    def test_v3_returns_small_json_contract_without_composed_policy(self) -> None:
+        self.write_v3_config()
+        result = self.run_resolver(
+            "--task", "defect-diagnosis", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["state"], "resolved")
+        self.assertEqual(
+            manifest["contract"]["operations"]["collect"]["mutability"],
+            "read_only",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["collect"]["output_schema"],
+            "test.evidence.v1",
+        )
+        self.assertIn("policy_refs", manifest)
+        self.assertNotIn("Generic Instructions", result.stdout)
+        self.assertNotIn("state_path", manifest)
+        self.assertFalse(
+            (
+                self.root
+                / ".agents"
+                / ".cache"
+                / "project-governance"
+                / "defect-diagnosis"
+            ).exists()
+        )
+
+        selected = self.run_resolver(
+            "--task",
+            "defect-diagnosis",
+            "--operation",
+            "collect",
+            "--format",
+            "json",
+        )
+        self.assertEqual(selected.returncode, 0, selected.stderr)
+        selected_manifest = json.loads(selected.stdout)
+        self.assertEqual(selected_manifest["selected_operation"], "collect")
+        self.assertEqual(
+            list(selected_manifest["contract"]["operations"]), ["collect"]
+        )
+        self.assertEqual(selected_manifest["entry_command"][-1], "collect")
+
+    def test_v3_rejects_missing_executor(self) -> None:
+        config_root = self.write_v3_config()
+        contract_path = config_root / "defect.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["operations"]["collect"]["command"] = [
+            sys.executable,
+            "missing.py",
+        ]
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        result = self.run_resolver("--task", "defect-diagnosis")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("script not found", result.stderr)
+
+    def test_v3_rejects_write_without_current_user_authorization(self) -> None:
+        config_root = self.write_v3_config(mutability="external_write")
+        contract_path = config_root / "defect.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["operations"]["collect"]["authorization"] = "none"
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        result = self.run_resolver("--task", "defect-diagnosis")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must require current_user authorization", result.stderr)
 
     def test_release_deployment_profile_is_composed_with_commands_and_tags(self) -> None:
         config_root = self.write_config(

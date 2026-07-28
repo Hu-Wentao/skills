@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 
 function parseArgs(argv) {
-  const args = { root: process.cwd(), docs: "docs" };
+  const args = { root: process.cwd(), docs: "docs", json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--root" || value === "--docs") {
@@ -12,6 +12,8 @@ function parseArgs(argv) {
       if (!next) throw new Error(`${value} requires a value`);
       args[value.slice(2)] = next;
       index += 1;
+    } else if (value === "--json") {
+      args.json = true;
     } else if (value === "--help" || value === "-h") {
       args.help = true;
     } else {
@@ -71,7 +73,7 @@ function parseFrontmatter(content) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log("Usage: validate-governance.mjs [--root PROJECT] [--docs RELATIVE_OR_ABSOLUTE_PATH]");
+    console.log("Usage: validate-governance.mjs [--root PROJECT] [--docs RELATIVE_OR_ABSOLUTE_PATH] [--json]");
     return 0;
   }
 
@@ -87,6 +89,8 @@ function main() {
   const references = [];
   const defectRecords = new Map();
   const defectReferences = [];
+  const verificationReferences = new Set();
+  let hasVerificationDocument = false;
   const reqPattern = /\bREQ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3,}\b/g;
   const reqIdPattern = /^REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3,}$/;
   const headingPattern = /^#{2,6}\s+(REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3,})\b/gm;
@@ -103,6 +107,22 @@ function main() {
 
   for (const file of files) {
     const content = readFileSync(file, "utf8");
+    const relativeFile = relative(docs, file);
+    if (/(?:verification|coverage|traceability)/i.test(relativeFile)) {
+      hasVerificationDocument = true;
+    }
+    const governedDirectory = relativeFile.split(/[\\/]/, 1)[0];
+    if (
+      ["requirements", "baseline", "plans", "defects"].includes(governedDirectory)
+      && !/^---\n[\s\S]*?^mdq:\s*$/m.test(content)
+    ) {
+      issues.push({
+        level: "warning",
+        file,
+        line: 1,
+        message: "governed Markdown has no persistent mdq contract",
+      });
+    }
     for (const match of content.matchAll(headingPattern)) {
       const id = match[1];
       const declaration = { file, line: lineNumber(content, match.index ?? 0) };
@@ -120,6 +140,9 @@ function main() {
     }
     for (const match of content.matchAll(reqPattern)) {
       references.push({ id: match[0], file, line: lineNumber(content, match.index ?? 0) });
+      if (/(?:verification|coverage|traceability)/i.test(relativeFile)) {
+        verificationReferences.add(match[0]);
+      }
     }
     for (const link of localMarkdownLinks(content)) {
       const decoded = decodeURIComponent(link.target);
@@ -203,6 +226,19 @@ function main() {
   const plansIndex = join(plans, "README.md");
   if (existsSync(plans) && !existsSync(plansIndex)) {
     issues.push({ level: "warning", file: plans, message: "plans directory has no README.md status index" });
+  } else if (existsSync(plansIndex)) {
+    const index = readFileSync(plansIndex, "utf8");
+    for (const plan of markdownFiles(plans)) {
+      if (plan === plansIndex) continue;
+      const relativePlan = relative(plans, plan).replaceAll("\\", "/");
+      if (!index.includes(relativePlan) && !index.includes(basename(relativePlan))) {
+        issues.push({
+          level: "warning",
+          file: plan,
+          message: "plan is not referenced by the plans lifecycle index",
+        });
+      }
+    }
   }
   const defects = join(docs, "defects");
   const defectsIndex = join(defects, "README.md");
@@ -210,10 +246,47 @@ function main() {
     issues.push({ level: "warning", file: defects, message: "defects directory has no README.md policy" });
   }
 
-  for (const issue of issues) console.log(formatIssue(issue, root));
+  for (const [id, declaration] of declarations) {
+    if (hasVerificationDocument && !verificationReferences.has(id)) {
+      issues.push({
+        level: "warning",
+        file: declaration.file,
+        line: declaration.line,
+        message: `requirement ${id} has no reference in a verification, coverage, or traceability document`,
+      });
+    }
+  }
+
   const errors = issues.filter((issue) => issue.level === "error").length;
   const warnings = issues.filter((issue) => issue.level === "warning").length;
-  console.log(`Checked ${files.length} Markdown files, ${declarations.size} requirement declarations, ${defectRecords.size} defect records: ${errors} error(s), ${warnings} warning(s).`);
+  if (args.json) {
+    console.log(JSON.stringify({
+      schema: "project-governance.document-audit.v1",
+      status: errors > 0 ? "failed" : "ready",
+      state: errors > 0 ? "structural_errors" : "audit_completed",
+      root,
+      docs,
+      counts: {
+        files: files.length,
+        requirementDeclarations: declarations.size,
+        defectRecords: defectRecords.size,
+        errors,
+        warnings,
+      },
+      issues: issues.map((issue) => ({
+        level: issue.level,
+        file: issue.file ? relative(root, issue.file) : ".",
+        line: issue.line ?? null,
+        message: issue.message,
+      })),
+      allowedNextActions: errors > 0
+        ? ["repair_mechanical_drift_if_authorized", "request_semantic_decision"]
+        : ["semantic_review"],
+    }, null, 2));
+  } else {
+    for (const issue of issues) console.log(formatIssue(issue, root));
+    console.log(`Checked ${files.length} Markdown files, ${declarations.size} requirement declarations, ${defectRecords.size} defect records: ${errors} error(s), ${warnings} warning(s).`);
+  }
   return errors > 0 ? 1 : 0;
 }
 

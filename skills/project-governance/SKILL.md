@@ -1,341 +1,101 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain governance for project architecture, documents, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and user feedback lifecycles. Use when turning product discussions or code into implementation-ready authority; governing requirements, baselines, plans, verification, branches, commits, worktrees, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, or local allocations; defining schema evolution, migrations, deprecations, or breaking changes; deciding whether repeated work should become a project skill or profile; diagnosing defect recurrence, root cause, test escape, ledgers, feedback rewards, or repair-to-release handoffs; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline."
+description: "Bootstrap, review, and maintain project architecture, governed documents, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, verification, branches, commits, worktrees, SemVer, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
 
 ## Establish Context
 
-1. Read every applicable repository instruction file before inspecting or changing the project.
-2. Check the worktree, branch, worktree topology, and upstream state. Obey the project's dirty-worktree, approval, commit, release, and deployment rules.
-3. Discover existing documentation, requirements, plans, tests, Git conventions, release procedures, and project-level skills. Prefer `rg --files` and targeted reads.
-4. Identify the current terminology and sources of truth. Preserve them unless the user approves a migration.
-5. Separate reusable governance method from project-specific product facts and operational commands.
+1. Read applicable repository instructions.
+2. Inspect the current worktree, branch, upstream, worktree topology, and source authority before changing anything.
+3. Keep universal policy in this skill, project facts in repository configuration, deterministic operations in tested scripts, and runtime output in ignored caches.
+4. Preserve current terminology and authority unless the user approves a migration.
+5. Treat release, deployment, publishing, rollback, live migration, reward, and destructive authority as current-turn permissions only.
 
-For a read-only review, inspect and report without editing. For a change, present the intended scope or implementation plan when repository instructions require it. Never treat release, deployment, publishing, or live migration authority from an earlier turn as current authorization.
+For read-only review, inspect and report without editing. For changes, follow the repository's planning, dirty-worktree, approval, commit, and deployment rules.
 
-Treat a plan as governed when it is written into the repository, referenced as an implementation authority, linked to requirements or baselines, assigned lifecycle status, or expected to be completed and archived. Do not treat a temporary pre-implementation explanation as a governed plan.
+## Use Deterministic Task Contracts
 
-By default, require every Markdown document created or materially revised under any Project Governance domain to use a valid persistent `mdq` query contract. Apply `queryable-markdown` when creating, converting, editing, querying, or validating these documents. Preserve an explicit project convention or user-approved exception that excludes `mdq`; do not add a contract during a read-only review.
-
-## Select a Governance Domain
-
-Treat these as peer capabilities rather than placing Git or skill governance under documentation:
-
-- **Project design and bootstrap**: project intent, architecture, module and data ownership, scaffolding conventions, and implementation-ready handoff.
-- **Version and compatibility governance**: SemVer classification, first-party compatibility surfaces, schema evolution, migrations, deprecations, and breaking-change authorization.
-- **Document governance**: requirements, baselines, plans, archives, and verification traceability.
-- **Git version governance**: change isolation, commit lineage, integration branches, release commits, immutable tags, fixed deployment refs, and hotfix ancestry.
-- **Release and deployment governance**: application-artifact scope, current authorization, frozen commit/tag identity, isolated worktrees, environment promotion, fixed-tag retry, deployment success evidence, and failure boundaries.
-- **Project-skill governance**: extraction and maintenance of repeated, specialized, or high-risk operational knowledge.
-- **Defect governance**: evidence-backed diagnosis, repair history, recurring-defect escalation, test escape, and proof that a repair eliminates its failure generator.
-
-Use every applicable domain when a task crosses boundaries. For example, a release-policy change may require a Git invariant, a baseline update, verification evidence, and a project release skill.
-
-## Project Design and Bootstrap
-
-Turn product intent or useful legacy knowledge into a maintainable project starting point:
-
-1. Classify the source as a new product or system discussion, an existing codebase that will continue, or a legacy project informing a replacement.
-2. Capture product and system decisions rather than conversation transcript. Separate confirmed constraints from inferred design.
-3. Define module responsibilities, data ownership, runtime surfaces, API and anti-boundaries, and package/tooling conventions.
-4. Create the smallest implementation-ready document set. Keep each decision in one canonical location and link to it elsewhere.
-5. End with `implementation-prompt.md` when the design is stable enough for another agent to implement without the original conversation.
-
-Read [design-doc-rules.md](references/design-doc-rules.md) when creating or revising architecture docs, selecting review levels, defining module boundaries, choosing the document shape, or preparing the implementation prompt.
-
-Read [project-scaffolding.md](references/project-scaffolding.md) when choosing or documenting package and runtime managers, project scripts, Docker or Compose patterns, or pnpm BuildKit caching.
-
-Read [legacy-extraction.md](references/legacy-extraction.md) only when an existing or old project should inform a new design. Classify legacy behavior as inherited, replaced, dropped, or requiring review; do not preserve accidental coupling or compatibility by default.
-
-Project design defines a target architecture and initial engineering shape. Document governance controls the authority, lifecycle, status, and archival of those decisions after they become governed project sources. Apply both domains when bootstrap outputs become durable project authority.
-
-Ask for a decision when alternatives materially change implementation cost, deployability, security, or data ownership. When terminology or constraints change, update every affected design source and remove stale terms. Keep project-specific commands, topology, and policy in repository-owned instructions or skill configuration rather than making them universal defaults.
-
-## Version and Compatibility Governance
-
-Apply SemVer to every independently versioned first-party project and first-party submodule. Treat APIs, configuration, persistent payloads, stored-data semantics, and database schemas as public compatibility surfaces. Third-party dependency versions remain governed by their publishers.
-
-For any versioned change:
-
-1. Identify the affected compatibility surfaces and the currently supported major-version boundary.
-2. Classify the change as backward-compatible or incompatible before choosing the version bump.
-3. At or after `1.0.0`, require `PATCH` and `MINOR` changes to remain backward-compatible. Require current, explicit user authorization and a `MAJOR` bump for any incompatible change.
-4. Define database migrations in the forward direction: new code must open and losslessly upgrade older schemas within the same supported major version. Do not imply that old code can read an upgraded database or that mixed-version rolling operation is safe unless the project separately promises it.
-5. Document migration verification, backup, recovery, deprecation, and removal decisions with the release.
-
-When one repository has a project release version plus independently versioned
-modules or deployable services:
-
-- Treat the project version as the identity of the complete source release; do
-  not automatically copy its bump to every module.
-- Bump a module only when its produced runtime artifact changes because of a
-  direct runtime input, a transitively changed first-party runtime dependency,
-  or a shared build/runtime input proven to affect that artifact.
-- Treat a root manifest, workspace file, lockfile, base TypeScript config, or
-  shared Dockerfile as an input to impact analysis, not as unconditional proof
-  that every module changed. Compute the affected production dependency closure
-  or compare a canonical per-module runtime-input manifest.
-- Keep an unaffected module's version unchanged and reuse its existing
-  immutable artifact. Never rebuild unchanged source under the same module
-  version or assign a new module version merely to match the project release.
-- Require focused tests for direct changes, transitive runtime propagation,
-  test/document-only changes, unrelated lockfile changes, target-specific
-  shared inputs, and genuinely artifact-wide inputs.
-
-Read [design-doc-rules.md](references/design-doc-rules.md) before selecting a version bump or changing a compatibility promise, public surface, stored-data meaning, database schema, or migration policy.
-
-## Port Allocation Governance
-
-Reserve project segments `01` through `09` for system applications. Allocate
-ordinary projects only from `10` through `64`.
-
-Before creating port configuration for a new project, reserve the lowest free
-machine-local project segment:
+For a configured workflow, resolve a small JSON task contract:
 
 ```bash
-uv run --script <project-governance-skill-directory>/scripts/project-segments.py allocate --cwd <project-root>
+uv run python <skill-root>/scripts/resolve.py \
+  --cwd <project-root> --task <task> --operation <operation> --format json
 ```
 
-Use the returned `project_segment` in repository-owned
-`project-governance.config.v2`. For an existing configured project, run
-`project-segments.py claim --segment <PP>` once to register its current segment;
-the command must stop on any cross-project conflict. For read-only review, use
-`check --segment <PP>` and do not allocate or claim. Use `list` to inspect all
-machine-local allocations.
+With `project-governance.config.v3`, consume `state`, `policy_refs`, parameter schemas, mutability, authorization requirements, output schema, exit codes, and allowed next states. Do not read every policy reference by default. Read only the referenced section needed for a semantic decision, conflict, failed precondition, or unsupported operation.
 
-Then run:
+Execute one validated operation through:
 
 ```bash
-uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task port-allocation
+uv run python <skill-root>/scripts/project-governance.py \
+  --cwd <project-root> <domain> <operation> [contracted arguments]
 ```
 
-Read the returned `instructions.path` whenever `instructions_id` changes.
-Require repository-owned `project-governance.config.v2` before assigning
-concrete ports. Keep cross-project segment uniqueness in the machine-local
-registry, keep this project's segment and service assignments in repository
-configuration, and keep the universal `PPISS` rules in the reusable skill.
-Never silently replace an established segment or reuse a segment registered to
-another project.
+Use `--authorized` only after the current user authorizes a non-read-only operation. The flag is a mechanical gate, not proof of authorization. Never bypass the runner with a declared command string when a v3 contract exists.
 
-Read [port-allocation.md](references/port-allocation.md) when designing or
-reviewing a port map. Treat an established port change as a breaking
-operational migration: update code, tests, examples, Compose and deployment
-configuration, firewall rules, and the authoritative operations document
-together. Search for stale ports before completion.
+Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, and `release retry`. A project contract may expose only a subset.
 
-## Document Governance
+Legacy v1/v2 profiles remain readable during migration. They return composed instructions and declarative command strings; read their resolved instructions because they do not provide executable contracts.
 
-### Use Queryable Markdown
+## Select the Governance Domain
 
-Use `queryable-markdown` for every repository Markdown document that this
-skill creates or edits as a governed requirement, baseline, plan, archive,
-verification map, defect record, or other durable governance authority. A
-request that authorizes creating or editing such a document also authorizes
-adding or maintaining its minimal persistent `mdq` contract; the user does not
-need to separately ask for conversion.
+- For project design, architecture, module ownership, scaffolding, or implementation handoff, read [design-doc-rules.md](references/design-doc-rules.md), [project-scaffolding.md](references/project-scaffolding.md), and [legacy-extraction.md](references/legacy-extraction.md) as applicable.
+- For SemVer, migrations, compatibility surfaces, release identities, tags, promotions, retries, or hotfix ancestry, read [git-version-governance.md](references/git-version-governance.md) and [release-deployment.md](references/release-deployment.md) only when the task contract cannot decide the required semantic boundary.
+- For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
+- For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
+- For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
+- For PPISS port allocation, use `project-segments.py` and resolve `port-allocation`; read [port-allocation.md](references/port-allocation.md) for an established-port migration.
+- For repeated, specialized, high-risk workflow extraction, read [project-skill-design.md](references/project-skill-design.md). Prefer concise policy, project configuration, and tested scripts.
 
-- Put the `mdq` declaration in YAML frontmatter when the document already uses
-  YAML frontmatter. Otherwise use the contract placement selected by
-  `queryable-markdown`; do not add decorative metadata unrelated to identity,
-  boundaries, fields, or lifecycle.
-- Derive the smallest stable record contract from the governance identities
-  already required by this skill, such as `REQ-*` or `DEF-*`. For a document
-  whose whole file is the durable record, use a file-level identity instead of
-  inventing nested records.
-- Follow the complete contracted-document create or edit transaction from
-  `queryable-markdown`, including its validation and representative queries,
-  in addition to this skill's governance validation.
-- Do not silently convert every legacy governance document encountered during
-  a narrow edit. Convert the edited document when a safe contract is
-  unambiguous. Treat repository-wide adoption or any ambiguous legacy shape as
-  a document-governance migration and present a migration plan first.
-- Keep governance semantics here and document mechanics in
-  `queryable-markdown`. An `mdq` contract improves deterministic access but
-  never becomes the authority for requirement status, baseline meaning, plan
-  completion, or defect classification.
+Treat these domains as peers. Crossing a domain boundary does not transfer authorization.
 
-### Classify Each Fact
+## Preserve Non-configurable Invariants
 
-Assign every material statement to exactly one primary authority layer:
+- Do not broaden user authorization through configuration or task output.
+- Do not expose credentials, authorization headers, request bodies, captures, or provider secrets.
+- Do not mutate a published release tag or re-resolve a moving deployment ref.
+- Keep release/retry identity fixed to the recorded full commit and immutable tag.
+- Do not classify a defect root cause, recurrence, ownership, requirement status, priority, or breaking-change acceptance from a script result alone.
+- Do not turn passing checks into automatic proof of product semantics or deployment success.
+- Stop for a decision when resolution would change user outcomes, permissions, data guarantees, compatibility, accepted Git history, or release identity.
 
-- **Requirement**: durable user outcome or product constraint, with stable identity and observable acceptance.
-- **Baseline**: current, already-effective rule that constrains future implementation or review.
-- **Plan**: target design or transition that is not fully current fact.
-- **Code and test fact**: current schema, API shape, file location, algorithm, or runtime behavior.
-- **Archive**: historical context that no longer governs new work.
-- **Operational workflow**: repeatable execution knowledge, possibly suitable for a project-level skill.
+## Govern Documents
 
-Do not duplicate authority across layers. Link to the authoritative source. Read [document-lifecycle.md](references/document-lifecycle.md) when creating, reorganizing, promoting, or archiving documents.
+Use `queryable-markdown` for governed Markdown created or materially revised under this skill unless the project explicitly excludes it. Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Archive, or Operational Workflow.
 
-### Bootstrap or Reorganize Documents
-
-1. Inventory current sources before proposing a structure.
-2. Infer the smallest useful governance system from project risk and complexity; do not create empty categories for symmetry.
-3. Define source authority, document lifecycle, stable requirement identity, and verification ownership.
-4. Present a migration plan before broad restructuring unless the user explicitly requested direct implementation.
-5. Preserve valuable history and links. Prefer incremental classification over wholesale rewrites.
-
-Read [baseline-design.md](references/baseline-design.md) and [requirements-governance.md](references/requirements-governance.md).
-
-### Govern Requirements, Baselines, and Plans
-
-1. Locate affected stable ids and references.
-2. Distinguish clarification from semantic change. Preserve an id only while its durable outcome remains the same.
-3. Keep durable current constraints in baselines and not-yet-current targets or transitions in plans.
-4. When a plan completes, verify implementation evidence, merge only lasting rules into baselines, review requirement status separately, and archive superseded planning material.
-5. Do not infer status or priority solely from test results, implementation effort, or document age.
-
-Read [requirements-governance.md](references/requirements-governance.md), [document-lifecycle.md](references/document-lifecycle.md), and [baseline-design.md](references/baseline-design.md).
-
-### Govern Verification Traceability
-
-1. Map each in-scope requirement to the smallest effective verification owner.
-2. Use cross-service E2E for user-visible integration, focused tests for detailed invariants, UI tests for UI behavior, and operational checks for deployment or runtime controls.
-3. Treat passing evidence as one input to status review, not automatic proof that a requirement is Active.
-4. Report missing, excessive, duplicated, or misplaced coverage.
-
-Read [verification-traceability.md](references/verification-traceability.md).
-
-## Git Version Governance
-
-Govern Git history as a durable project record, not merely a command sequence. Preserve clear ancestry from accepted changes through releases and hotfixes.
-
-For a normal release:
-
-1. Freeze the exact committed source on the primary integration branch, normally `main`.
-2. Require the checked-out integration worktree to be clean before planning any operation that will advance it.
-3. Use an isolated worktree on a temporary release branch, such as `release/v<version>`, for version edits, checks, builds, and the release commit.
-4. Revalidate that the integration branch is clean and still at the frozen source commit after checks pass.
-5. Fast-forward the integration branch to the release commit, or use the project's explicitly approved merge policy. Stop if ancestry diverged.
-6. Create the annotated `v<version>` tag only after the release commit is in integration-branch history, and require the tag and integration branch to resolve to the same commit.
-7. Pin deployment and every retry to the recorded tag and full commit id. Never re-resolve a moving branch or infer a different release commit without current user approval.
-8. Create maintenance branches from immutable release tags, for example `git switch -c hotfix/v0.31.2 v0.31.2`; do not replace release tags with long-lived version branches merely to enable fixes.
-
-Never leave a release commit reachable only through a tag created on detached `HEAD`. Never move a checked-out dirty branch by low-level ref mutation. Never move or delete a published release tag without explicit authorization for that exact tag operation.
-
-Read [git-version-governance.md](references/git-version-governance.md) before changing commit, branch, tag, release, deployment-ref, retry, or hotfix policy.
-
-## Release and Deployment Governance
-
-Before planning, reviewing, changing, or executing an application release,
-deployment, environment promotion, or fixed-tag retry, resolve the effective
-instructions for the current repository:
+Run the contracted `docs audit` operation when available. Otherwise run:
 
 ```bash
-uv run python <project-governance-skill-directory>/scripts/resolve.py \
-  --cwd <project-root> \
-  --task release-deployment
+node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 ```
 
-Read the returned `instructions.path` whenever `instructions_id` changes.
-Without project configuration, use the generic application release and
-deployment workflow. A repository may specialize commands, target topology,
-environment gates, runtime evidence, and project-only safety boundaries through
-`.agents/skills-config/project-governance/config.yaml`.
+Mechanical validation may find missing contracts, links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
 
-Always distinguish application-artifact operations from instance-state
-operations before entering the workflow. Freeze the full commit id, isolate
-work in fresh worktrees, preserve immutable release and successful deployment
-tags, promote the same artifact, and keep every retry fixed to the recorded
-release tag and commit.
+## Govern Git, Releases, and Deployment
 
-Read [release-deployment.md](references/release-deployment.md) through the
-resolved instructions. Project configuration cannot broaden current user
-authorization, weaken tag immutability or secret protection, permit a moving
-deployment ref, or turn an unverified deployment into a successful one.
+Use `git snapshot`, `release inspect`, and `release plan` before semantic release decisions. Invoke `release run` or `release retry` only with current explicit authorization and the exact target/ref authorized by the user.
 
-## Defect Feedback Lifecycle
+Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Never auto-retry, auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 
-Before coordinating a user defect report across triage, human reward approval,
-repair, release, deployment verification, and closure, resolve:
+## Govern Defects
 
-```bash
-uv run python <project-governance-skill-directory>/scripts/resolve.py \
-  --cwd <project-root> \
-  --task defect-feedback-lifecycle
-```
+Run `defect collect` before writing ad hoc Git, SQLite, Docker, SSH, or application probes when the project contract supports the evidence scope. Read the returned evidence envelope, then use [defect-governance.md](references/defect-governance.md) to classify recurrence, systemic cause, ownership, repair shape, next-unseen-case behavior, and test escape.
 
-Read the returned `instructions.path` whenever `instructions_id` changes.
-Treat trackers and spreadsheets as collaboration projections rather than
-authoritative reward, defect, Git, release, or deployment facts. This workflow
-does not authorize repair, reward, release, deployment, retry, or rollback;
-obtain current authority for every external mutation and enter the dedicated
-Defect or Release Governance workflow when its boundary is reached.
+Keep diagnosis read-only unless implementation is explicitly authorized. Persist repair history only through the project-approved owner.
 
-## Project-Skill Governance
+## Validate and Deliver
 
-1. Confirm that the workflow is repeated, specialized, high-risk, or expensive to rediscover.
-2. Keep universal governance here and project-specific commands, topology, terminology, and safety boundaries in a repository-owned project profile or focused project skill.
-3. Prefer a concise procedural `SKILL.md`; move detailed knowledge to references and deterministic operations to tested scripts.
-4. 对于“更新项目内技能（如 flowr-usage / fr-mvvm-contract）”的操作，优先走 `skills` CLI：
-
-```bash
-skills update -p flowr-usage fr-mvvm-contract
-```
-
-必要时可添加 `-y` 跳过确认；若目标不明确先 `skills list -p` 核对可更新集合。若未显式指定版本更新范围，`skills update -p` 仅刷新项目已安装技能；避免手工从远端仓库拷贝 skill 目录。
-5. Decide whether the skill needs project configuration before selecting an authoring capability.
-6. When creating or materially revising a skill, prefer `skillcraft` whenever it is available in the current session. If it is unavailable and the skill does not need project configuration, use the system `skill-creator` as the fallback.
-7. If `skillcraft` is unavailable but the skill needs `.agents/skills-config`, a project-profile resolver, resolved-instruction caching, or another `skillcraft` project-configuration mechanism, stop and ask the user to install `skillcraft`. Do not install it without approval, reproduce its mechanism with `skill-creator`, or modify the system `skill-creator`.
-8. Do not turn one-time plans, ordinary coding conventions, or unstable product proposals into skills.
-
-Read [project-skill-design.md](references/project-skill-design.md).
-
-## Defect Governance
-
-Before diagnosing or repairing a defect, or reviewing repair history, resolve the effective task instructions for the current repository with the resolver adjacent to this skill:
-
-```bash
-uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task defect-diagnosis
-uv run python <project-governance-skill-directory>/scripts/resolve.py --cwd <project-root> --task defect-history-review
-```
-
-Read the returned `instructions.path` whenever `instructions_id` changes, then perform the requested task from those resolved instructions. Without project configuration, use the generic behavior. A repository may specialize either task through `.agents/skills-config/project-governance/config.yaml` without changing the reusable skill.
-
-Configuration discovery and composition are infrastructure supplied by `skillcraft`. They are not a Project Governance domain or a Project-Skill Governance capability; Defect Governance and Port Allocation Governance only consume the resolved instructions.
-
-Project instructions override configurable generic defaults when both address the same choice. They cannot broaden user authorization, turn a read-only diagnosis into implementation, weaken secret or privacy protection, override external authority, replace non-configurable safety invariants, or bypass resolver schema and path-containment rules. Resolution declares commands but never executes them.
-
-## Resolve Conflicts
-
-When documents, Git history, code, tests, or skills disagree:
-
-1. State the conflicting claims and cite their sources.
-2. Identify the authority domain and layer of each claim.
-3. Determine whether the mismatch is stale governance, invalid ancestry, incomplete implementation, insufficient evidence, or an unresolved product decision.
-4. Repair mechanical drift only when semantics are unambiguous and editing is authorized.
-5. Stop for a decision when resolution would change user outcomes, permissions, data guarantees, compatibility, priority, accepted Git history, or release identity.
-
-Never manufacture consistency by silently rewriting a source, moving a tag, or changing the deployment commit.
-
-## Validate
-
-For Markdown governance documents, run:
-
-```bash
-node <skill-directory>/scripts/validate-governance.mjs --root <project-root>
-```
-
-Use `--docs <relative-path>` when governance documents are not under `docs/`. Treat errors as structural defects and warnings as review prompts; the validator does not decide product semantics, priority, or completion status.
-
-For Git governance, inspect the relevant refs and ancestry directly. Verify staged scope before committing, confirm the release tag type and target, prove the release commit is reachable from the integration branch, and compare the exact deployment commit with the recorded release commit.
-
-Also run project-specific documentation, test, repository, and whitespace checks appropriate to the change.
-
-## Deliver
+Run the smallest contracted checks first, then project-specific tests appropriate to the change. Validate every modified skill with Skillcraft and test every added deterministic script.
 
 Report:
 
-- governance domains and files changed;
-- requirement ids and semantic or status decisions;
-- branch, commit, tag, deployment-ref, and hotfix-lineage decisions;
-- verification ownership and remaining gaps;
-- conflicts still requiring a decision;
-- project skills created, changed, or recommended;
-- defect family, recurrence classification, repair-history evidence, systemic cause, ownership verdict, and whether the repair eliminates recurrence;
-- structural validation and relevant project checks;
-- breaking changes and compatibility provisions, explicitly stating when there are none.
+- domains and authoritative files changed;
+- task contract, fixed identities, evidence, and exit states;
+- semantic decisions still made by AI;
+- verification performed and remaining gaps;
+- breaking changes and compatibility provisions;
+- commits, tags, deployment refs, publication state, and unauthorized operations left untouched.
 
-Do not release, deploy, publish, migrate live state, push, rewrite history, or move tags unless the user explicitly authorizes that action in the current request.
+Do not release, deploy, publish, migrate live state, push, rewrite history, or move tags unless explicitly authorized in the current request.
