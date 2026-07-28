@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project governance across architecture, scaffolding, documents, SemVer compatibility, Git versions, releases and deployments, project skills, runtime ports, and defects. Use when turning product discussions or a codebase into implementation-ready architecture, ownership, tooling, or handoff docs; defining or reviewing version bumps, compatibility surfaces, database-schema evolution, migrations, deprecations, or breaking changes; governing requirements, baselines, plans, verification, branches, commits, worktrees, release or deployment tags, environment promotion, fixed-tag retries, hotfix lineage, PPISS ports, or machine-local allocations; deciding whether repeated work should become a project skill or profile; diagnosing defects, recurrence, root cause, test escape, ledgers, or repair-history hotspots; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline that will not become durable project design or authority."
+description: "Bootstrap, review, and maintain governance for project architecture, documents, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and user feedback lifecycles. Use when turning product discussions or code into implementation-ready authority; governing requirements, baselines, plans, verification, branches, commits, worktrees, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, or local allocations; defining schema evolution, migrations, deprecations, or breaking changes; deciding whether repeated work should become a project skill or profile; diagnosing defect recurrence, root cause, test escape, ledgers, feedback rewards, or repair-to-release handoffs; or reconciling governance sources with code and tests. Do not use solely for a transient implementation outline."
 ---
 
 # Project Governance
@@ -226,6 +226,24 @@ Read [release-deployment.md](references/release-deployment.md) through the
 resolved instructions. Project configuration cannot broaden current user
 authorization, weaken tag immutability or secret protection, permit a moving
 deployment ref, or turn an unverified deployment into a successful one.
+
+## Defect Feedback Lifecycle
+
+Before coordinating a user defect report across triage, human reward approval,
+repair, release, deployment verification, and closure, resolve:
+
+```bash
+uv run python <project-governance-skill-directory>/scripts/resolve.py \
+  --cwd <project-root> \
+  --task defect-feedback-lifecycle
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes.
+Treat trackers and spreadsheets as collaboration projections rather than
+authoritative reward, defect, Git, release, or deployment facts. This workflow
+does not authorize repair, reward, release, deployment, retry, or rollback;
+obtain current authority for every external mutation and enter the dedicated
+Defect or Release Governance workflow when its boundary is reached.
 
 ## Project-Skill Governance
 

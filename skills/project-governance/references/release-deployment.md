@@ -181,6 +181,36 @@ Treat project release and deployment commands as automation boundaries. Wait
 for the invoked command to finish, resume only the same yielded process, and do
 not duplicate its internal build, migration, health, or smoke-test steps.
 
+## Separate Progress Events from Detailed Logs
+
+Prefer a concise machine-readable output mode when release automation supports
+one. Keep complete child stdout and stderr in a private detailed log while the
+terminal emits only explicit phase events and failures.
+
+- Emit events at owned phase boundaries instead of classifying Docker, package
+  manager, SSH, or test output with regular expressions.
+- Include the fixed commit, release tag, target, phase, status, and safe log
+  path when they are known.
+- Treat source freeze, candidate creation, verification completion,
+  integration, release tagging, artifact build or upload, deployment health,
+  acceptance verification, and final completion as key events.
+- On failure, emit the phase, stable command identifier, exit status, fixed
+  identity, log path, and at most a bounded sanitized summary. Keep the full
+  diagnostic output in the detailed log.
+- Continue draining every child stream even when its lines are not forwarded
+  to the terminal. Output suppression must never allow a pipe buffer to block
+  the child process.
+- Apply the same secret and sensitive-body protections to detailed logs. Use
+  private permissions and never make a verbose log an excuse to retain
+  credentials, authorization headers, request bodies, captures, or provider
+  responses.
+
+Keep existing verbose behavior as the compatibility default unless the project
+explicitly migrates it. Agents should select the concise mode when available,
+silently resume the same yielded process, and report only key events, errors,
+or decisions that require the user. A product-required heartbeat may be terse;
+it must not reproduce ordinary build progress.
+
 ## Report Completion
 
 Report the frozen source commit, release version and tag, deployment target,

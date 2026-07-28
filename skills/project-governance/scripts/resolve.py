@@ -13,8 +13,9 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "3"
+RESOLVER_VERSION = "4"
 DEFAULT_BASES = {
+    "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
     "port-allocation": "references/port-allocation.md",
@@ -265,11 +266,7 @@ def resolve_task(task: str, cwd: Path) -> tuple[str, Path, str]:
                 raise ResolveError(
                     "port-allocation requires project-governance.config.v2"
                 )
-            allowed_tasks = {
-                "defect-diagnosis",
-                "defect-history-review",
-                "release-deployment",
-            }
+            allowed_tasks = set(DEFAULT_BASES) - {"port-allocation"}
         elif schema == f"{SKILL_NAME}.config.v2":
             require_exact_keys(
                 config, {"schema", "profile", "ports", "tasks"}, "config.yaml"

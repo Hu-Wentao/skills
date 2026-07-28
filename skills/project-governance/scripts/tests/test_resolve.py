@@ -117,6 +117,7 @@ tasks:
 
     def test_generic_fallback_and_stable_id_for_both_tasks(self) -> None:
         for task in (
+            "defect-feedback-lifecycle",
             "defect-diagnosis",
             "defect-history-review",
             "port-allocation",
@@ -181,6 +182,58 @@ tasks:
         self.assertIn("deploy/<target>/<UTC timestamp>/v<version>", result.stdout)
         self.assertIn("Use preproduction before production.", result.stdout)
         self.assertIn("node ops/deployment/release-deploy.mjs", result.stdout)
+
+    def test_defect_feedback_profile_is_composed(self) -> None:
+        config_root = self.write_config(
+            task="defect-feedback-lifecycle",
+            profile="feedback.md",
+            command="feedback audit",
+        )
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "references/defect-governance.md",
+                "references/defect-feedback-lifecycle.md",
+            ),
+            encoding="utf-8",
+        )
+        (config_root / "feedback.md").write_text(
+            "# Repository Feedback Rules\n\nUse the product-owned reward workflow.\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_resolver(
+            "--task", "defect-feedback-lifecycle", "--emit", "instructions"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Treat a collaboration tracker as a projection", result.stdout)
+        self.assertIn("Use the product-owned reward workflow.", result.stdout)
+        self.assertIn("feedback audit", result.stdout)
+
+    def test_supported_sibling_task_does_not_block_release_resolution(self) -> None:
+        config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True)
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v1
+profile: test-project
+tasks:
+  defect-feedback-lifecycle:
+    base: references/defect-feedback-lifecycle.md
+    profile: feedback.md
+  release-deployment:
+    base: references/release-deployment.md
+    profile: release.md
+""",
+            encoding="utf-8",
+        )
+        (config_root / "feedback.md").write_text("Feedback profile.\n", encoding="utf-8")
+        (config_root / "release.md").write_text("Release profile.\n", encoding="utf-8")
+
+        result = self.run_resolver("--task", "release-deployment")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("task: release-deployment", result.stdout)
 
     def test_port_config_is_validated_and_rendered(self) -> None:
         self.write_port_config()

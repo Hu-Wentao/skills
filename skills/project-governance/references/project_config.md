@@ -1,10 +1,10 @@
 # Project Configuration
 
 This skill consumes optional repository-owned configuration for
-`defect-diagnosis`, `defect-history-review`, and `port-allocation` through the
-configuration mechanism supplied by `skillcraft`. The mechanism belongs to
-`skillcraft`; it is not a Project Governance domain or a Project-Skill
-Governance capability.
+`defect-feedback-lifecycle`, `defect-diagnosis`, `defect-history-review`,
+`release-deployment`, and `port-allocation` through the configuration mechanism
+supplied by `skillcraft`. The mechanism belongs to `skillcraft`; it is not a
+Project Governance domain or a Project-Skill Governance capability.
 
 ```text
 .agents/skills-config/project-governance/
@@ -24,11 +24,11 @@ registry prevents two local projects from selecting the same segment and lets
 a new project obtain the lowest free segment. Do not copy the global registry
 into a repository or commit it.
 
-Schema `project-governance.config.v1` remains supported for defect-only
-configuration. Use `project-governance.config.v2` when configuring project
-ports. Configure only supported tasks. `base` is relative to the installed
-`project-governance` skill root; `profile` is relative to the repository
-configuration root.
+Schema `project-governance.config.v1` remains supported for configured tasks
+other than port allocation. Use `project-governance.config.v2` when configuring
+project ports. Configure only supported tasks. `base` is relative to the
+installed `project-governance` skill root; `profile` is relative to the
+repository configuration root.
 
 ```yaml
 schema: project-governance.config.v2
@@ -49,6 +49,9 @@ ports:
       api: 0
       worker: 1
 tasks:
+  defect-feedback-lifecycle:
+    base: references/defect-feedback-lifecycle.md
+    profile: project-feedback.md
   defect-diagnosis:
     base: references/defect-governance.md
     profile: project-defects.md
@@ -57,6 +60,9 @@ tasks:
   defect-history-review:
     base: references/defect-governance.md
     profile: project-defects.md
+  release-deployment:
+    base: references/release-deployment.md
+    profile: project-release.md
   port-allocation:
     base: references/port-allocation.md
 ```
