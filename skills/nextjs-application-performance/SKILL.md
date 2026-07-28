@@ -1,6 +1,6 @@
 ---
 name: nextjs-application-performance
-description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, overlay clipping, real-user monitoring (RUM), click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
+description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, overlay clipping, real-user monitoring (RUM), session replay analytics, Microsoft Clarity masking, click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
 # Next.js Application Performance
@@ -94,7 +94,10 @@ build`, or equivalent commands in a long-running service's `command` or
    classification and first incorrect unbounded decision.
 3. For user-perceived monitoring, define the stable business action, explicit
    start and completion conditions, terminal results, privacy boundary, and
-   focused verification before selecting instrumentation.
+   focused verification before selecting instrumentation. For Microsoft
+   Clarity or another session-replay surface, also read
+   [clarity-masking.md](references/clarity-masking.md) before changing the root
+   layout, masking mode, or sensitive rendered values.
 4. Keep reusable method in the reference and repository-specific policy,
    commands, and authoritative sources in the profile.
 5. When a project declares an overlay contract manifest, run
@@ -118,6 +121,8 @@ build`, or equivalent commands in a long-running service's `command` or
   whole-collection surfaces.
 - [monitor.md](references/monitor.md): measure user actions from explicit
   intent until the business result is visible and usable.
+- [clarity-masking.md](references/clarity-masking.md): preserve useful Clarity
+  recordings while keeping sensitive values out of session replay.
 - [project_config.md](references/project_config.md): project profile schema,
   resolver behavior, and validation requirements.
 - `scripts/audit-overlay-contract.mjs`: validate project-owned overlay source,
