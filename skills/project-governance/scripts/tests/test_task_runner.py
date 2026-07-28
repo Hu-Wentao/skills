@@ -38,11 +38,52 @@ tasks:
     base: references/defect-governance.md
     profile: policy.md
     contract: contract.json
+  release-deployment:
+    base: references/release-deployment.md
+    profile: policy.md
+    contract: release-contract.json
 """,
             encoding="utf-8",
         )
         self.contract_path = config_root / "contract.json"
         self.write_contract("read_only")
+        (config_root / "release-contract.json").write_text(
+            json.dumps(
+                {
+                    "schema": "project-governance.task-contract.v1",
+                    "id": "test.release.v1",
+                    "task": "release-deployment",
+                    "operations": {
+                        operation: {
+                            "description": f"{operation}.",
+                            "command": [sys.executable, "collector.py"],
+                            "mutability": mutability,
+                            "authorization": (
+                                "none"
+                                if mutability == "read_only"
+                                else "current_user"
+                            ),
+                            "parameters": {
+                                "base_tag": {
+                                    "flag": "--base-tag",
+                                    "type": "string",
+                                    "required": True,
+                                    "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+                                }
+                            },
+                            "output_schema": "test.evidence.v1",
+                            "exit_codes": {"0": "completed"},
+                            "next_states": ["complete"],
+                        }
+                        for operation, mutability in (
+                            ("repair-plan", "read_only"),
+                            ("repair", "external_write"),
+                        )
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -113,6 +154,21 @@ tasks:
         self.assertIn("requires --authorized", blocked.stderr)
         allowed = self.invoke(
             "--authorized", "defect", "collect", "--request-id", "req_test"
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    def test_executes_release_repair_plan_alias_without_write_authority(self) -> None:
+        result = self.invoke("release", "repair-plan", "--base-tag", "v1.2.3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["argv"], ["--base-tag", "v1.2.3"])
+
+    def test_release_repair_alias_requires_current_write_authority(self) -> None:
+        blocked = self.invoke("release", "repair", "--base-tag", "v1.2.3")
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("requires --authorized", blocked.stderr)
+        allowed = self.invoke(
+            "--authorized", "release", "repair", "--base-tag", "v1.2.3"
         )
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 

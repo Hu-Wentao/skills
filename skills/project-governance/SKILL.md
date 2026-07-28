@@ -35,7 +35,7 @@ uv run python <skill-root>/scripts/project-governance.py \
 
 Use `--authorized` only after the current user authorizes a non-read-only operation. The flag is a mechanical gate, not proof of authorization. Never bypass the runner with a declared command string when a v3 contract exists.
 
-Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, and `release retry`. A project contract may expose only a subset.
+Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, `release retry`, `release repair-plan`, and `release repair`. A project contract may expose only a subset.
 
 Legacy v1/v2 profiles remain readable during migration. They return composed instructions and declarative command strings; read their resolved instructions because they do not provide executable contracts.
 
@@ -75,7 +75,9 @@ Mechanical validation may find missing contracts, links, identifiers, lifecycle 
 
 ## Govern Git, Releases, and Deployment
 
-Use `git snapshot`, `release inspect`, and `release plan` before semantic release decisions. Invoke `release run` or `release retry` only with current explicit authorization and the exact target/ref authorized by the user.
+Use `git snapshot`, `release inspect`, and the applicable normal or repair plan before semantic release decisions. Invoke `release run`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
+
+Use `release retry` only when source remains unchanged at the fixed release tag. If a failed release needs a source repair, use `release repair-plan` and `release repair` from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 
 Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Never auto-retry, auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 

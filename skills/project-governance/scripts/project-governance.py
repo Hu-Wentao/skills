@@ -22,6 +22,8 @@ ALIASES = {
     ("release", "plan"): ("release-deployment", "plan"),
     ("release", "run"): ("release-deployment", "run"),
     ("release", "retry"): ("release-deployment", "retry"),
+    ("release", "repair-plan"): ("release-deployment", "repair-plan"),
+    ("release", "repair"): ("release-deployment", "repair"),
 }
 
 
