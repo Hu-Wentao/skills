@@ -36,7 +36,7 @@
 
 ### 知识与文档
 
-- [`queryable-markdown`](skills/queryable-markdown)：只读查询普通 Markdown，并创建、维护、编辑和查询具有持久化查询契约的 Markdown 文档。
+- [`queryable-markdown`](skills/queryable-markdown)：只读查询普通 Markdown，批量查询 Markdown 集合，并创建、维护、编辑和安全批量更新具有持久化查询契约的 Markdown 文档。
 - [`write-technical-docs`](skills/write-technical-docs)：依据 Google Developer Documentation Style Guide 撰写、改写和审校开发者文档。
 
 ### Token 实验

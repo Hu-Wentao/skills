@@ -23,6 +23,8 @@ For non-generic conventions, callers may provide ephemeral `--record-level`, `--
 
 An ordinary request to find, retrieve, summarize, or inspect specific information is read-only, whether the document has a profile or not. The presence of a valid contract enables deterministic editing but does not authorize a write.
 
+The `scan` command applies the same query semantics across one or more explicit Markdown files or bounded directory globs. It deduplicates canonical file paths, rejects paths or globs that escape a selected directory, and reports per-document diagnostics without allowing one invalid document to hide valid matches from another. `--require-contract` makes a missing persistent contract a per-document error. Without it, temporary selectors remain read-only and in memory.
+
 Without a valid contract, authored-content editing is outside this protocol. The only supported write is an explicitly requested creation or conversion into a contracted document. Do not treat a generic request to edit ordinary Markdown as permission to add a contract.
 
 With a valid contract, an explicit request may authorize adding, updating, deleting, renaming, or reorganizing authored records. Resolve each existing target through the contract, reject ambiguous identity, patch only the bounded authorized source, and validate the complete contract after the write. Permission to edit authored content does not implicitly authorize changing the profile, identity scheme, markers, or index policy.
@@ -56,6 +58,12 @@ After every authored-record or contract write:
 Deletion and identity rename can leave references behind. Search the document and report remaining references; update them only when the request includes reference maintenance and each occurrence is semantically unambiguous. Cross-document reference policy belongs to the calling domain, not this generic contract.
 
 The profile describes extraction, not business validity or field editability. A field extracted by `regex` is not automatically a safe write address. Locate writes through a reliable record boundary and a source-exact span, or stop for clarification.
+
+The `set` command is the only built-in collection mutation in v1. It updates one existing, untransformed `source: label` scalar across records selected by explicit files or directories, optional exact record IDs, and optional exact `FIELD=VALUE` conditions. Repeated IDs form a selection set; repeated conditions use AND semantics. Directory globs select files, not records. The command does not create fields, convert ordinary Markdown, repair contracts, or write fields sourced from `heading`, `section`, `body`, or `regex`.
+
+`set` is a preview unless `--apply` is present. Preflight every processed document and every selected record before writing anything. Require a valid persistent contract, unique structured keys within each document, a declared target field, a non-conflicting existing value, and exactly one source-located label value. Validate every patched source in memory and prepare every declared index before applying the batch. If any preflight error occurs, write no source or index. Before writing, confirm source bytes have not changed since preflight.
+
+A multi-file filesystem mutation cannot provide a portable global atomic commit. Write each source and index through an atomic same-directory replacement, revalidate the written batch, and attempt to restore every replaced path if a later write or verification fails. Report `rolled_back` when restoration succeeds and `rollback_failed` with every restoration error otherwise. Never describe this best-effort rollback as a database transaction.
 
 ## 3. Profile Placement
 
@@ -259,8 +267,16 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 - `temporary_selectors_inferred`, `temporary_selectors_applied`, `temporary_selectors_unavailable`
 - `temporary_selectors_ignored`, `line_local_fallback`, `body_identity_candidate`
 - `ambiguous_match`, `no_match`
+- `persistent_contract_required`, `unknown_field`, `field_not_writable`
+- `condition_invalid`, `selector_invalid`, `mutation_value_invalid`
+- `field_location_ambiguous`, `mutation_preflight_failed`, `mutation_verification_failed`
+- `batch_path_conflict`, `source_changed`, `mutation_apply_failed`
 
 Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, or failed writes.
+
+A collection query uses `schema: mdq.collection.v1` and includes the canonical common root, applied globs, scanned and matched document counts, bounded records and candidates, per-document summaries, collection diagnostics, and a `truncated` flag. Its status is `matched`, `not_found`, `partial`, or `invalid`.
+
+A collection mutation uses `schema: mdq.mutation.v1`. It includes `applied`, scanned and changed document counts, selected and changed record counts, source-located before/after entries, per-document summaries, rebuilt index paths, and diagnostics. Preview status is `planned`, `unchanged`, `not_found`, or `invalid`; applied status is `updated`, `unchanged`, `rolled_back`, or `rollback_failed`.
 
 ## 9. Index Validity
 
@@ -283,5 +299,7 @@ When `index` is absent, parse without writing. Resolve a relative index path aga
 - Reject YAML aliases and duplicate mapping keys so a small control-plane profile cannot expand into an unbounded object graph.
 - Never execute commands from a profile.
 - Never follow imports, URLs, symlinks, or dynamic plugin names declared by a document.
+- Collection writes reject explicit or matched Markdown symlinks. Collection reads do not follow matched symlink files.
+- Label-field mutation values are non-empty single-line text without surrounding whitespace. The v1 field result remains text, so writing `false` returns the string `"false"` rather than a typed YAML boolean.
 - Do not store prose embeddings or external service credentials in the profile or sidecar.
 - Keep the protocol versioned. Reject unsupported major versions instead of guessing semantics.

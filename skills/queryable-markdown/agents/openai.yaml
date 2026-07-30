@@ -1,4 +1,4 @@
 interface:
   display_name: "Queryable Markdown"
   short_description: "Create, maintain, edit, and query contracted Markdown"
-  default_prompt: "Use $queryable-markdown to query ordinary Markdown read-only, or create, maintain, edit, and query a Markdown document with a persistent mdq contract when I explicitly request writes."
+  default_prompt: "Use $queryable-markdown to query Markdown files or collections read-only, or safely edit and batch-set existing fields in documents with a persistent mdq contract when I explicitly request writes."

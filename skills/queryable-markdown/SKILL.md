@@ -1,6 +1,6 @@
 ---
 name: queryable-markdown
-description: Create, maintain, edit, and query Markdown documents governed by a persistent mdq query contract, and query ordinary Markdown read-only without requiring or adding metadata. Use for exact or text lookups in semi-structured Markdown; creating a new contracted Markdown document; converting a document into a persistently queryable document; adding, updating, deleting, or renaming records in a contracted document; maintaining an mdq YAML profile, stable markers, or sidecar index; diagnosing contract drift; or restoring queryability. Ordinary Markdown without a contract is read-only unless the user explicitly requests conversion to a contracted document.
+description: Create, maintain, edit, batch-update, and query Markdown documents governed by a persistent mdq query contract, batch-query Markdown collections under one or more paths, and query ordinary Markdown read-only without requiring or adding metadata. Use for exact, text, field, directory, or glob lookups in semi-structured Markdown; safely setting an existing label-backed field across selected files or records; creating a new contracted Markdown document; converting a document into a persistently queryable document; adding, updating, deleting, or renaming records in a contracted document; maintaining an mdq YAML profile, stable markers, or sidecar index; diagnosing contract drift; or restoring queryability. Ordinary Markdown without a contract is read-only unless the user explicitly requests conversion to a contracted document.
 ---
 
 # Queryable Markdown
@@ -32,6 +32,7 @@ Creating a new contracted document, converting an existing document, editing aut
 - Return missing values as `null`. Never invent IDs, titles, fields, closing sections, repaired prose, or business decisions.
 - Return every duplicate or ambiguous match with diagnostics. Never silently choose the first result or edit an ambiguous target.
 - Prefer exact IDs and declared fields. Use text search only for candidate discovery.
+- Preflight every selected document before a batch write. If any selected document is invalid or any write location is unsafe, write none of them.
 - Treat successful parsing and validation as structural evidence, not proof that authored content is correct or complete.
 - Keep document mechanics separate from domain authority. When requirements, baselines, plans, archives, or other governed sources are involved, let the applicable governance workflow decide their semantics.
 
@@ -46,6 +47,22 @@ uv run "$SKILL_DIR/scripts/mdq.py" search <document.md> --field <field> --text <
 ```
 
 With a valid contract, the CLI applies declared boundaries, keys, fields, recovery, and index policy. Without one, it infers conservative temporary selectors in memory. Interpret `count`, `confidence`, source ranges, candidates, and diagnostics together.
+
+For a deterministic collection query, scan one or more Markdown files or directories:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" scan <directory> \
+  --glob '**/*.md' \
+  --field status \
+  --require-contract
+
+uv run "$SKILL_DIR/scripts/mdq.py" scan <first.md> <second.md> \
+  --id <first-id> \
+  --id <second-id> \
+  --require-contract
+```
+
+The default glob is `**/*.md`; repeat `--glob` to combine bounded patterns. Explicit file paths are always included, while globs apply to directory paths. Use `--require-contract` for governed collections so every profile-free or invalid document is reported as an error without hiding valid matches from other documents. When `--field` is present, every processed contract must declare that field. Collection results retain the absolute document path, root-relative path, source range, confidence, per-document summary, and source-located diagnostics. A collection scan is read-only: it never adds contracts, writes indexes, or repairs drift.
 
 For a recognizable non-generic convention, pass temporary selectors without persisting them:
 
@@ -101,6 +118,33 @@ Use [editing-workflow.md](references/editing-workflow.md) for every authored-rec
 
 Do not use a generic serializer to edit records. Fields backed by `regex` are query-only selectors unless the authored source can be safely patched using an independently located record boundary. Renaming an identity requires checking every in-document reference and reporting external-reference limits.
 
+For a batch update of one existing untransformed `source: label` scalar, use `set`. It is read-only unless `--apply` is present:
+
+```bash
+# Preview every matching record under a directory.
+uv run "$SKILL_DIR/scripts/mdq.py" set <directory> \
+  --field foo \
+  --value false
+
+# Apply exact conditions with AND semantics.
+uv run "$SKILL_DIR/scripts/mdq.py" set <directory> \
+  --where status=draft \
+  --where owner=wyatt \
+  --field foo \
+  --value false \
+  --apply
+
+# Limit the batch to explicit files and exact record IDs.
+uv run "$SKILL_DIR/scripts/mdq.py" set <first.md> <second.md> \
+  --id <first-id> \
+  --id <second-id> \
+  --field foo \
+  --value false \
+  --apply
+```
+
+`set` requires a valid persistent contract in every processed document. It refuses missing or conflicting target values, duplicate record IDs within a document, transformed label fields, and fields sourced from `heading`, `section`, `body`, or `regex`. It preserves the label, whitespace, inline comments, and all bytes outside the exact value span. It prevalidates the complete batch, verifies every patched document in memory, writes only with `--apply`, revalidates written source, and rebuilds every declared sidecar index for a changed document. Do not use it to create missing fields or convert ordinary Markdown.
+
 ## Maintain or Repair a Contract
 
 Inspect before changing profile rules, markers, or index policy. Keep the contract minimal and declarative. Preserve an existing valid YAML Front Matter block and its `---` delimiters; never create a second frontmatter block or silently convert another header format without authorization.
@@ -132,6 +176,7 @@ For writes, report:
 - whether the document was created, converted, edited, or repaired;
 - record boundaries, key rules, field mappings, and fallback behavior;
 - record IDs added, changed, renamed, or removed;
+- for collection operations, selected paths, selectors, matched and changed counts, and whether a preview or applied write ran;
 - validation diagnostics separately from business content;
 - whether markers or an index were created or changed;
 - compatibility limits and external references not verified;
@@ -140,6 +185,6 @@ For writes, report:
 
 ## Resources
 
-- `scripts/mdq.py`: inspect, query, search, validate, diagnose, and index Markdown with or without a persistent contract.
+- `scripts/mdq.py`: inspect, query, search, scan collections, safely set existing label fields, validate, diagnose, and index Markdown.
 - `references/protocol.md`: contract schema, extraction semantics, lifecycle, result contract, diagnostics, compatibility, and security limits.
 - `references/editing-workflow.md`: transactional creation, record-editing, contract-maintenance, and verification procedures.

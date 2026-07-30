@@ -1009,6 +1009,400 @@ Partial refunds are supported.
                 "index_verified", {item["code"] for item in verified["diagnostics"]}
             )
 
+    def test_scan_projects_declared_field_across_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            plans.mkdir()
+            fields = "  status:\n    source: label\n    labels: [Status]"
+            for filename, identifier, status in (
+                ("b.md", "REQ-2", "active"),
+                ("a.md", "REQ-1", "planned"),
+            ):
+                (plans / filename).write_text(
+                    profile(fields=fields)
+                    + f"\n## {identifier}: Plan\n\n- Status: {status}\n",
+                    encoding="utf-8",
+                )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--field",
+                "status",
+                "--require-contract",
+            )
+
+            self.assertEqual(result["schema"], "mdq.collection.v1")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["documents_scanned"], 2)
+            self.assertEqual(
+                [item["relative_path"] for item in result["records"]],
+                ["a.md", "b.md"],
+            )
+            self.assertEqual(
+                [item["fields"]["status"] for item in result["records"]],
+                ["planned", "active"],
+            )
+
+    def test_scan_accepts_multiple_explicit_files_and_repeated_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = root / "first.md"
+            second = root / "second.md"
+            first.write_text(profile() + "\n## REQ-1: First\n", encoding="utf-8")
+            second.write_text(profile() + "\n## REQ-2: Second\n", encoding="utf-8")
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(first),
+                str(second),
+                "--id",
+                "REQ-1",
+                "--id",
+                "REQ-2",
+                "--require-contract",
+            )
+
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(
+                {item["key"] for item in result["records"]}, {"REQ-1", "REQ-2"}
+            )
+
+    def test_scan_require_contract_reports_partial_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "contracted.md").write_text(
+                profile() + "\n## REQ-1: Contracted\n", encoding="utf-8"
+            )
+            (docs / "ordinary.md").write_text(
+                "## REQ-2: Ordinary\n", encoding="utf-8"
+            )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(docs),
+                "--require-contract",
+                expected=3,
+            )
+
+            self.assertEqual(result["status"], "partial")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["key"], "REQ-1")
+            self.assertIn(
+                ("ordinary.md", "persistent_contract_required"),
+                {
+                    (item.get("relative_path"), item["code"])
+                    for item in result["diagnostics"]
+                },
+            )
+
+    def test_scan_profileless_collection_is_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "docs"
+            docs.mkdir()
+            path = docs / "ordinary.md"
+            path.write_text(
+                "## REQ-7: Ordinary\n\nBody remains unchanged.\n", encoding="utf-8"
+            )
+            before = path.read_bytes()
+
+            result = self.run_cli(root, "scan", str(docs))
+
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["records"][0]["key"], "REQ-7")
+            self.assertEqual(
+                result["documents"][0]["profile_source"], "temporary-inferred"
+            )
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse((docs / ".mdq").exists())
+
+    def test_set_previews_then_applies_all_matching_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "docs"
+            docs.mkdir()
+            fields = "  foo:\n    source: label\n    labels: [Foo]"
+            paths = []
+            for filename, identifier in (("a.md", "REQ-1"), ("b.md", "REQ-2")):
+                path = docs / filename
+                path.write_text(
+                    profile(fields=fields)
+                    + f"\n## {identifier}: Item\n\n- Foo: true <!-- keep -->\n",
+                    encoding="utf-8",
+                )
+                paths.append(path)
+            before = {path: path.read_bytes() for path in paths}
+
+            preview = self.run_cli(
+                root, "set", str(docs), "--field", "foo", "--value", "false"
+            )
+
+            self.assertEqual(preview["status"], "planned")
+            self.assertFalse(preview["applied"])
+            self.assertEqual(preview["change_count"], 2)
+            self.assertEqual({path: path.read_bytes() for path in paths}, before)
+
+            applied = self.run_cli(
+                root,
+                "set",
+                str(docs),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+            )
+
+            self.assertEqual(applied["status"], "updated")
+            self.assertTrue(applied["applied"])
+            self.assertEqual(applied["documents_changed"], 2)
+            for path in paths:
+                content = path.read_text(encoding="utf-8")
+                self.assertIn("- Foo: false <!-- keep -->", content)
+                self.assertNotIn("- Foo: true", content)
+
+    def test_set_where_conditions_use_and_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fields = """  foo:
+    source: label
+    labels: [Foo]
+  status:
+    source: label
+    labels: [Status]
+  owner:
+    source: label
+    labels: [Owner]"""
+            path = self.document(
+                root,
+                profile(fields=fields)
+                + """
+## REQ-1: Selected
+
+- Foo: true
+- Status: draft
+- Owner: wyatt
+
+## REQ-2: Wrong owner
+
+- Foo: true
+- Status: draft
+- Owner: other
+
+## REQ-3: Wrong status
+
+- Foo: true
+- Status: active
+- Owner: wyatt
+""",
+            )
+
+            result = self.run_cli(
+                root,
+                "set",
+                str(path),
+                "--where",
+                "status=draft",
+                "--where",
+                "owner=wyatt",
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+            )
+
+            self.assertEqual(result["change_count"], 1)
+            self.assertEqual(result["changes"][0]["key"], "REQ-1")
+            selected = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            untouched = self.run_cli(root, "query", str(path), "--id", "REQ-2")
+            self.assertEqual(selected["records"][0]["fields"]["foo"], "false")
+            self.assertEqual(untouched["records"][0]["fields"]["foo"], "true")
+
+    def test_set_limits_changes_to_explicit_files_and_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fields = "  foo:\n    source: label\n    labels: [Foo]"
+            paths = []
+            for filename, identifier in (
+                ("a.md", "REQ-1"),
+                ("b.md", "REQ-2"),
+                ("c.md", "REQ-3"),
+            ):
+                path = root / filename
+                path.write_text(
+                    profile(fields=fields)
+                    + f"\n## {identifier}: Item\n\n- Foo: true\n",
+                    encoding="utf-8",
+                )
+                paths.append(path)
+
+            result = self.run_cli(
+                root,
+                "set",
+                str(paths[0]),
+                str(paths[1]),
+                "--id",
+                "REQ-2",
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+            )
+
+            self.assertEqual(result["change_count"], 1)
+            self.assertIn("- Foo: true", paths[0].read_text(encoding="utf-8"))
+            self.assertIn("- Foo: false", paths[1].read_text(encoding="utf-8"))
+            self.assertIn("- Foo: true", paths[2].read_text(encoding="utf-8"))
+
+    def test_set_preflight_error_keeps_every_source_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "docs"
+            docs.mkdir()
+            fields = "  foo:\n    source: label\n    labels: [Foo]"
+            valid = docs / "valid.md"
+            ordinary = docs / "ordinary.md"
+            valid.write_text(
+                profile(fields=fields) + "\n## REQ-1: Valid\n\n- Foo: true\n",
+                encoding="utf-8",
+            )
+            ordinary.write_text(
+                "## REQ-2: Ordinary\n\n- Foo: true\n", encoding="utf-8"
+            )
+            before = valid.read_bytes()
+
+            result = self.run_cli(
+                root,
+                "set",
+                str(docs),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+                expected=3,
+            )
+
+            self.assertEqual(result["status"], "invalid")
+            self.assertFalse(result["applied"])
+            self.assertEqual(valid.read_bytes(), before)
+            self.assertIn(
+                "persistent_contract_required",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_set_rejects_missing_or_non_label_target_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            missing = self.document(
+                root,
+                profile(fields="  foo:\n    source: label\n    labels: [Foo]")
+                + "\n## REQ-1: Missing\n",
+            )
+            before = missing.read_bytes()
+            missing_result = self.run_cli(
+                root,
+                "set",
+                str(missing),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+                expected=3,
+            )
+            self.assertEqual(missing.read_bytes(), before)
+            self.assertIn(
+                "missing_field",
+                {item["code"] for item in missing_result["diagnostics"]},
+            )
+
+            heading = root / "heading.md"
+            heading.write_text(
+                profile(fields="  foo:\n    source: heading\n    group: title")
+                + "\n## REQ-2: Heading value\n",
+                encoding="utf-8",
+            )
+            heading_result = self.run_cli(
+                root,
+                "set",
+                str(heading),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                expected=3,
+            )
+            self.assertIn(
+                "field_not_writable",
+                {item["code"] for item in heading_result["diagnostics"]},
+            )
+
+    def test_set_rebuilds_and_verifies_declared_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fields = "  foo:\n    source: label\n    labels: [Foo]"
+            path = self.document(
+                root,
+                profile(fields=fields, index=True)
+                + "\n## REQ-1: Indexed\n\n- Foo: true\n",
+            )
+            self.run_cli(root, "index", str(path))
+
+            result = self.run_cli(
+                root,
+                "set",
+                str(path),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+            )
+
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(len(result["indexes_rebuilt"]), 1)
+            queried = self.run_cli(root, "query", str(path), "--id", "REQ-1")
+            self.assertEqual(queried["records"][0]["fields"]["foo"], "false")
+            self.assertIn(
+                "index_verified", {item["code"] for item in queried["diagnostics"]}
+            )
+
+    def test_set_preserves_table_layout_outside_value_cell(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fields = "  foo:\n    source: label\n    labels: [Foo]"
+            path = self.document(
+                root,
+                profile(fields=fields)
+                + "\n## REQ-1: Table\n\n| Foo | true   | keep |\n",
+            )
+
+            result = self.run_cli(
+                root,
+                "set",
+                str(path),
+                "--field",
+                "foo",
+                "--value",
+                "false",
+                "--apply",
+            )
+
+            self.assertEqual(result["status"], "updated")
+            self.assertIn(
+                "| Foo | false   | keep |", path.read_text(encoding="utf-8")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

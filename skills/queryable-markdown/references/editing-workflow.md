@@ -12,7 +12,8 @@ Use this workflow only for a document with a valid persistent `mdq` contract, or
 6. Rename a record identity
 7. Delete a record
 8. Change the contract
-9. Verify and hand off
+9. Batch-set an existing label field
+10. Verify and hand off
 
 ## 1. Transaction Invariants
 
@@ -123,7 +124,42 @@ Apply the smallest profile patch and then verify:
 
 When a contract migration changes record identity or extracted semantics, report it as a breaking change even if the Markdown body is unchanged.
 
-## 9. Verify and Hand Off
+## 9. Batch-Set an Existing Label Field
+
+Use the built-in `set` transaction only when every processed document already has a valid persistent contract and the target is an existing untransformed `source: label` scalar:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" set <path>... \
+  --glob '**/*.md' \
+  --where status=draft \
+  --field foo \
+  --value false
+```
+
+The command above is a read-only preview. Inspect its selected paths, record keys, current and proposed values, line locations, per-document diagnostics, and `change_count`. Apply the same plan only when the requested mutation remains authorized:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" set <path>... \
+  --glob '**/*.md' \
+  --where status=draft \
+  --field foo \
+  --value false \
+  --apply
+```
+
+Selection rules are deterministic:
+
+- positional paths accept one or more explicit Markdown files or directories;
+- repeated `--glob` patterns are combined for directory paths and default to `**/*.md`;
+- repeated `--id` values select that exact set of structured record keys;
+- repeated `--where FIELD=VALUE` conditions use case-sensitive exact equality and AND semantics;
+- omitting IDs and conditions selects every structured record in the selected contracted documents.
+
+Before any write, require every processed document, declared field, key, target value, and exact source span to pass. A missing persistent contract, undeclared condition or target field, duplicate key within a document, missing or conflicting target value, transformed label extractor, unsafe path, or unsupported field source invalidates the complete batch. Do not silently skip the invalid document and update the rest.
+
+The command patches only the authored value span. It must preserve label spelling, list or table syntax, spacing, inline comments, neighboring fields, record boundaries, Front Matter, and unrelated documents. It validates patched source in memory, checks source hashes immediately before applying, uses same-directory atomic replacement per path, rebuilds declared indexes for changed documents, and verifies the written result. If a later apply or verification step fails, inspect `rolled_back` or `rollback_failed` diagnostics rather than assuming every filesystem path was restored.
+
+## 10. Verify and Hand Off
 
 After any successful source or contract patch, run:
 
@@ -144,3 +180,5 @@ uv run "$SKILL_DIR/scripts/mdq.py" index <document.md>
 Then rerun the affected exact query and confirm the index is verified against fresh parsing. Inspect the final diff for unauthorized control-region, record, or formatting changes.
 
 Report the operation type, affected keys, contract changes, markers, index changes, diagnostics, compatibility limits, unresolved references, and whether any unrelated authored content changed.
+
+For a batch update, additionally report the processed file scope, IDs and conditions, selected and changed counts, whether the run was a preview or applied write, rebuilt index paths, and any rollback diagnostics.

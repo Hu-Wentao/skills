@@ -14,17 +14,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from bisect import bisect_right
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-import yaml
 import regex as profile_regex
+import yaml
 from markdown_it import MarkdownIt
 
 
@@ -918,8 +921,7 @@ def markdown_literal_regions(
     return block_code_lines, unclosed_fence_line, literal_comment_positions
 
 
-def read_document(path: Path) -> SourceDocument:
-    raw = path.read_bytes()
+def parse_document(path: Path, raw: bytes) -> SourceDocument:
     text = raw.decode("utf-8")
     lines = text.splitlines(keepends=True)
     if not lines:
@@ -955,6 +957,10 @@ def read_document(path: Path) -> SourceDocument:
         excluded_lines=loaded.excluded_lines,
         diagnostics=loaded.diagnostics,
     )
+
+
+def read_document(path: Path) -> SourceDocument:
+    return parse_document(path, path.read_bytes())
 
 
 def inline_code_ranges(line: str) -> list[tuple[int, int]]:
@@ -2862,6 +2868,992 @@ def command_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def collection_diagnostic(
+    item: dict[str, Any], document: Path, relative_path: str
+) -> dict[str, Any]:
+    enriched = dict(item)
+    enriched["document"] = str(document)
+    enriched["relative_path"] = relative_path
+    return enriched
+
+
+def collection_paths(
+    targets: list[Path],
+    patterns: list[str],
+    *,
+    reject_matched_symlinks: bool = False,
+) -> tuple[Path, list[tuple[Path, str]], list[dict[str, Any]]]:
+    diagnostics: list[dict[str, Any]] = []
+    candidates: dict[Path, None] = {}
+    roots: list[Path] = []
+
+    for target in targets:
+        if target.is_symlink():
+            diagnostics.append(
+                diagnostic(
+                    "collection_path_unsafe",
+                    "error",
+                    f"collection path must not be a symlink: {target}",
+                )
+            )
+            continue
+        resolved = target.resolve()
+        if resolved.is_file():
+            if resolved.suffix.casefold() != ".md":
+                diagnostics.append(
+                    diagnostic(
+                        "collection_path_invalid",
+                        "error",
+                        f"collection file must use the .md extension: {target}",
+                    )
+                )
+                continue
+            roots.append(resolved.parent)
+            candidates[resolved] = None
+            continue
+        if not resolved.is_dir():
+            diagnostics.append(
+                diagnostic(
+                    "collection_path_invalid",
+                    "error",
+                    f"collection path must be a Markdown file or directory: {target}",
+                )
+            )
+            continue
+
+        roots.append(resolved)
+        for pattern in patterns:
+            pattern_path = Path(pattern)
+            if pattern_path.is_absolute() or ".." in pattern_path.parts:
+                diagnostics.append(
+                    diagnostic(
+                        "collection_glob_unsafe",
+                        "error",
+                        f"collection glob must stay inside the target directory: {pattern}",
+                    )
+                )
+                continue
+            try:
+                matches = resolved.glob(pattern)
+            except (OSError, ValueError) as exc:
+                diagnostics.append(
+                    diagnostic(
+                        "collection_glob_invalid",
+                        "error",
+                        f"collection glob {pattern!r} is invalid: {exc}",
+                    )
+                )
+                continue
+            for candidate in matches:
+                if candidate.is_symlink():
+                    if reject_matched_symlinks and candidate.suffix.casefold() == ".md":
+                        diagnostics.append(
+                            diagnostic(
+                                "collection_path_unsafe",
+                                "error",
+                                f"matched Markdown path must not be a symlink: {candidate}",
+                            )
+                        )
+                    continue
+                if not candidate.is_file() or candidate.suffix.casefold() != ".md":
+                    continue
+                actual = candidate.resolve()
+                try:
+                    actual.relative_to(resolved)
+                except ValueError:
+                    diagnostics.append(
+                        diagnostic(
+                            "collection_path_unsafe",
+                            "error",
+                            f"matched document escapes the collection root: {candidate}",
+                        )
+                    )
+                    continue
+                candidates[actual] = None
+
+    root = (
+        Path(os.path.commonpath([str(item) for item in roots]))
+        if roots
+        else Path.cwd().resolve()
+    )
+    ordered = sorted(
+        (
+            path,
+            (
+                path.relative_to(root).as_posix()
+                if path != root
+                else path.name
+            ),
+        )
+        for path in candidates
+    )
+    return root, ordered, diagnostics
+
+
+def collection_record(
+    record: dict[str, Any],
+    *,
+    document: SourceDocument,
+    relative_path: str,
+    field_name: str | None,
+) -> dict[str, Any]:
+    item = dict(record)
+    item["document"] = str(document.path)
+    item["relative_path"] = relative_path
+    if field_name is not None and field_name != "key":
+        fields = record.get("fields") or {}
+        item["fields"] = {field_name: fields.get(field_name)}
+    elif field_name == "key":
+        item["fields"] = {}
+    return item
+
+
+def command_scan(args: argparse.Namespace) -> int:
+    patterns = list(args.glob or ["**/*.md"])
+    root, paths, diagnostics = collection_paths(
+        [Path(item) for item in args.path], patterns
+    )
+    if error_diagnostics(diagnostics):
+        emit(
+            {
+                "schema": "mdq.collection.v1",
+                "status": "invalid",
+                "root": str(root),
+                "globs": patterns,
+                "documents_scanned": 0,
+                "documents_matched": 0,
+                "count": 0,
+                "truncated": False,
+                "records": [],
+                "candidates": [],
+                "documents": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+
+    requested_ids = {item.strip() for item in (args.id or [])}
+    matched_records: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    document_summaries: list[dict[str, Any]] = []
+    invalid_documents = 0
+    documents_matched = 0
+    truncated = False
+
+    for path, relative_path in paths:
+        try:
+            document = read_document(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            code = "encoding_invalid" if isinstance(exc, UnicodeDecodeError) else "io_error"
+            item = diagnostic(code, "error", str(exc))
+            diagnostics.append(collection_diagnostic(item, path, relative_path))
+            document_summaries.append(
+                {
+                    "document": str(path),
+                    "relative_path": relative_path,
+                    "status": "invalid",
+                    "profile_source": None,
+                    "record_count": 0,
+                    "matched_count": 0,
+                    "diagnostics": [item],
+                }
+            )
+            invalid_documents += 1
+            continue
+
+        preparation_diagnostics: list[dict[str, Any]] = []
+        document_diagnostics = list(document.diagnostics)
+        if args.require_contract and document.profile is None:
+            document_diagnostics.append(
+                diagnostic(
+                    "persistent_contract_required",
+                    "error",
+                    "collection query requires a valid persistent mdq contract",
+                    line=1,
+                )
+            )
+        elif document.profile is None:
+            preparation_diagnostics = prepare_temporary_profile(
+                document,
+                args,
+                requested=next(iter(requested_ids)) if len(requested_ids) == 1 else None,
+            )
+            document_diagnostics = list(document.diagnostics)
+
+        if (
+            document.profile is not None
+            and args.field not in {None, "key"}
+            and args.field not in document.profile.get("fields", {})
+        ):
+            document_diagnostics.append(
+                diagnostic(
+                    "unknown_field",
+                    "error",
+                    f"field {args.field!r} is not declared",
+                )
+            )
+
+        records: list[dict[str, Any]] = []
+        if document.profile is not None and not error_diagnostics(document_diagnostics):
+            try:
+                records, extracted_diagnostics = records_for_query(document)
+            except TimeoutError:
+                extracted_diagnostics = [
+                    diagnostic(
+                        "regex_timeout",
+                        "error",
+                        "a profile regex exceeded the matching time limit",
+                    )
+                ]
+            all_document_diagnostics = (
+                document_diagnostics
+                + preparation_diagnostics
+                + extracted_diagnostics
+            )
+        else:
+            all_document_diagnostics = (
+                document_diagnostics + preparation_diagnostics
+            )
+        document_invalid = error_diagnostics(all_document_diagnostics)
+        if document_invalid:
+            invalid_documents += 1
+
+        structured: list[dict[str, Any]] = []
+        document_candidates: list[dict[str, Any]] = []
+        for record in records:
+            confidence = float(record.get("confidence", 0.0))
+            key = record.get("key")
+            selected = key is not None and confidence >= 0.6
+            if requested_ids:
+                selected = selected and key in requested_ids
+            if args.text is not None:
+                values = searchable_values(record, args.field)
+                selected = selected and any(
+                    args.text.casefold() in value.casefold() for value in values
+                )
+            item = collection_record(
+                record,
+                document=document,
+                relative_path=relative_path,
+                field_name=args.field,
+            )
+            if selected:
+                structured.append(item)
+            elif key is None or confidence < 0.6:
+                item["candidate"] = True
+                document_candidates.append(item)
+
+        if structured:
+            documents_matched += 1
+        for item in structured:
+            if len(matched_records) < args.limit:
+                matched_records.append(item)
+            else:
+                truncated = True
+        for item in document_candidates:
+            if len(candidates) < args.limit:
+                candidates.append(item)
+            else:
+                truncated = True
+
+        document_status = (
+            "invalid"
+            if document_invalid
+            else "matched"
+            if structured
+            else "not_found"
+        )
+        document_summaries.append(
+            {
+                "document": str(document.path),
+                "relative_path": relative_path,
+                "status": document_status,
+                "profile_source": document.profile_source,
+                "record_count": len(
+                    [
+                        item
+                        for item in records
+                        if item.get("key") is not None
+                        and float(item.get("confidence", 0.0)) >= 0.6
+                    ]
+                ),
+                "matched_count": len(structured),
+                "diagnostics": all_document_diagnostics,
+            }
+        )
+        diagnostics.extend(
+            collection_diagnostic(item, document.path, relative_path)
+            for item in all_document_diagnostics
+        )
+
+    if invalid_documents:
+        collection_status = "partial" if matched_records else "invalid"
+    else:
+        collection_status = "matched" if matched_records else "not_found"
+    emit(
+        {
+            "schema": "mdq.collection.v1",
+            "status": collection_status,
+            "root": str(root),
+            "globs": patterns,
+            "documents_scanned": len(paths),
+            "documents_matched": documents_matched,
+            "count": len(matched_records),
+            "truncated": truncated,
+            "records": matched_records,
+            "candidates": candidates,
+            "documents": document_summaries,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 3 if invalid_documents else 0
+
+
+def parse_where_conditions(values: list[str]) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+    conditions: list[tuple[str, str]] = []
+    diagnostics: list[dict[str, Any]] = []
+    for raw in values:
+        if "=" not in raw:
+            diagnostics.append(
+                diagnostic(
+                    "condition_invalid",
+                    "error",
+                    f"condition must use FIELD=VALUE syntax: {raw!r}",
+                )
+            )
+            continue
+        name, value = raw.split("=", 1)
+        name = name.strip()
+        if not name:
+            diagnostics.append(
+                diagnostic(
+                    "condition_invalid",
+                    "error",
+                    f"condition field must not be empty: {raw!r}",
+                )
+            )
+            continue
+        conditions.append((name, value))
+    return conditions, diagnostics
+
+
+def record_body_start(record: Record) -> int:
+    start = record.start
+    if record.marker is not None and start == record.marker.line:
+        start = record.marker.line + 1
+    if record.heading is not None:
+        start = max(start, record.heading.end)
+    return start
+
+
+def label_field_value_span(
+    document: SourceDocument,
+    record: Record,
+    spec: dict[str, Any],
+    code_lines: set[int],
+) -> tuple[int, int, int] | None:
+    occurrences = label_occurrences(
+        document,
+        record_body_start(record),
+        record.end + 1,
+        spec["labels"],
+        code_lines,
+    )
+    if len(occurrences) != 1:
+        return None
+    line_index = int(occurrences[0]["line"]) - 1
+    masked = document.masked_lines[line_index].rstrip("\r\n")
+    wanted = {normalize_label(item) for item in spec["labels"]}
+    local_start: int | None = None
+    local_end: int | None = None
+
+    stripped = masked.strip()
+    if stripped.startswith("|") and stripped.count("|") >= 2:
+        bars = [index for index, char in enumerate(masked) if char == "|"]
+        if len(bars) >= 3:
+            label_cell = masked[bars[0] + 1 : bars[1]]
+            if normalize_label(label_cell) in wanted:
+                value_begin = bars[1] + 1
+                value_finish = bars[2]
+                value_text = masked[value_begin:value_finish]
+                local_start = value_begin + len(value_text) - len(value_text.lstrip(" \t"))
+                local_end = value_finish - (len(value_text) - len(value_text.rstrip(" \t")))
+    else:
+        match = re.match(
+            r"^[ \t]*(?:(?:>[ \t]*)+)?(?:[-*+][ \t]+)?"
+            r"(?P<label>(?:\*\*|__|`)?[^:：|]+?(?:\*\*|__|`)?)"
+            r"[ \t]*[:：][ \t]*(?P<value>.*)$",
+            masked,
+        )
+        if match and normalize_label(match.group("label")) in wanted:
+            value_text = match.group("value")
+            local_start = match.start("value")
+            local_end = match.end("value") - (
+                len(value_text) - len(value_text.rstrip(" \t"))
+            )
+
+    if local_start is None or local_end is None or local_end <= local_start:
+        return None
+    line_offset = sum(len(line) for line in document.lines[:line_index])
+    return line_offset + local_start, line_offset + local_end, line_index + 1
+
+
+def extract_record_objects(
+    document: SourceDocument,
+) -> tuple[list[Record], set[int], list[dict[str, Any]]]:
+    if document.profile is None:
+        return [], set(), list(document.diagnostics)
+    headings, code_lines, markers, parse_diagnostics = analyze_markdown(
+        document, document.profile.get("dialect", "commonmark")
+    )
+    records, record_diagnostics = build_records(
+        document, document.profile, headings, code_lines, markers
+    )
+    return (
+        records,
+        code_lines,
+        list(document.diagnostics) + parse_diagnostics + record_diagnostics,
+    )
+
+
+def apply_text_patches(
+    text: str, patches: list[tuple[int, int, str]]
+) -> str:
+    result = text
+    previous_start = len(text) + 1
+    for start, end, replacement in sorted(patches, reverse=True):
+        if end > previous_start or start < 0 or end < start or end > len(text):
+            raise ValueError("field value patches overlap or escape the document")
+        result = result[:start] + replacement + result[end:]
+        previous_start = start
+    return result
+
+
+def index_bytes(
+    document: SourceDocument,
+) -> tuple[Path | None, bytes | None, list[dict[str, Any]]]:
+    if document.profile is None or "index" not in document.profile:
+        return None, None, []
+    path, problem = index_path(document)
+    if problem is not None:
+        return None, None, [problem]
+    assert path is not None
+    records, diagnostics = extract_current(document)
+    if error_diagnostics(diagnostics):
+        return path, None, diagnostics
+    payload = {
+        "index_schema": INDEX_SCHEMA,
+        "engine": ENGINE,
+        "protocol_version": document.profile["version"],
+        "source": str(document.path),
+        "source_sha256": document.source_hash,
+        "profile_sha256": document.profile_hash,
+        "records": records,
+        "diagnostics": diagnostics,
+    }
+    return (
+        path,
+        (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        diagnostics,
+    )
+
+
+def atomic_write_bytes(path: Path, content: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.mdq-", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        mode = path.stat().st_mode if path.exists() else 0o644
+        os.chmod(temporary_name, mode)
+        os.replace(temporary_name, path)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def command_set(args: argparse.Namespace) -> int:
+    patterns = list(args.glob or ["**/*.md"])
+    root, paths, diagnostics = collection_paths(
+        [Path(item) for item in args.path],
+        patterns,
+        reject_matched_symlinks=True,
+    )
+    conditions, condition_diagnostics = parse_where_conditions(args.where or [])
+    diagnostics.extend(condition_diagnostics)
+    requested_ids = {item.strip() for item in (args.id or [])}
+    if any(not item for item in requested_ids):
+        diagnostics.append(
+            diagnostic("selector_invalid", "error", "record IDs must not be empty")
+        )
+    if (
+        not args.field.strip()
+        or args.value != args.value.strip()
+        or "\n" in args.value
+        or "\r" in args.value
+        or args.value == ""
+    ):
+        diagnostics.append(
+            diagnostic(
+                "mutation_value_invalid",
+                "error",
+                "field and value must be non-empty single-line text without surrounding whitespace",
+            )
+        )
+    if error_diagnostics(diagnostics):
+        emit(
+            {
+                "schema": "mdq.mutation.v1",
+                "status": "invalid",
+                "applied": False,
+                "root": str(root),
+                "documents_scanned": 0,
+                "count": 0,
+                "change_count": 0,
+                "changes": [],
+                "documents": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+
+    changes: list[dict[str, Any]] = []
+    document_summaries: list[dict[str, Any]] = []
+    planned_sources: dict[Path, bytes] = {}
+    planned_indexes: dict[Path, bytes] = {}
+    original_sources: dict[Path, bytes] = {}
+    found_ids: set[str] = set()
+    changed_documents: dict[Path, SourceDocument] = {}
+
+    for path, relative_path in paths:
+        document_diagnostics: list[dict[str, Any]] = []
+        try:
+            document = read_document(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            code = "encoding_invalid" if isinstance(exc, UnicodeDecodeError) else "io_error"
+            document_diagnostics.append(diagnostic(code, "error", str(exc)))
+            document_summaries.append(
+                {
+                    "document": str(path),
+                    "relative_path": relative_path,
+                    "status": "invalid",
+                    "selected_count": 0,
+                    "change_count": 0,
+                    "diagnostics": document_diagnostics,
+                }
+            )
+            diagnostics.extend(
+                collection_diagnostic(item, path, relative_path)
+                for item in document_diagnostics
+            )
+            continue
+
+        if document.profile is None or (
+            document.profile_source or ""
+        ).startswith(TEMPORARY_PROFILE_PREFIX):
+            document_diagnostics.extend(document.diagnostics)
+            document_diagnostics.append(
+                diagnostic(
+                    "persistent_contract_required",
+                    "error",
+                    "batch updates require a valid persistent mdq contract",
+                    line=1,
+                )
+            )
+            records: list[Record] = []
+            code_lines: set[int] = set()
+        else:
+            records, code_lines, extracted_diagnostics = extract_record_objects(document)
+            document_diagnostics.extend(extracted_diagnostics)
+
+        profile_fields = (
+            document.profile.get("fields", {}) if document.profile is not None else {}
+        )
+        target_spec = profile_fields.get(args.field)
+        if document.profile is not None and target_spec is None:
+            document_diagnostics.append(
+                diagnostic(
+                    "unknown_field",
+                    "error",
+                    f"field {args.field!r} is not declared",
+                )
+            )
+        elif target_spec is not None and (
+            target_spec.get("source") != "label"
+            or "pattern" in target_spec
+            or "group" in target_spec
+        ):
+            document_diagnostics.append(
+                diagnostic(
+                    "field_not_writable",
+                    "error",
+                    f"field {args.field!r} must be an untransformed source: label scalar",
+                )
+            )
+        for condition_field, _condition_value in conditions:
+            if condition_field not in profile_fields:
+                document_diagnostics.append(
+                    diagnostic(
+                        "unknown_field",
+                        "error",
+                        f"condition field {condition_field!r} is not declared",
+                    )
+                )
+
+        structured = [
+            item
+            for item in records
+            if item.key is not None and item.confidence >= 0.6
+        ]
+        duplicate_keys = {
+            key
+            for key, count in Counter(item.key for item in structured).items()
+            if count > 1
+        }
+        if duplicate_keys:
+            document_diagnostics.append(
+                diagnostic(
+                    "duplicate_key",
+                    "error",
+                    "batch updates refuse documents containing duplicate record keys",
+                    details={"keys": sorted(duplicate_keys)},
+                )
+            )
+
+        selected: list[Record] = []
+        if not error_diagnostics(document_diagnostics):
+            for record in structured:
+                assert record.key is not None
+                if requested_ids and record.key not in requested_ids:
+                    continue
+                if requested_ids:
+                    found_ids.add(record.key)
+                if not all(
+                    record.fields.get(name) == expected
+                    for name, expected in conditions
+                ):
+                    continue
+                selected.append(record)
+
+        document_changes: list[dict[str, Any]] = []
+        patches: list[tuple[int, int, str]] = []
+        if target_spec is not None:
+            for record in selected:
+                current = record.fields.get(args.field)
+                if current is None:
+                    document_diagnostics.append(
+                        diagnostic(
+                            "missing_field",
+                            "error",
+                            f"field {args.field!r} is absent or conflicting in record {record.key!r}",
+                            line=record.start + 1,
+                        )
+                    )
+                    continue
+                located = label_field_value_span(
+                    document, record, target_spec, code_lines
+                )
+                if located is None:
+                    document_diagnostics.append(
+                        diagnostic(
+                            "field_location_ambiguous",
+                            "error",
+                            f"field {args.field!r} does not have one source-exact label value in record {record.key!r}",
+                            line=record.start + 1,
+                        )
+                    )
+                    continue
+                start, end, line = located
+                changed = str(current) != args.value
+                item = {
+                    "document": str(document.path),
+                    "relative_path": relative_path,
+                    "key": record.key,
+                    "field": args.field,
+                    "before": current,
+                    "after": args.value,
+                    "line": line,
+                    "changed": changed,
+                }
+                document_changes.append(item)
+                if changed:
+                    patches.append((start, end, args.value))
+
+        patched_document: SourceDocument | None = None
+        if not error_diagnostics(document_diagnostics) and patches:
+            try:
+                patched_text = apply_text_patches(document.text, patches)
+                patched_document = parse_document(
+                    document.path, patched_text.encode("utf-8")
+                )
+                patched_records, _patched_code, patched_diagnostics = (
+                    extract_record_objects(patched_document)
+                )
+                document_diagnostics.extend(patched_diagnostics)
+                patched_by_key = {
+                    item.key: item
+                    for item in patched_records
+                    if item.key is not None and item.confidence >= 0.6
+                }
+                for item in document_changes:
+                    updated = patched_by_key.get(item["key"])
+                    if updated is None or updated.fields.get(args.field) != args.value:
+                        document_diagnostics.append(
+                            diagnostic(
+                                "mutation_verification_failed",
+                                "error",
+                                f"updated field {args.field!r} did not round-trip for record {item['key']!r}",
+                            )
+                        )
+                index_target, content, index_diagnostics = index_bytes(
+                    patched_document
+                )
+                document_diagnostics.extend(index_diagnostics)
+                if index_target is not None and content is not None:
+                    if index_target in planned_indexes:
+                        document_diagnostics.append(
+                            diagnostic(
+                                "batch_path_conflict",
+                                "error",
+                                f"multiple documents declare the same index path: {index_target}",
+                            )
+                        )
+                    else:
+                        planned_indexes[index_target] = content
+            except (UnicodeDecodeError, ValueError, TimeoutError) as exc:
+                document_diagnostics.append(
+                    diagnostic(
+                        "mutation_preflight_failed",
+                        "error",
+                        f"could not validate the planned source patch: {exc}",
+                    )
+                )
+
+        if not error_diagnostics(document_diagnostics):
+            changes.extend(document_changes)
+            if patched_document is not None:
+                original_sources[document.path] = document.raw
+                planned_sources[document.path] = patched_document.raw
+                changed_documents[document.path] = patched_document
+        document_status = (
+            "invalid"
+            if error_diagnostics(document_diagnostics)
+            else "planned"
+            if patches
+            else "unchanged"
+            if selected
+            else "not_found"
+        )
+        document_summaries.append(
+            {
+                "document": str(document.path),
+                "relative_path": relative_path,
+                "status": document_status,
+                "selected_count": len(selected),
+                "change_count": len(patches),
+                "diagnostics": document_diagnostics,
+            }
+        )
+        diagnostics.extend(
+            collection_diagnostic(item, document.path, relative_path)
+            for item in document_diagnostics
+        )
+
+    missing_ids = sorted(requested_ids - found_ids)
+    if missing_ids:
+        diagnostics.append(
+            diagnostic(
+                "no_match",
+                "error",
+                "one or more requested record IDs were not found in the collection",
+                details={"ids": missing_ids},
+            )
+        )
+    source_paths = {path for path, _relative_path in paths}
+    conflicting_indexes = sorted(
+        str(path) for path in planned_indexes if path in source_paths
+    )
+    if conflicting_indexes:
+        diagnostics.append(
+            diagnostic(
+                "batch_path_conflict",
+                "error",
+                "a declared index path overlaps a selected Markdown source",
+                details={"paths": conflicting_indexes},
+            )
+        )
+    if error_diagnostics(diagnostics):
+        emit(
+            {
+                "schema": "mdq.mutation.v1",
+                "status": "invalid",
+                "applied": False,
+                "root": str(root),
+                "documents_scanned": len(paths),
+                "count": len(changes),
+                "change_count": len([item for item in changes if item["changed"]]),
+                "changes": changes,
+                "documents": document_summaries,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+
+    change_count = len([item for item in changes if item["changed"]])
+    if not args.apply:
+        status = "planned" if change_count else "unchanged" if changes else "not_found"
+        emit(
+            {
+                "schema": "mdq.mutation.v1",
+                "status": status,
+                "applied": False,
+                "root": str(root),
+                "documents_scanned": len(paths),
+                "count": len(changes),
+                "change_count": change_count,
+                "changes": changes,
+                "documents": document_summaries,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 0
+
+    outputs = {**planned_sources, **planned_indexes}
+    originals: dict[Path, bytes | None] = {
+        path: path.read_bytes() if path.exists() else None for path in outputs
+    }
+    drifted = [
+        str(path)
+        for path, original in original_sources.items()
+        if path.read_bytes() != original
+    ]
+    if drifted:
+        diagnostics.append(
+            diagnostic(
+                "source_changed",
+                "error",
+                "source changed after preflight; no batch update was applied",
+                details={"paths": drifted},
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.mutation.v1",
+                "status": "invalid",
+                "applied": False,
+                "root": str(root),
+                "documents_scanned": len(paths),
+                "count": len(changes),
+                "change_count": change_count,
+                "changes": changes,
+                "documents": document_summaries,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 4
+
+    written: list[Path] = []
+    try:
+        for path, content in outputs.items():
+            atomic_write_bytes(path, content)
+            written.append(path)
+        for source_path, expected_document in changed_documents.items():
+            current = read_document(source_path)
+            if current.raw != expected_document.raw:
+                raise RuntimeError(f"written source bytes differ: {source_path}")
+            records, verify_diagnostics = extract_current(current)
+            if error_diagnostics(verify_diagnostics):
+                raise RuntimeError(f"written source failed validation: {source_path}")
+            expected_keys = {
+                item["key"]
+                for item in changes
+                if item["document"] == str(source_path) and item["changed"]
+            }
+            by_key = {
+                item.get("key"): item
+                for item in records
+                if item.get("key") is not None
+                and float(item.get("confidence", 0.0)) >= 0.6
+            }
+            if any(
+                by_key.get(key, {}).get("fields", {}).get(args.field) != args.value
+                for key in expected_keys
+            ):
+                raise RuntimeError(
+                    f"written field values failed verification: {source_path}"
+                )
+            if current.profile is not None and "index" in current.profile:
+                _indexed_records, index_diagnostics = records_for_query(current)
+                if "index_verified" not in {
+                    item["code"] for item in index_diagnostics
+                }:
+                    raise RuntimeError(
+                        f"rebuilt index failed verification: {source_path}"
+                    )
+    except (OSError, RuntimeError, UnicodeDecodeError, TimeoutError) as exc:
+        rollback_errors: list[str] = []
+        for path in reversed(written):
+            try:
+                original = originals[path]
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_bytes(path, original)
+            except OSError as rollback_exc:
+                rollback_errors.append(f"{path}: {rollback_exc}")
+        diagnostics.append(
+            diagnostic(
+                "mutation_apply_failed",
+                "error",
+                f"batch update failed and rollback was attempted: {exc}",
+                details={"rollback_errors": rollback_errors},
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.mutation.v1",
+                "status": "rollback_failed" if rollback_errors else "rolled_back",
+                "applied": False,
+                "root": str(root),
+                "documents_scanned": len(paths),
+                "count": len(changes),
+                "change_count": change_count,
+                "changes": changes,
+                "documents": document_summaries,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 4
+
+    for summary in document_summaries:
+        if summary["status"] == "planned":
+            summary["status"] = "updated"
+    emit(
+        {
+            "schema": "mdq.mutation.v1",
+            "status": "updated" if change_count else "unchanged",
+            "applied": True,
+            "root": str(root),
+            "documents_scanned": len(paths),
+            "documents_changed": len(planned_sources),
+            "indexes_rebuilt": [str(path) for path in planned_indexes],
+            "count": len(changes),
+            "change_count": change_count,
+            "changes": changes,
+            "documents": document_summaries,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 0
+
+
 def command_index(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
     if document.profile is None:
@@ -2945,8 +3937,8 @@ def add_temporary_selector_options(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Inspect and query imperfect Markdown through a declared or temporary "
-            "in-memory mdq profile."
+            "Inspect, query, and safely update imperfect Markdown through a "
+            "declared or temporary in-memory mdq profile."
         )
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2982,6 +3974,57 @@ def build_parser() -> argparse.ArgumentParser:
     add_temporary_selector_options(search_parser)
     search_parser.set_defaults(handler=command_search)
 
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="query records across Markdown files or directory collections",
+    )
+    scan_parser.add_argument("path", nargs="+")
+    scan_parser.add_argument(
+        "--glob",
+        action="append",
+        help="directory-relative Markdown glob (repeatable; default: **/*.md)",
+    )
+    selectors = scan_parser.add_mutually_exclusive_group()
+    selectors.add_argument("--id", action="append", help="exact record key (repeatable)")
+    selectors.add_argument("--text", help="case-insensitive literal substring")
+    scan_parser.add_argument(
+        "--field",
+        help="declared field to search or project, or key",
+    )
+    scan_parser.add_argument("--limit", type=int, default=1000)
+    scan_parser.add_argument(
+        "--require-contract",
+        action="store_true",
+        help="report every profile-free or invalid document as an error",
+    )
+    add_temporary_selector_options(scan_parser)
+    scan_parser.set_defaults(handler=command_scan)
+
+    set_parser = subparsers.add_parser(
+        "set",
+        help="preview or apply one safe scalar label-field value across a collection",
+    )
+    set_parser.add_argument("path", nargs="+")
+    set_parser.add_argument(
+        "--glob",
+        action="append",
+        help="directory-relative Markdown glob (repeatable; default: **/*.md)",
+    )
+    set_parser.add_argument("--id", action="append", help="exact record key (repeatable)")
+    set_parser.add_argument(
+        "--where",
+        action="append",
+        help="exact declared-field condition FIELD=VALUE (repeatable; AND semantics)",
+    )
+    set_parser.add_argument("--field", required=True, help="declared field to update")
+    set_parser.add_argument("--value", required=True, help="new single-line text value")
+    set_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write the validated plan; without this flag the command is read-only",
+    )
+    set_parser.set_defaults(handler=command_set)
+
     index_parser = subparsers.add_parser(
         "index", help="write the declared sidecar index from current source"
     )
@@ -2995,6 +4038,8 @@ def main() -> int:
     args = parser.parse_args()
     if getattr(args, "limit", 1) < 1:
         parser.error("--limit must be at least 1")
+    if getattr(args, "text", None) == "":
+        parser.error("--text must not be empty")
     try:
         return int(args.handler(args))
     except FileNotFoundError as exc:
