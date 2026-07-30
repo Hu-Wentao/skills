@@ -28,6 +28,24 @@ Record and present intentionally token-intensive development activities whose ro
 - **Why it consumes tokens:** Its broad scope requires inspecting much of the repository and its configuration, tracing cross-file behavior, substantiating findings, and filtering false positives.
 - **Why routine value is limited:** Without a defined threat model, review boundary, compliance need, or remediation target, the result is often a long report with limited immediate impact.
 
+### Review the Whole-Project Architecture
+
+- **Activity:** Inspect every module, boundary, dependency direction, control flow, data flow, deployment component, and cross-cutting concern; then document the architecture and propose structural changes.
+- **Why it consumes tokens:** It requires reading most of the codebase, reconstructing relationships across files and services, comparing architectural alternatives, and substantiating each recommendation.
+- **Why routine value is limited:** Without a concrete scaling, maintainability, ownership, or delivery problem, the review usually produces broad restructuring ideas with little immediate product benefit.
+
+### Review Whole-Project Performance
+
+- **Activity:** Analyze application, database, network, rendering, concurrency, memory, and build paths across the project; establish benchmarks and propose optimizations.
+- **Why it consumes tokens:** It spans many execution paths and configurations and requires interpreting profiles, benchmarks, queries, traces, complexity, and potential regressions.
+- **Why routine value is limited:** Without a measured bottleneck, performance target, or affected user journey, the work tends toward speculative optimization that may not improve observable behavior.
+
+### Unify Code Style Across the Entire Project
+
+- **Activity:** Review and rewrite naming, formatting, file organization, abstractions, comments, error-handling patterns, and idioms across the repository; then run formatters, linters, and tests.
+- **Why it consumes tokens:** It touches many files, creates large diffs, requires repeated consistency decisions, and demands careful verification that behavior remains unchanged.
+- **Why routine value is limited:** When the existing code is readable and enforceable conventions are absent, the result is mainly cosmetic churn that increases review and merge costs.
+
 ## Record Another Activity
 
 When the user explicitly supplies another activity to record, add it to the catalog with exactly these fields:
