@@ -1,6 +1,6 @@
 ---
 name: queryable-markdown
-description: Create, maintain, edit, and query Markdown documents governed by a persistent mdq query contract, and query ordinary Markdown read-only without requiring or adding metadata. Use for exact or text lookups in semi-structured Markdown; creating a new contracted Markdown document; converting a document into a persistently queryable document; adding, updating, deleting, or renaming records in a contracted document; maintaining an mdq YAML profile, stable markers, or sidecar index; diagnosing contract drift; or restoring queryability. Ordinary Markdown without a contract is read-only unless the user explicitly requests conversion to a contracted document.
+description: Create, maintain, edit, and query Markdown documents governed by a persistent mdq query contract, batch-query Markdown collections under a directory, and query ordinary Markdown read-only without requiring or adding metadata. Use for exact, text, field, directory, or glob lookups in semi-structured Markdown; creating a new contracted Markdown document; converting a document into a persistently queryable document; adding, updating, deleting, or renaming records in a contracted document; maintaining an mdq YAML profile, stable markers, or sidecar index; diagnosing contract drift; or restoring queryability. Ordinary Markdown without a contract is read-only unless the user explicitly requests conversion to a contracted document or an applicable governance workflow requires a contract for an authorized governed-document write.
 ---
 
 # Queryable Markdown
@@ -46,6 +46,21 @@ uv run "$SKILL_DIR/scripts/mdq.py" search <document.md> --field <field> --text <
 ```
 
 With a valid contract, the CLI applies declared boundaries, keys, fields, recovery, and index policy. Without one, it infers conservative temporary selectors in memory. Interpret `count`, `confidence`, source ranges, candidates, and diagnostics together.
+
+For a deterministic collection query, scan a Markdown file or directory:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" scan <directory> \
+  --glob '**/*.md' \
+  --field status \
+  --require-contract
+
+uv run "$SKILL_DIR/scripts/mdq.py" scan <directory> \
+  --glob '**/*.md' \
+  --text <term>
+```
+
+The default glob is `**/*.md`; repeat `--glob` to combine bounded patterns. Use `--require-contract` for governed collections so every profile-free or invalid document is reported as an error without hiding valid matches from other documents. When `--field` is present, every processed contract must declare that field. Collection results retain the absolute document path, root-relative path, source range, confidence, per-document summary, and source-located diagnostics. A collection scan is read-only: it never adds contracts, writes indexes, or repairs drift.
 
 For a recognizable non-generic convention, pass temporary selectors without persisting them:
 
@@ -140,6 +155,6 @@ For writes, report:
 
 ## Resources
 
-- `scripts/mdq.py`: inspect, query, search, validate, diagnose, and index Markdown with or without a persistent contract.
+- `scripts/mdq.py`: inspect, query, search, scan collections, validate, diagnose, and index Markdown with or without a persistent contract.
 - `references/protocol.md`: contract schema, extraction semantics, lifecycle, result contract, diagnostics, compatibility, and security limits.
 - `references/editing-workflow.md`: transactional creation, record-editing, contract-maintenance, and verification procedures.

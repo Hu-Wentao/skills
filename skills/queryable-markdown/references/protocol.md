@@ -12,8 +12,9 @@ Use this reference when creating, querying, editing, reviewing, or repairing a M
 6. Record and field extraction
 7. Recovery and confidence
 8. Result and diagnostic contract
-9. Index validity
-10. Compatibility and security
+9. Collection queries
+10. Index validity
+11. Compatibility and security
 
 ## 1. Document States, Operations, and Write Authority
 
@@ -262,7 +263,54 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 
 Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, or failed writes.
 
-## 9. Index Validity
+## 9. Collection Queries
+
+Use `scan` for a deterministic read-only query across a Markdown file or a
+directory collection:
+
+```bash
+uv run scripts/mdq.py scan docs/plans \
+  --glob '**/*.md' \
+  --field status \
+  --require-contract
+```
+
+The default glob is `**/*.md`. Globs are relative to the collection root,
+repeatable, and must not be absolute or contain `..`. Resolve every matched
+file inside the root, skip symlinks, deduplicate overlapping globs, and order
+documents by their root-relative POSIX path.
+
+Collection selection supports:
+
+- no selector: return every structured record;
+- `--id`: return exact case-sensitive keys across all documents;
+- `--text`: return case-insensitive literal matches;
+- `--field`: restrict text search to one declared field or project only that
+  field when no text selector is present;
+- `--require-contract`: reject profile-free and invalid documents while still
+  returning valid matches from other documents;
+- `--limit`: cap returned records without skipping validation and diagnostics
+  for the remaining documents.
+
+Without `--require-contract`, ordinary Markdown may use the same conservative
+temporary selectors as a single-document read-only query. Temporary selectors
+remain memory-only. A requested field must be declared by each effective
+profile; never infer a named field such as `status` from arbitrary prose.
+
+Emit the `mdq.collection.v1` envelope with the canonical root, applied globs,
+document and match counts, truncation flag, flattened records and candidates,
+per-document summaries, and diagnostics enriched with absolute and relative
+source paths. Use `partial` when valid matches coexist with invalid documents,
+`invalid` when no valid matches remain, `matched` for valid matches, and
+`not_found` otherwise. Finish scanning before returning nonzero for invalid
+documents so callers receive the complete evidence set.
+
+Collection scanning does not create a directory index in protocol v1. It may
+verify a declared per-document index through the normal fresh-source
+comparison, but Markdown source remains authoritative and the scan never
+writes contracts, records, or indexes.
+
+## 10. Index Validity
 
 Store at least:
 
@@ -276,7 +324,7 @@ Canonicalize the parsed profile as UTF-8 JSON with sorted keys and no insignific
 
 When `index` is absent, parse without writing. Resolve a relative index path against the Markdown file's directory. Its real path must remain inside that directory tree, must not equal or alias the source document, and must not be a symlink. Reject every other path during validation and refuse query/index operations while it is unsafe.
 
-## 10. Compatibility and Security
+## 11. Compatibility and Security
 
 - Parse CommonMark/GFM structure without rendering HTML. Mask only the content of HTML comments so surrounding headings and labels remain visible. Treat `pre`/`code`/`script`/`style` blocks, capitalized MDX component blocks whose opening tag ends on the same line, and Hugo `highlight` blocks as opaque. Multiline MDX opening tags and other extension syntax are not guaranteed opaque in v1; inspect and report them as compatibility limits before preparing such a document.
 - Limit profile regex length and apply regex only to bounded heading, field, or record text. Enforce a per-match timeout and return `regex_timeout` instead of continuing after the limit.

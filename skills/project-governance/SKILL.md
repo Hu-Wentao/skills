@@ -35,7 +35,7 @@ uv run python <skill-root>/scripts/project-governance.py \
 
 Use `--authorized` only after the current user authorizes a non-read-only operation. The flag is a mechanical gate, not proof of authorization. Never bypass the runner with a declared command string when a v3 contract exists.
 
-Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, and `release retry`. A project contract may expose only a subset.
+Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, `release retry`, `release repair-plan`, and `release repair`. A project contract may expose only a subset.
 
 Legacy v1/v2 profiles remain readable during migration. They return composed instructions and declarative command strings; read their resolved instructions because they do not provide executable contracts.
 
@@ -70,7 +70,16 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
 
 ## Govern Documents
 
-Use `queryable-markdown` for governed Markdown created or materially revised under this skill unless the project explicitly excludes it. Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Archive, or Operational Workflow.
+Use `queryable-markdown` for every governed Markdown document created or materially revised under this skill. A valid persistent mdq contract in YAML Front Matter is a mandatory part of the authorized governed-document write, not an optional follow-up. If an existing target has no valid contract, inspect and convert that target within the same authorized edit; the governance workflow supplies authority only for the minimal contract needed by that document and does not authorize unrelated normalization, bulk migration, sidecar creation, or repair of other documents.
+
+Before completing the write:
+
+1. define stable record identity, boundaries, and every field needed for lifecycle or authority queries;
+2. keep semantic status in an explicit declared field rather than inferring it from prose or directory placement;
+3. run mdq `validate`, `diagnose`, representative exact and negative queries, and any required collection scan;
+4. stop with the document incomplete if the persistent contract is missing, invalid, ambiguous, or cannot expose the governed record.
+
+Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Archive, or Operational Workflow. Treat mdq as structural extraction only; AI and the applicable governance domain still decide status meaning, priority, completion, and authority.
 
 Run the contracted `docs audit` operation when available. Otherwise run:
 
@@ -78,11 +87,13 @@ Run the contracted `docs audit` operation when available. Otherwise run:
 node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 ```
 
-Mechanical validation may find missing contracts, links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
+The audit requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, defects, archives, coverage, verification, or traceability documents as a structural error. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
 
 ## Govern Git, Releases, and Deployment
 
-Use `git snapshot`, `release inspect`, and `release plan` before semantic release decisions. Invoke `release run` or `release retry` only with current explicit authorization and the exact target/ref authorized by the user.
+Use `git snapshot`, `release inspect`, and the applicable normal or repair plan before semantic release decisions. Invoke `release run`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
+
+Use `release retry` only when source remains unchanged at the fixed release tag. If a failed release needs a source repair, use `release repair-plan` and `release repair` from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 
 Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Never auto-retry, auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 

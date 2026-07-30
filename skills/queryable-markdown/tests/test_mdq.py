@@ -1009,6 +1009,207 @@ Partial refunds are supported.
                 "index_verified", {item["code"] for item in verified["diagnostics"]}
             )
 
+    def test_scan_projects_declared_field_across_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "docs" / "plans"
+            plans.mkdir(parents=True)
+            fields = "  status:\n    source: label\n    labels: [状态]"
+            for filename, identifier, status in (
+                ("b.md", "REQ-2", "Partially implemented"),
+                ("a.md", "REQ-1", "Planned"),
+            ):
+                (plans / filename).write_text(
+                    profile(fields=fields)
+                    + f"\n## {identifier}: Plan\n\n- 状态：{status}\n",
+                    encoding="utf-8",
+                )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--glob",
+                "*.md",
+                "--field",
+                "status",
+                "--require-contract",
+            )
+
+            self.assertEqual(result["schema"], "mdq.collection.v1")
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["documents_scanned"], 2)
+            self.assertEqual(result["documents_matched"], 2)
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(
+                [item["relative_path"] for item in result["records"]],
+                ["a.md", "b.md"],
+            )
+            self.assertEqual(
+                [item["fields"]["status"] for item in result["records"]],
+                ["Planned", "Partially implemented"],
+            )
+            self.assertTrue(
+                all(set(item["fields"]) == {"status"} for item in result["records"])
+            )
+
+    def test_scan_default_glob_is_recursive_and_exact_id_is_global(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            nested = plans / "next"
+            nested.mkdir(parents=True)
+            (plans / "top.md").write_text(
+                profile() + "\n## REQ-1: Top\n",
+                encoding="utf-8",
+            )
+            (nested / "nested.md").write_text(
+                profile() + "\n## REQ-2: Nested\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                root, "scan", str(plans), "--id", "REQ-2", "--require-contract"
+            )
+
+            self.assertEqual(result["documents_scanned"], 2)
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["relative_path"], "next/nested.md")
+            self.assertEqual(result["records"][0]["key"], "REQ-2")
+
+    def test_scan_require_contract_reports_profileless_document_without_hiding_matches(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            plans.mkdir()
+            (plans / "contracted.md").write_text(
+                profile() + "\n## REQ-1: Contracted\n",
+                encoding="utf-8",
+            )
+            (plans / "ordinary.md").write_text(
+                "## REQ-2: Ordinary\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--require-contract",
+                expected=3,
+            )
+
+            self.assertEqual(result["status"], "partial")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["key"], "REQ-1")
+            self.assertIn(
+                ("ordinary.md", "persistent_contract_required"),
+                {
+                    (item.get("relative_path"), item["code"])
+                    for item in result["diagnostics"]
+                },
+            )
+
+    def test_scan_profileless_documents_uses_read_only_temporary_selectors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            notes = root / "notes"
+            notes.mkdir()
+            path = notes / "ordinary.md"
+            path.write_text("## REQ-7: Ordinary record\n\nBody.\n", encoding="utf-8")
+            before = path.read_bytes()
+
+            result = self.run_cli(root, "scan", str(notes))
+
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["records"][0]["key"], "REQ-7")
+            self.assertEqual(
+                result["documents"][0]["profile_source"], "temporary-inferred"
+            )
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse((notes / ".mdq").exists())
+
+    def test_scan_preserves_conflicting_field_as_null_with_source_diagnostic(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            plans.mkdir()
+            fields = "  status:\n    source: label\n    labels: [状态]"
+            (plans / "conflict.md").write_text(
+                profile(fields=fields)
+                + "\n## REQ-1: Conflict\n\n- 状态：Planned\n- 状态：Implemented\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--field",
+                "status",
+                "--require-contract",
+            )
+
+            self.assertEqual(result["status"], "matched")
+            self.assertIsNone(result["records"][0]["fields"]["status"])
+            self.assertIn(
+                ("conflict.md", "field_conflict"),
+                {
+                    (item.get("relative_path"), item["code"])
+                    for item in result["diagnostics"]
+                },
+            )
+
+    def test_scan_requested_field_must_be_declared_by_every_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            plans.mkdir()
+            (plans / "missing-status.md").write_text(
+                profile() + "\n## REQ-1: No status field\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--field",
+                "status",
+                "--require-contract",
+                expected=3,
+            )
+
+            self.assertEqual(result["status"], "invalid")
+            self.assertEqual(result["count"], 0)
+            self.assertIn(
+                "unknown_field", {item["code"] for item in result["diagnostics"]}
+            )
+
+    def test_scan_rejects_glob_that_can_escape_collection_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plans = root / "plans"
+            plans.mkdir()
+            result = self.run_cli(
+                root,
+                "scan",
+                str(plans),
+                "--glob",
+                "../*.md",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "collection_glob_unsafe",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

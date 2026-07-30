@@ -2862,6 +2862,305 @@ def command_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def collection_diagnostic(
+    item: dict[str, Any], document: Path, relative_path: str
+) -> dict[str, Any]:
+    enriched = dict(item)
+    enriched["document"] = str(document)
+    enriched["relative_path"] = relative_path
+    return enriched
+
+
+def collection_paths(
+    target: Path, patterns: list[str]
+) -> tuple[Path, list[tuple[Path, str]], list[dict[str, Any]]]:
+    resolved = target.resolve()
+    diagnostics: list[dict[str, Any]] = []
+    if target.is_symlink():
+        return resolved, [], [
+            diagnostic(
+                "collection_path_unsafe",
+                "error",
+                "collection path must not be a symlink",
+            )
+        ]
+    if resolved.is_file():
+        if resolved.suffix.casefold() != ".md":
+            return resolved.parent, [], [
+                diagnostic(
+                    "collection_path_invalid",
+                    "error",
+                    "collection file must use the .md extension",
+                )
+            ]
+        return resolved.parent, [(resolved, resolved.name)], diagnostics
+    if not resolved.is_dir():
+        return resolved, [], [
+            diagnostic(
+                "collection_path_invalid",
+                "error",
+                "collection path must be a Markdown file or directory",
+            )
+        ]
+
+    candidates: dict[Path, str] = {}
+    for pattern in patterns:
+        pattern_path = Path(pattern)
+        if pattern_path.is_absolute() or ".." in pattern_path.parts:
+            diagnostics.append(
+                diagnostic(
+                    "collection_glob_unsafe",
+                    "error",
+                    f"collection glob must stay inside the target directory: {pattern}",
+                )
+            )
+            continue
+        try:
+            matches = resolved.glob(pattern)
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                diagnostic(
+                    "collection_glob_invalid",
+                    "error",
+                    f"collection glob {pattern!r} is invalid: {exc}",
+                )
+            )
+            continue
+        for candidate in matches:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            if candidate.suffix.casefold() != ".md":
+                continue
+            actual = candidate.resolve()
+            try:
+                relative_path = actual.relative_to(resolved).as_posix()
+            except ValueError:
+                diagnostics.append(
+                    diagnostic(
+                        "collection_path_unsafe",
+                        "error",
+                        f"matched document escapes the collection root: {candidate}",
+                    )
+                )
+                continue
+            candidates[actual] = relative_path
+    ordered = sorted(candidates.items(), key=lambda item: item[1])
+    return resolved, ordered, diagnostics
+
+
+def collection_record(
+    record: dict[str, Any],
+    *,
+    document: SourceDocument,
+    relative_path: str,
+    field_name: str | None,
+) -> dict[str, Any]:
+    item = dict(record)
+    item["document"] = str(document.path)
+    item["relative_path"] = relative_path
+    if field_name is not None and field_name != "key":
+        fields = record.get("fields") or {}
+        item["fields"] = {field_name: fields.get(field_name)}
+    elif field_name == "key":
+        item["fields"] = {}
+    return item
+
+
+def command_scan(args: argparse.Namespace) -> int:
+    patterns = list(args.glob or ["**/*.md"])
+    root, paths, diagnostics = collection_paths(Path(args.path), patterns)
+    if error_diagnostics(diagnostics):
+        emit(
+            {
+                "schema": "mdq.collection.v1",
+                "status": "invalid",
+                "root": str(root),
+                "globs": patterns,
+                "documents_scanned": 0,
+                "documents_matched": 0,
+                "count": 0,
+                "truncated": False,
+                "records": [],
+                "candidates": [],
+                "documents": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+
+    matched_records: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    document_summaries: list[dict[str, Any]] = []
+    invalid_documents = 0
+    documents_matched = 0
+    truncated = False
+
+    for path, relative_path in paths:
+        try:
+            document = read_document(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            code = (
+                "encoding_invalid"
+                if isinstance(exc, UnicodeDecodeError)
+                else "io_error"
+            )
+            item = diagnostic(code, "error", str(exc))
+            diagnostics.append(collection_diagnostic(item, path, relative_path))
+            document_summaries.append(
+                {
+                    "document": str(path),
+                    "relative_path": relative_path,
+                    "status": "invalid",
+                    "profile_source": None,
+                    "record_count": 0,
+                    "matched_count": 0,
+                    "diagnostics": [item],
+                }
+            )
+            invalid_documents += 1
+            continue
+
+        preparation_diagnostics: list[dict[str, Any]] = []
+        document_diagnostics = list(document.diagnostics)
+        if args.require_contract and document.profile is None:
+            document_diagnostics.append(
+                diagnostic(
+                    "persistent_contract_required",
+                    "error",
+                    "collection query requires a valid persistent mdq contract",
+                    line=1,
+                )
+            )
+        elif document.profile is None:
+            preparation_diagnostics = prepare_temporary_profile(
+                document, args, requested=args.id
+            )
+            document_diagnostics = list(document.diagnostics)
+
+        if document.profile is not None and args.field not in {None, "key"}:
+            if args.field not in document.profile.get("fields", {}):
+                document_diagnostics.append(
+                    diagnostic(
+                        "unknown_field",
+                        "error",
+                        f"field {args.field!r} is not declared",
+                    )
+                )
+
+        records: list[dict[str, Any]] = []
+        if document.profile is not None and not error_diagnostics(document_diagnostics):
+            try:
+                records, extracted_diagnostics = records_for_query(document)
+            except TimeoutError:
+                extracted_diagnostics = [
+                    diagnostic(
+                        "regex_timeout",
+                        "error",
+                        "a profile regex exceeded the matching time limit",
+                    )
+                ]
+            all_document_diagnostics = (
+                preparation_diagnostics + extracted_diagnostics
+            )
+        else:
+            all_document_diagnostics = (
+                document_diagnostics + preparation_diagnostics
+            )
+        document_invalid = error_diagnostics(all_document_diagnostics)
+        if document_invalid:
+            invalid_documents += 1
+
+        structured: list[dict[str, Any]] = []
+        document_candidates: list[dict[str, Any]] = []
+        for record in records:
+            confidence = float(record.get("confidence", 0.0))
+            key = record.get("key")
+            selected = key is not None and confidence >= 0.6
+            if args.id is not None:
+                selected = selected and key == args.id.strip()
+            if args.text is not None:
+                values = searchable_values(record, args.field)
+                selected = selected and any(
+                    args.text.casefold() in value.casefold() for value in values
+                )
+            item = collection_record(
+                record,
+                document=document,
+                relative_path=relative_path,
+                field_name=args.field,
+            )
+            if selected:
+                structured.append(item)
+            elif key is None or confidence < 0.6:
+                item["candidate"] = True
+                document_candidates.append(item)
+
+        if structured:
+            documents_matched += 1
+        for item in structured:
+            if len(matched_records) < args.limit:
+                matched_records.append(item)
+            else:
+                truncated = True
+        for item in document_candidates:
+            if len(candidates) < args.limit:
+                candidates.append(item)
+            else:
+                truncated = True
+
+        document_status = (
+            "invalid"
+            if document_invalid
+            else "matched"
+            if structured
+            else "not_found"
+        )
+        document_summaries.append(
+            {
+                "document": str(document.path),
+                "relative_path": relative_path,
+                "status": document_status,
+                "profile_source": document.profile_source,
+                "record_count": len(
+                    [
+                        item
+                        for item in records
+                        if item.get("key") is not None
+                        and float(item.get("confidence", 0.0)) >= 0.6
+                    ]
+                ),
+                "matched_count": len(structured),
+                "diagnostics": all_document_diagnostics,
+            }
+        )
+        diagnostics.extend(
+            collection_diagnostic(item, document.path, relative_path)
+            for item in all_document_diagnostics
+        )
+
+    if invalid_documents:
+        collection_status = "partial" if matched_records else "invalid"
+    else:
+        collection_status = "matched" if matched_records else "not_found"
+    emit(
+        {
+            "schema": "mdq.collection.v1",
+            "status": collection_status,
+            "root": str(root),
+            "globs": patterns,
+            "documents_scanned": len(paths),
+            "documents_matched": documents_matched,
+            "count": len(matched_records),
+            "truncated": truncated,
+            "records": matched_records,
+            "candidates": candidates,
+            "documents": document_summaries,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 3 if invalid_documents else 0
+
+
 def command_index(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
     if document.profile is None:
@@ -2982,6 +3281,32 @@ def build_parser() -> argparse.ArgumentParser:
     add_temporary_selector_options(search_parser)
     search_parser.set_defaults(handler=command_search)
 
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="query records across a Markdown file or directory collection",
+    )
+    scan_parser.add_argument("path")
+    scan_parser.add_argument(
+        "--glob",
+        action="append",
+        help="directory-relative Markdown glob (repeatable; default: **/*.md)",
+    )
+    selectors = scan_parser.add_mutually_exclusive_group()
+    selectors.add_argument("--id", help="exact record key")
+    selectors.add_argument("--text", help="case-insensitive literal substring")
+    scan_parser.add_argument(
+        "--field",
+        help="declared field to search or project, or key",
+    )
+    scan_parser.add_argument("--limit", type=int, default=1000)
+    scan_parser.add_argument(
+        "--require-contract",
+        action="store_true",
+        help="report every profile-free or invalid document as an error",
+    )
+    add_temporary_selector_options(scan_parser)
+    scan_parser.set_defaults(handler=command_scan)
+
     index_parser = subparsers.add_parser(
         "index", help="write the declared sidecar index from current source"
     )
@@ -2995,6 +3320,8 @@ def main() -> int:
     args = parser.parse_args()
     if getattr(args, "limit", 1) < 1:
         parser.error("--limit must be at least 1")
+    if getattr(args, "text", None) == "":
+        parser.error("--text must not be empty")
     try:
         return int(args.handler(args))
     except FileNotFoundError as exc:

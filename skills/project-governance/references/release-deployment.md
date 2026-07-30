@@ -77,10 +77,12 @@ currently authorized release is waiting to advance.
 5. Keep the release tag, full commit id, and deployment target together in
    every plan, command boundary, retry, and report.
 
-For a full release, require the primary integration worktree to be clean,
-checked out on its integration branch, and still at the frozen source commit
-before it is advanced. For deploy-only work, use the exact user-authorized
-commit or immutable tag and do not mutate the control worktree.
+For a normal full release, require the primary integration worktree to be
+clean, checked out on its integration branch, and still at the frozen source
+commit before it is advanced. For a repair release, freeze the failed release
+tag and its peeled commit as the base identity, then follow the isolated repair
+rules below. For deploy-only work, use the exact user-authorized commit or
+immutable tag and do not mutate the control worktree.
 
 ## Separate Project Releases from Module Artifacts
 
@@ -117,8 +119,10 @@ deploy-only work, and every retry. Verify its exact `HEAD` and cleanliness
 before running checks, builds, version edits, or deployment commands.
 
 - Use a detached worktree for a preview, deploy-only operation, or retry.
-- Use a temporary `release/v<version>` branch at the frozen source for a full
-  release.
+- Use a temporary `release/v<version>` branch at the frozen source for a normal
+  full release.
+- Use a temporary `repair/v<version>` branch rooted at the failed immutable
+  release tag for a repair release.
 - Run release checks, version edits, builds, and deployment from the isolated
   worktree.
 - Never use `stash`, `reset`, `clean`, or forced removal to prepare the user's
@@ -142,7 +146,7 @@ The UTC timestamp must be an unambiguous, filename-safe UTC instant. A project
 profile may select a precise rendering, but it must preserve UTC ordering and
 must not replace the target or release version components.
 
-For a release:
+For a normal release:
 
 1. Create the version commit on the temporary release branch.
 2. Revalidate that the integration worktree is clean and unchanged.
@@ -174,13 +178,58 @@ its configured completion evidence. A partial, failed, or unverified
 environment blocks automatic promotion but does not authorize rollback or
 another commit.
 
+## Repair a Frozen Release Without Advancing Main
+
+Distinguish retry from repair before selecting an executor:
+
+- If source does not change, retry the exact failed tag and commit.
+- If source must change, create a new patch release from the failed immutable
+  tag through the project-configured repair operation.
+- If the project has no repair contract, stop. Do not fall back to a normal
+  release from current `main`.
+
+For a repair release:
+
+1. Freeze the failed release tag, its peeled full commit, the target, and the
+   proposed new patch version.
+2. Require the failed tag to remain immutable. The project may additionally
+   require it to be the highest published release tag so ordinary SemVer
+   selection remains unambiguous.
+3. Create a fresh `repair/v<version>` worktree rooted at the failed tag. The
+   candidate may contain only explicitly authorized repair commits and the
+   generated version commit after that base.
+4. Reject merge commits in the repair range. Never merge, rebase, or otherwise
+   import the current integration branch into the repair candidate. Surface the
+   complete commit and changed-file range from the frozen base for review.
+5. Run the project-configured repair gates, create a new immutable patch tag,
+   and deploy that exact new tag. Keep the failed tag unchanged.
+6. Keep the repair branch or another explicit maintenance ref reachable until
+   project retention policy permits removal. Do not require current `main` to
+   equal the candidate and do not fast-forward `main` as part of repair.
+7. Synchronize the repair to `main` only as a separate operation with current
+   user authorization. `main` is the later integration destination, never the
+   source of an in-progress repair.
+
+If deployment of the new repair tag fails without requiring another source
+change, a project retry contract may accept the retained exact
+`repair/v<version>` branch as its reachability anchor. The peeled tag commit and
+the retained branch head must match exactly. This exception does not permit a
+moving branch ref, a different repair commit, or a retry before the immutable
+repair tag exists.
+
+A request to fix and republish a failed release authorizes neither unrelated
+integration content nor a normal release from the latest integration branch.
+Changing the frozen base tag, target, or repair version requires a new explicit
+decision.
+
 ## Retry Only a Fixed Tag
 
 After a deployment failure:
 
 1. Preserve the recorded release tag and full commit.
 2. Require the tag to remain immutable and reachable from the integration
-   branch.
+   branch or, for an isolated repair release, from the project-approved exact
+   repair branch whose head equals the peeled tag commit.
 3. Create a fresh detached worktree at that exact tag/commit.
 4. Re-run the project-configured retry gates and deployment command against the
    same target unless the user explicitly authorizes another target.

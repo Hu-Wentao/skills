@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern releases, defects, feedback, and project lifecycle"
-  default_prompt: "Use $project-governance to govern this project’s design, releases, defect feedback, Git lineage, and verification."
+  short_description: "Govern project lifecycle with queryable document contracts"
+  default_prompt: "Use $project-governance to govern this project’s design, releases, defect feedback, Git lineage, verification, and mandatory persistent mdq contracts for governed Markdown."

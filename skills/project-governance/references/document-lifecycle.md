@@ -30,6 +30,34 @@ Store target behavior, current gaps, decisions, implementation phases, compatibi
 
 Store superseded, rejected, or fully delivered design material that remains useful for history. Archived documents do not override requirements, baselines, code, or tests.
 
+## Make Lifecycle State Queryable
+
+Every governed Markdown document created or materially revised through this
+workflow must have a valid persistent mdq contract. Give each governed record a
+stable key and expose lifecycle state through a declared field such as
+`status`; keep free-form rollout or acceptance detail in a separate field or
+bounded prose.
+
+Use queryable-markdown collection scanning to retrieve a directory state:
+
+```bash
+uv run <queryable-markdown>/scripts/mdq.py scan <path> \
+  --glob '**/*.md' \
+  --field status \
+  --require-contract
+```
+
+Treat missing contracts, invalid profiles, undeclared requested fields,
+duplicate identities, and conflicting field values as structural drift. Do not
+normalize authored values or infer semantic completion in mdq. Governance owns
+the allowed vocabulary and decides whether code-complete but
+acceptance-pending work remains partial, while mdq preserves the exact authored
+value and source location.
+
+Keep one primary status authority. Any lifecycle README, table, or generated
+JSON is a projection that must be reproducible from the authoritative governed
+records and must not silently override them.
+
 ## Move Documents by Meaning
 
 Do not archive by age. Archive only when a document no longer constrains future work.
