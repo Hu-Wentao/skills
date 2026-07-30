@@ -56,6 +56,13 @@
         "queryable-markdown",
         "write-technical-docs"
       ]
+    },
+    {
+      "title": "Token Experiments",
+      "description": "Skills for cataloging token-intensive development activities with limited routine value.",
+      "skills": [
+        "burn-tokens-fast"
+      ]
     }
   ]
 }

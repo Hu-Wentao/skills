@@ -1,0 +1,4 @@
+interface:
+  display_name: "快速消耗 Token"
+  short_description: "收录高 Token 消耗但日常收益较低的开发活动清单"
+  default_prompt: "使用 $burn-tokens-fast 查看适合快速消耗 Token 的开发活动清单。"
