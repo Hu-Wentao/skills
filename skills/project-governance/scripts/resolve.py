@@ -14,7 +14,7 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "5"
+RESOLVER_VERSION = "6"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
@@ -560,8 +560,7 @@ def resolve_task(
             config_schema = schema
             require_exact_keys(config, {"schema", "profile", "ports", "tasks"}, "config.yaml")
             allowed_tasks = set(DEFAULT_BASES)
-            if "ports" in config:
-                port_config = normalize_port_config(config.get("ports"))
+            port_config = normalize_port_config(config.get("ports"))
         else:
             raise ResolveError(
                 "config.yaml schema must be "

@@ -46,7 +46,14 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
 - For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
-- For PPISS port allocation, use `project-segments.py` and resolve `port-allocation`; read [port-allocation.md](references/port-allocation.md) for an established-port migration.
+- Before creating, changing, reviewing, or accepting any host-visible port,
+  resolve `port-allocation` and use `project-segments.py`; this includes
+  loopback, LAN, Tailscale, monitoring, infrastructure, and standard-protocol
+  ports. A standard protocol port may remain container-private only when the
+  project documents its PPISS host translation. Treat missing or invalid
+  project port configuration as a blocker. Read
+  [port-allocation.md](references/port-allocation.md) for an established-port
+  migration.
 - For repeated, specialized, high-risk workflow extraction, read [project-skill-design.md](references/project-skill-design.md). Prefer concise policy, project configuration, and tested scripts.
 
 Treat these domains as peers. Crossing a domain boundary does not transfer authorization.

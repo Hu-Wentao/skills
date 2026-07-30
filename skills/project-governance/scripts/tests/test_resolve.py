@@ -126,6 +126,21 @@ tasks:
         (config_root / "config.yaml").write_text(
             f"""schema: {SKILL_NAME}.config.v3
 profile: test-project
+ports:
+  project_segment: "42"
+  instances:
+    local_dev: 0
+    local_e2e: 1
+    local_preproduction: 2
+    remote_preproduction: 5
+    remote_production: 6
+  services:
+    allocation: sequential
+    start: 0
+    capacity: 100
+    assignments:
+      api: 0
+      worker: 1
 tasks:
   defect-diagnosis:
     base: references/defect-governance.md
@@ -170,6 +185,19 @@ tasks:
             encoding="utf-8",
         )
         return config_root
+
+    def test_v3_config_requires_ppiss_ports(self) -> None:
+        config_root = self.write_v3_config()
+        config_path = config_root / "config.yaml"
+        text = config_path.read_text(encoding="utf-8")
+        start = text.index("ports:\n")
+        end = text.index("tasks:\n")
+        config_path.write_text(text[:start] + text[end:], encoding="utf-8")
+
+        result = self.run_resolver("--task", "defect-diagnosis")
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ports must be a mapping", result.stderr)
 
     def test_generic_fallback_and_stable_id_for_both_tasks(self) -> None:
         for task in (

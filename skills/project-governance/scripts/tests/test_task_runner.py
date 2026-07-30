@@ -33,6 +33,21 @@ class TaskRunnerTest(unittest.TestCase):
         (config_root / "config.yaml").write_text(
             """schema: project-governance.config.v3
 profile: test
+ports:
+  project_segment: "42"
+  instances:
+    local_dev: 0
+    local_e2e: 1
+    local_preproduction: 2
+    remote_preproduction: 5
+    remote_production: 6
+  services:
+    allocation: sequential
+    start: 0
+    capacity: 100
+    assignments:
+      api: 0
+      worker: 1
 tasks:
   defect-diagnosis:
     base: references/defect-governance.md
