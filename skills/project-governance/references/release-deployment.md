@@ -60,7 +60,9 @@ If the release is blocked before its source is frozen:
 2. Perform only the smallest already-authorized action needed to clear it.
 3. Return immediately to the next incomplete release stage after it clears.
 4. Freeze the source as soon as the authorized changes are committed and the
-   integration worktree satisfies the project rules.
+   committed integration ref satisfies the project rules. Unrelated tracked,
+   staged, or untracked control-worktree changes are not a source-freeze
+   blocker unless the next required operation must mutate that worktree.
 
 Classify a discovery as a hard blocker only when it prevents producing the
 explicitly requested committed source, leaves the source or target identity
@@ -81,20 +83,30 @@ currently authorized release is waiting to advance.
 
 1. Read repository instructions and inspect the control worktree without
    modifying it.
-2. Resolve the intended source once to a full commit id and record it.
-3. Require committed state. Never synthesize a release from uncommitted or
-   untracked files.
-4. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
+2. Resolve the intended committed integration ref once to a full commit id and
+   record it.
+3. Require committed source identity. Never synthesize a release from staged,
+   unstaged, or untracked files; those bytes remain excluded even when the
+   control worktree is dirty.
+4. When the highest stable tag is already reachable from the committed
+   integration ref, create the retained release branch and worktree from that
+   commit without requiring the control worktree to be clean.
+5. Require a clean checked-out integration worktree only when the next required
+   step must mutate that branch, such as synchronizing an unreachable previous
+   stable tag. Do not commit, stash, reset, clean, or delete unrelated changes
+   merely to satisfy release preparation.
+6. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
    frozen.
-5. Keep the release tag, full commit id, and deployment target together in
+7. Keep the release tag, full commit id, and deployment target together in
    every plan, command boundary, retry, and report.
 
-For a normal full release, require the primary integration worktree to be
-clean, checked out on its integration branch, and still at the frozen source
-commit before it is advanced. For a repair release, freeze the failed release
-tag and its peeled commit as the base identity, then follow the isolated repair
-rules below. For deploy-only work, use the exact user-authorized commit or
-immutable tag and do not mutate the control worktree.
+For a normal full release, the retained release lineage becomes the release
+identity authority at source freeze. Later control-worktree dirtiness or branch
+movement can block only a separately required integration mutation; it cannot
+reopen or invalidate that frozen release. For a repair release, freeze the
+failed release tag and its peeled commit as the base identity, then follow the
+isolated repair rules below. For deploy-only work, use the exact
+user-authorized commit or immutable tag and do not mutate the control worktree.
 
 ## Separate Project Releases from Module Artifacts
 
@@ -126,21 +138,22 @@ is forbidden.
 
 ## Isolate Work in Fresh Worktrees
 
-Use a new temporary worktree for release planning, release preparation,
+Use a new isolated worktree for release planning, release preparation,
 deploy-only work, and every retry. Verify its exact `HEAD` and cleanliness
 before running checks, builds, version edits, or deployment commands.
 
 - Use a detached worktree for a preview, deploy-only operation, or retry.
-- Use a temporary `release/v<version>` branch at the frozen source for a normal
+- Use a retained `release/v<version>` branch at the frozen source for a normal
   full release.
-- Use a temporary `repair/v<version>` branch rooted at the failed immutable
+- Use a retained `repair/v<version>` branch rooted at the failed immutable
   release tag for a repair release.
 - Run release checks, version edits, builds, and deployment from the isolated
   worktree.
 - Never use `stash`, `reset`, `clean`, or forced removal to prepare the user's
   control worktree.
-- Remove a successful clean worktree when it is no longer needed. Preserve and
-  report a failed or dirty worktree while its evidence is still useful.
+- Remove a successful clean worktree when it is no longer needed, but retain
+  its release or repair branch according to project policy. Preserve and report
+  a failed or dirty worktree while its evidence is still useful.
 
 ## Create and Preserve Git Identities
 
@@ -158,15 +171,20 @@ The UTC timestamp must be an unambiguous, filename-safe UTC instant. A project
 profile may select a precise rendering, but it must preserve UTC ordering and
 must not replace the target or release version components.
 
-For a normal release:
+For a normal release, follow the project's contracted integration policy:
 
-1. Create the version commit on the temporary release branch.
-2. Revalidate that the integration worktree is clean and unchanged.
-3. Fast-forward or apply the project's explicitly approved integration policy.
-4. Create the annotated `v<version>` tag only after the release commit is in
-   integration history.
-5. Verify the release worktree, integration branch, and peeled release tag
-   resolve to the same full commit.
+1. Create the version commit on the retained release branch.
+2. Keep the release branch and its clean worktree fixed as the candidate
+   authority.
+3. If the contract requires the release commit in integration history before
+   tagging, revalidate the integration ref and require a clean control worktree
+   only for that mutation. If it is dirty or moved, report the integration
+   operation as blocked without changing the frozen release status.
+4. Apply only the project's explicitly approved integration policy.
+5. Create the annotated `v<version>` tag at the contracted admission point.
+6. Verify the retained release branch and peeled tag resolve to the same full
+   commit; also verify the integration branch only when the contract makes it
+   an identity participant.
 
 Create a successful deployment tag only after the project's required health,
 identity, and acceptance evidence declares that target verified. Point it to
@@ -358,6 +376,9 @@ terminal emits only explicit phase events and failures.
 - On failure, emit the phase, stable command identifier, exit status, fixed
   identity, log path, and at most a bounded sanitized summary. Keep the full
   diagnostic output in the detailed log.
+- Emit release/deployment state and post-release integration state as separate
+  scopes. After source freeze, an integration conflict, dirty control worktree,
+  or later branch movement must not emit or be summarized as a release failure.
 - Continue draining every child stream even when its lines are not forwarded
   to the terminal. Output suppression must never allow a pipe buffer to block
   the child process.
@@ -380,3 +401,9 @@ verification evidence, safe log paths, preserved failure worktrees, and every
 operation that remains unauthorized or incomplete. Never report secrets,
 authorization headers, request or response bodies, or private captured
 payloads.
+
+When synchronization back to the integration branch is requested, report it
+under a separate post-release integration heading or structured scope. A
+blocked or incomplete integration operation does not downgrade a successfully
+tagged and verified release, and a successful release does not imply that
+post-release integration completed.

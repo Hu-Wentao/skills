@@ -284,6 +284,23 @@ tasks:
         )
         self.assertEqual(selected_manifest["entry_command"][-1], "collect")
 
+    def test_missing_release_task_uses_managed_contract_instead_of_mapping_error(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "release-deployment", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "bootstrap_required"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.release-deployment.managed.v1",
+        )
+        self.assertIn("prepare", manifest["contract"]["operations"])
+
     def test_v3_rejects_missing_executor(self) -> None:
         config_root = self.write_v3_config()
         contract_path = config_root / "defect.contract.json"

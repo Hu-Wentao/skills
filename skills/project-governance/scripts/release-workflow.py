@@ -1,0 +1,877 @@
+#!/usr/bin/env python3
+"""Project-neutral release lineage and deployment workflow.
+
+The workflow owns Git identity, isolated worktrees, immutable tags, artifact
+identity, locks, and retry/repair semantics. Projects supply only deterministic
+argv hooks in release-workflow.json.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tomllib
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+
+SCHEMA = "project-governance.release-workflow.v1"
+EVENT_SCHEMA = "project-governance.release-event.v1"
+ARTIFACT_SCHEMA = "project-governance.artifact-freeze.v1"
+SEMVER = re.compile(r"^(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)$")
+TAG = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+SAFE_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+VERSION_KINDS = {"package-json", "pyproject", "pubspec"}
+
+
+class WorkflowError(RuntimeError):
+    def __init__(self, code: str, message: str, *, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.code = code
+        self.exit_code = exit_code
+
+
+def emit(event: str, **fields: Any) -> None:
+    print(json.dumps({"schema": EVENT_SCHEMA, "event": event, **fields}, sort_keys=True))
+
+
+def release_boundary() -> dict[str, str]:
+    """Describe the authority boundary after a committed source is frozen."""
+
+    return {
+        "identityAuthority": "retained_lineage",
+        "controlWorktreeAfterFreeze": "excluded",
+        "postReleaseIntegration": "separate",
+    }
+
+
+def run(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    capture: bool = True,
+    code: str = "COMMAND_FAILED",
+) -> str:
+    result = subprocess.run(
+        argv,
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=capture,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise WorkflowError(code, f"command failed with exit {result.returncode}: {argv[0]}")
+    return result.stdout.strip() if capture else ""
+
+
+def git(root: Path, *args: str, code: str = "GIT_FAILED") -> str:
+    return run(["git", *args], cwd=root, code=code)
+
+
+def repo_root(cwd: Path) -> Path:
+    output = run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, code="NOT_A_GIT_REPOSITORY")
+    return Path(output).resolve()
+
+
+def common_git_dir(root: Path) -> Path:
+    value = Path(git(root, "rev-parse", "--git-common-dir"))
+    return (root / value).resolve() if not value.is_absolute() else value.resolve()
+
+
+def runtime_root(root: Path) -> Path:
+    path = common_git_dir(root) / "project-governance-release"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def config_path(root: Path) -> Path:
+    return root / ".agents" / "skills-config" / "project-governance" / "release-workflow.json"
+
+
+def require_mapping(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"{field} must be an object", exit_code=2)
+    return value
+
+
+def require_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"{field} must be a non-empty string", exit_code=2)
+    return value
+
+
+def argv_value(value: Any, field: str, *, allow_empty: bool = False) -> list[str]:
+    if allow_empty and value in (None, []):
+        return []
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"{field} must be a non-empty argv array", exit_code=2)
+    return list(value)
+
+
+def contained_file(root: Path, relative: str, field: str) -> Path:
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"{field} escapes the repository", exit_code=2) from exc
+    if not candidate.is_file():
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"{field} does not exist: {relative}", exit_code=2)
+    return candidate
+
+
+def load_config(root: Path, *, require_complete: bool = False, target: str | None = None) -> dict[str, Any]:
+    path = config_path(root)
+    if not path.is_file():
+        raise WorkflowError(
+            "RELEASE_WORKFLOW_NOT_CONFIGURED",
+            f"missing {path.relative_to(root)}; run release bootstrap-plan and an authorized release bootstrap",
+            exit_code=2,
+        )
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"cannot parse {path}: {exc}", exit_code=2) from exc
+    config = require_mapping(raw, "release workflow config")
+    allowed = {"schema", "integration_branch", "version", "gates", "artifact", "targets", "migration"}
+    unknown = sorted(set(config) - allowed)
+    if unknown:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"unsupported config keys: {', '.join(unknown)}", exit_code=2)
+    if config.get("schema") != SCHEMA:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"schema must be {SCHEMA}", exit_code=2)
+    require_string(config.get("integration_branch"), "integration_branch")
+    version = require_mapping(config.get("version"), "version")
+    if set(version) != {"kind", "path"}:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", "version must contain only kind and path", exit_code=2)
+    if version.get("kind") not in VERSION_KINDS:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"version.kind must be one of: {', '.join(sorted(VERSION_KINDS))}", exit_code=2)
+    contained_file(root, require_string(version.get("path"), "version.path"), "version.path")
+    gates = config.get("gates", [])
+    if not isinstance(gates, list):
+        raise WorkflowError("INVALID_RELEASE_CONFIG", "gates must be a list of argv arrays", exit_code=2)
+    for index, command in enumerate(gates):
+        argv_value(command, f"gates[{index}]")
+    artifact = require_mapping(config.get("artifact", {}), "artifact")
+    if set(artifact) - {"freeze"}:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", "artifact contains unsupported keys", exit_code=2)
+    freeze = argv_value(artifact.get("freeze"), "artifact.freeze", allow_empty=True)
+    targets = require_mapping(config.get("targets", {}), "targets")
+    for name, value in targets.items():
+        if not SAFE_TARGET.fullmatch(str(name)):
+            raise WorkflowError("INVALID_RELEASE_CONFIG", f"invalid target name: {name}", exit_code=2)
+        item = require_mapping(value, f"targets.{name}")
+        if set(item) != {"deploy", "verify"}:
+            raise WorkflowError("INVALID_RELEASE_CONFIG", f"targets.{name} must contain deploy and verify", exit_code=2)
+        argv_value(item.get("deploy"), f"targets.{name}.deploy")
+        argv_value(item.get("verify"), f"targets.{name}.verify")
+    migration = config.get("migration")
+    if migration is not None:
+        migration_value = require_mapping(migration, "migration")
+        if set(migration_value) != {"preflight", "apply", "verify"}:
+            raise WorkflowError("INVALID_RELEASE_CONFIG", "migration must contain preflight, apply, and verify", exit_code=2)
+        for name in ("preflight", "apply", "verify"):
+            argv_value(migration_value.get(name), f"migration.{name}")
+    if require_complete:
+        missing: list[str] = []
+        if not freeze:
+            missing.append("artifact.freeze")
+        if target is None or target not in targets:
+            missing.append(f"targets.{target or '<target>'}")
+        if missing:
+            raise WorkflowError("RELEASE_WORKFLOW_NOT_CONFIGURED", f"missing release hooks: {', '.join(missing)}", exit_code=2)
+    return config
+
+
+def config_status(root: Path, target: str | None) -> dict[str, Any]:
+    try:
+        config = load_config(root)
+    except WorkflowError as exc:
+        if exc.code == "RELEASE_WORKFLOW_NOT_CONFIGURED":
+            return {"configured": False, "complete": False, "reason": exc.code}
+        raise
+    freeze = bool(config.get("artifact", {}).get("freeze"))
+    target_ready = target in config.get("targets", {}) if target else bool(config.get("targets"))
+    return {
+        "configured": True,
+        "complete": freeze and target_ready,
+        "integrationBranch": config["integration_branch"],
+        "targets": sorted(config.get("targets", {})),
+        "missing": [name for name, present in (("artifact.freeze", freeze), (f"targets.{target or '<target>'}", target_ready)) if not present],
+    }
+
+
+def stable_tags(root: Path) -> list[str]:
+    return [tag for tag in git(root, "tag", "--list", "v*", "--sort=-version:refname").splitlines() if TAG.fullmatch(tag)]
+
+
+def ref_exists(root: Path, ref: str) -> bool:
+    return subprocess.run(["git", "show-ref", "--verify", "--quiet", ref], cwd=root, check=False).returncode == 0
+
+
+def full_commit(root: Path, ref: str) -> str:
+    value = git(root, "rev-parse", f"{ref}^{{commit}}", code="INVALID_RELEASE_IDENTITY")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", value):
+        raise WorkflowError("INVALID_RELEASE_IDENTITY", f"cannot resolve full commit for {ref}")
+    return value
+
+
+def is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    return subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, descendant], cwd=root, check=False).returncode == 0
+
+
+def control_worktree(root: Path) -> dict[str, Any]:
+    return {
+        "branch": git(root, "branch", "--show-current"),
+        "commit": full_commit(root, "HEAD"),
+        "dirty": bool(git(root, "status", "--porcelain")),
+    }
+
+
+def state_path(root: Path, version: str) -> Path:
+    return runtime_root(root) / "releases" / f"v{version}.json"
+
+
+def artifact_path(root: Path, tag: str) -> Path:
+    return runtime_root(root) / "artifacts" / f"{tag}.json"
+
+
+def transaction_path(root: Path, target: str) -> Path:
+    return runtime_root(root) / "transactions" / f"{target}.json"
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def read_json(path: Path, code: str) -> dict[str, Any]:
+    if not path.is_file():
+        raise WorkflowError(code, f"required state is missing: {path}")
+    try:
+        return require_mapping(json.loads(path.read_text(encoding="utf-8")), str(path))
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(code, f"invalid state file: {path}") from exc
+
+
+@contextmanager
+def release_lock(root: Path) -> Iterator[None]:
+    path = runtime_root(root) / "lock"
+    try:
+        path.mkdir()
+        (path / "owner.json").write_text(json.dumps({"pid": os.getpid(), "cwd": str(root)}) + "\n", encoding="utf-8")
+    except FileExistsError as exc:
+        raise WorkflowError("RELEASE_LOCKED", f"another release operation owns {path}", exit_code=2) from exc
+    try:
+        yield
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def worktree_root(root: Path) -> Path:
+    digest = hashlib.sha256(str(common_git_dir(root)).encode()).hexdigest()[:10]
+    path = root.parent / f".{root.name}-release-worktrees-{digest}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def branch_path(root: Path, branch: str) -> Path:
+    return worktree_root(root) / branch.replace("/", "-")
+
+
+def current_version(root: Path, version: dict[str, Any]) -> str:
+    path = contained_file(root, version["path"], "version.path")
+    text = path.read_text(encoding="utf-8")
+    kind = version["kind"]
+    if kind == "package-json":
+        value = json.loads(text).get("version")
+    elif kind == "pyproject":
+        project = tomllib.loads(text).get("project")
+        value = project.get("version") if isinstance(project, dict) else None
+    else:
+        match = re.search(r"(?m)^version:\s*([^+\s]+)(?:\+[^\s]+)?\s*$", text)
+        value = match.group(1) if match else None
+    if not isinstance(value, str) or not SEMVER.fullmatch(value):
+        raise WorkflowError("INVALID_PROJECT_VERSION", f"cannot read SemVer from {version['path']}")
+    return value
+
+
+def write_version(root: Path, version_config: dict[str, Any], desired: str) -> Path:
+    if not SEMVER.fullmatch(desired):
+        raise WorkflowError("INVALID_RELEASE_VERSION", f"invalid SemVer: {desired}", exit_code=2)
+    path = contained_file(root, version_config["path"], "version.path")
+    text = path.read_text(encoding="utf-8")
+    kind = version_config["kind"]
+    if kind == "package-json":
+        pattern = re.compile(r'(?m)^(\s*"version"\s*:\s*")[^"]+("\s*,?\s*)$')
+        updated, count = pattern.subn(rf"\g<1>{desired}\g<2>", text, count=1)
+    elif kind == "pyproject":
+        section = re.search(r"(?ms)^\[project\]\s*$.*?(?=^\[|\Z)", text)
+        if section is None:
+            updated, count = text, 0
+        else:
+            block = section.group(0)
+            pattern = re.compile(r"(?m)^(version\s*=\s*[\"'])[^\"']+([\"']\s*)$")
+            replaced, count = pattern.subn(rf"\g<1>{desired}\g<2>", block, count=1)
+            updated = text[: section.start()] + replaced + text[section.end() :]
+    else:
+        pattern = re.compile(r"(?m)^(version:\s*)[^+\s]+((?:\+[^\s]+)?\s*)$")
+        updated, count = pattern.subn(rf"\g<1>{desired}\g<2>", text, count=1)
+    if count != 1:
+        raise WorkflowError("INVALID_PROJECT_VERSION", f"cannot update version in {version_config['path']}")
+    path.write_text(updated, encoding="utf-8")
+    return path
+
+
+def expand(argv: list[str], values: dict[str, str]) -> list[str]:
+    try:
+        return [item.format_map(values) for item in argv]
+    except (KeyError, ValueError) as exc:
+        raise WorkflowError(
+            "INVALID_RELEASE_CONFIG",
+            f"unsupported hook placeholder: {exc}",
+            exit_code=2,
+        ) from exc
+
+
+def hook_env(root: Path, *, version: str, tag: str, target: str, worktree: Path, artifact: Path) -> dict[str, str]:
+    return {
+        **os.environ,
+        "PROJECT_GOVERNANCE_RELEASE_VERSION": version,
+        "PROJECT_GOVERNANCE_RELEASE_TAG": tag,
+        "PROJECT_GOVERNANCE_RELEASE_TARGET": target,
+        "PROJECT_GOVERNANCE_RELEASE_WORKTREE": str(worktree),
+        "PROJECT_GOVERNANCE_ARTIFACT_MANIFEST": str(artifact),
+        "PROJECT_GOVERNANCE_REPOSITORY": str(root),
+    }
+
+
+def assert_transaction_compatible(root: Path, state: dict[str, Any]) -> None:
+    """Fence a partially switched target to its fixed tag or patch repair."""
+
+    path = transaction_path(root, state["target"])
+    if not path.is_file():
+        return
+    existing = read_json(path, "DEPLOYMENT_TRANSACTION_INVALID")
+    if existing.get("status") == "succeeded" or existing.get("tag") == state["tag"]:
+        return
+    dangerous = {
+        "migration_started",
+        "migration_completed",
+        "deployment_started",
+        "deployed",
+    }
+    if existing.get("phase") not in dangerous:
+        return
+    if state.get("baseTag") == existing.get("tag"):
+        return
+    raise WorkflowError(
+        "PARTIAL_DEPLOYMENT_RECONCILIATION_REQUIRED",
+        f"target {state['target']} is fenced to incomplete {existing.get('tag')}",
+        exit_code=2,
+    )
+
+
+def run_hook(argv: list[str], *, cwd: Path, values: dict[str, str], env: dict[str, str], code: str) -> str:
+    expanded = expand(argv, values)
+    raw_executable = Path(expanded[0])
+    if "/" not in expanded[0]:
+        executable = shutil.which(expanded[0])
+    elif raw_executable.is_absolute():
+        executable = str(raw_executable)
+    else:
+        resolved = (cwd / raw_executable).resolve()
+        try:
+            resolved.relative_to(cwd.resolve())
+        except ValueError as exc:
+            raise WorkflowError(
+                "INVALID_RELEASE_CONFIG",
+                f"hook executable escapes the release worktree: {expanded[0]}",
+                exit_code=2,
+            ) from exc
+        executable = str(resolved)
+    if not executable or not Path(executable).exists():
+        raise WorkflowError("RELEASE_HOOK_UNAVAILABLE", f"hook executable is unavailable: {expanded[0]}", exit_code=2)
+    expanded[0] = executable
+    executable_name = Path(executable).name
+    inline_or_module = any(flag in expanded[1:3] for flag in ("-c", "-e", "-m"))
+    if not inline_or_module and (executable_name == "node" or executable_name.startswith("python")):
+        script = next((item for item in expanded[1:] if not item.startswith("-")), None)
+        if script:
+            script_path = Path(script)
+            if not script_path.is_absolute():
+                script_path = (cwd / script_path).resolve()
+                try:
+                    script_path.relative_to(cwd.resolve())
+                except ValueError as exc:
+                    raise WorkflowError(
+                        "INVALID_RELEASE_CONFIG",
+                        f"hook script escapes the release worktree: {script}",
+                        exit_code=2,
+                    ) from exc
+            if not script_path.is_file():
+                raise WorkflowError("RELEASE_HOOK_UNAVAILABLE", f"hook script is unavailable: {script}", exit_code=2)
+    return run(expanded, cwd=cwd, env=env, capture=True, code=code)
+
+
+def release_inspect(root: Path, target: str | None) -> int:
+    tags = stable_tags(root)
+    branch = "main"
+    try:
+        status = config_status(root, target)
+        if status.get("integrationBranch"):
+            branch = status["integrationBranch"]
+    except WorkflowError:
+        raise
+    source_ref = f"refs/heads/{branch}"
+    source = full_commit(root, source_ref) if ref_exists(root, source_ref) else None
+    previous = tags[0] if tags else None
+    emit(
+        "release_inspected",
+        status="ready" if status["complete"] else "bootstrap_required",
+        source={"branch": branch, "commit": source},
+        controlWorktree=control_worktree(root),
+        previousStableTag=previous,
+        previousTagReachable=(is_ancestor(root, previous, source_ref) if previous and source else None),
+        target=target,
+        workflow=status,
+    )
+    return 0
+
+
+def sync_main(root: Path, *, dry_run: bool) -> int:
+    config = load_config(root)
+    branch = config["integration_branch"]
+    source_ref = f"refs/heads/{branch}"
+    if not ref_exists(root, source_ref):
+        raise WorkflowError("INTEGRATION_BRANCH_MISSING", f"missing {source_ref}", exit_code=2)
+    tags = stable_tags(root)
+    latest = tags[0] if tags else None
+    reachable = latest is None or is_ancestor(root, latest, source_ref)
+    control = control_worktree(root)
+    event = {
+        "integrationBranch": branch,
+        "sourceCommit": full_commit(root, source_ref),
+        "previousStableTag": latest,
+        "syncRequired": not reachable,
+        "controlWorktree": control,
+    }
+    if dry_run or reachable:
+        emit("main_sync_inspected" if dry_run else "main_already_synchronized", **event)
+        return 0
+    if control["branch"] != branch or control["dirty"]:
+        raise WorkflowError(
+            "MAIN_SYNC_REQUIRES_CLEAN_CONTROL_WORKTREE",
+            f"explicit main synchronization requires clean checked-out {branch}; no changes were committed or cleaned",
+            exit_code=2,
+        )
+    with release_lock(root):
+        git(root, "merge", "--no-ff", "--no-edit", latest, code="MAIN_SYNC_FAILED")
+        event["sourceCommit"] = full_commit(root, "HEAD")
+        emit("main_synchronized", **event)
+    return 0
+
+
+def bootstrap_plan(root: Path, preset: str) -> int:
+    detected = "custom"
+    if (root / "pnpm-lock.yaml").is_file() and (root / "package.json").is_file():
+        detected = "node-pnpm"
+    elif (root / "pyproject.toml").is_file():
+        detected = "python-uv"
+    elif (root / "pubspec.yaml").is_file():
+        detected = "flutter-fvm"
+    emit("release_bootstrap_planned", requestedPreset=preset, detectedPreset=detected, path=str(config_path(root)), exists=config_path(root).exists())
+    return 0
+
+
+def scaffold(root: Path, preset: str) -> dict[str, Any]:
+    selected = preset
+    if preset == "auto":
+        if (root / "pnpm-lock.yaml").is_file() and (root / "package.json").is_file():
+            selected = "node-pnpm"
+        elif (root / "pyproject.toml").is_file():
+            selected = "python-uv"
+        elif (root / "pubspec.yaml").is_file():
+            selected = "flutter-fvm"
+        else:
+            raise WorkflowError("RELEASE_PRESET_UNDETECTED", "cannot infer a supported release preset", exit_code=2)
+    if selected == "node-pnpm":
+        version = {"kind": "package-json", "path": "package.json"}
+        package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        scripts = package.get("scripts", {}) if isinstance(package, dict) else {}
+        gates = [["pnpm", name] for name in ("lint", "typecheck", "test") if name in scripts]
+    elif selected == "python-uv":
+        version = {"kind": "pyproject", "path": "pyproject.toml"}
+        gates = []
+    elif selected == "flutter-fvm":
+        version = {"kind": "pubspec", "path": "pubspec.yaml"}
+        gates = [["fvm", "flutter", "analyze"], ["fvm", "flutter", "test"]]
+    else:
+        raise WorkflowError("RELEASE_PRESET_UNSUPPORTED", f"unsupported preset: {selected}", exit_code=2)
+    return {
+        "schema": SCHEMA,
+        "integration_branch": "main",
+        "version": version,
+        "gates": gates,
+        "artifact": {"freeze": []},
+        "targets": {},
+    }
+
+
+def bootstrap(root: Path, preset: str) -> int:
+    path = config_path(root)
+    if path.exists():
+        raise WorkflowError("RELEASE_CONFIG_EXISTS", f"refusing to overwrite {path}", exit_code=2)
+    value = scaffold(root, preset)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    emit("release_bootstrapped", status="hooks_required", preset=preset, path=str(path), missing=["artifact.freeze", "targets.<target>"])
+    return 0
+
+
+def active_reservations(root: Path, desired_branch: str) -> list[str]:
+    output = git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/release/v*", "refs/heads/repair/v*")
+    active: list[str] = []
+    for branch in output.splitlines():
+        if not branch or branch == desired_branch:
+            continue
+        version_tag = branch.split("/", 1)[1]
+        if not ref_exists(root, f"refs/tags/{version_tag}"):
+            active.append(branch)
+    return active
+
+
+def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None = None) -> dict[str, Any]:
+    config = load_config(root)
+    load_config(root, require_complete=True, target=target)
+    if not SEMVER.fullmatch(version):
+        raise WorkflowError("INVALID_RELEASE_VERSION", f"invalid SemVer: {version}", exit_code=2)
+    tag = f"v{version}"
+    if ref_exists(root, f"refs/tags/{tag}"):
+        raise WorkflowError("RELEASE_VERSION_EXISTS", f"tag already exists: {tag}", exit_code=2)
+    if base_tag:
+        if not TAG.fullmatch(base_tag) or not ref_exists(root, f"refs/tags/{base_tag}"):
+            raise WorkflowError("INVALID_REPAIR_BASE", f"repair base tag is unavailable: {base_tag}", exit_code=2)
+        base_version = tuple(int(part) for part in base_tag[1:].split("."))
+        desired = tuple(int(part) for part in version.split("."))
+        if desired != (base_version[0], base_version[1], base_version[2] + 1):
+            raise WorkflowError("INVALID_REPAIR_VERSION", "repair must reserve the immediate next patch", exit_code=2)
+        source_ref = f"refs/tags/{base_tag}"
+        source_commit = full_commit(root, source_ref)
+        branch = f"repair/{tag}"
+        lineage = "repair"
+    else:
+        source_ref = f"refs/heads/{config['integration_branch']}"
+        if not ref_exists(root, source_ref):
+            raise WorkflowError("INTEGRATION_BRANCH_MISSING", f"missing {source_ref}", exit_code=2)
+        source_commit = full_commit(root, source_ref)
+        tags = stable_tags(root)
+        if tags and not is_ancestor(root, tags[0], source_commit):
+            raise WorkflowError("MAIN_SYNC_REQUIRED", f"{tags[0]} is not reachable from {config['integration_branch']}", exit_code=2)
+        branch = f"release/{tag}"
+        lineage = "release"
+    reservations = active_reservations(root, branch)
+    if reservations:
+        raise WorkflowError("RELEASE_VERSION_RESERVED", f"active release reservation exists: {reservations[0]}", exit_code=2)
+    return {
+        "version": version,
+        "tag": tag,
+        "target": target,
+        "lineage": lineage,
+        "branch": branch,
+        "sourceRef": source_ref,
+        "sourceCommit": source_commit,
+        "worktree": str(branch_path(root, branch)),
+        "baseTag": base_tag,
+        "controlWorktree": control_worktree(root),
+        "releaseBoundary": release_boundary(),
+    }
+
+
+def prepare(root: Path, *, version: str, target: str, base_tag: str | None, dry_run: bool, resume: bool) -> int:
+    plan = plan_prepare(root, version=version, target=target, base_tag=base_tag)
+    if dry_run:
+        emit("repair_prepare_planned" if base_tag else "release_prepare_planned", **plan)
+        return 0
+    with release_lock(root):
+        branch = plan["branch"]
+        worktree = Path(plan["worktree"])
+        if ref_exists(root, f"refs/heads/{branch}"):
+            if not resume:
+                raise WorkflowError("RELEASE_VERSION_RESERVED", f"branch already exists: {branch}; use --resume", exit_code=2)
+            if not worktree.is_dir():
+                git(root, "worktree", "add", str(worktree), branch)
+        else:
+            if worktree.exists():
+                raise WorkflowError("RELEASE_WORKTREE_COLLISION", f"worktree path already exists: {worktree}", exit_code=2)
+            git(root, "worktree", "add", "-b", branch, str(worktree), plan["sourceCommit"])
+        if git(worktree, "status", "--porcelain"):
+            raise WorkflowError("RELEASE_WORKTREE_DIRTY", f"release worktree is dirty: {worktree}")
+        config = load_config(root)
+        observed = current_version(worktree, config["version"])
+        if observed != version:
+            changed = write_version(worktree, config["version"], version)
+            relative = changed.relative_to(worktree)
+            git(worktree, "add", "--", str(relative))
+            git(worktree, "commit", "-m", f"chore(release): v{version}")
+        candidate = full_commit(worktree, "HEAD")
+        state = {
+            "schema": "project-governance.release-state.v1",
+            **{key: value for key, value in plan.items() if key != "controlWorktree"},
+            "candidateCommit": candidate,
+            "status": "prepared",
+            "phase": "version_reserved",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        atomic_json(state_path(root, version), state)
+        emit("repair_prepared" if base_tag else "release_prepared", **state, controlWorktreeAfter=control_worktree(root))
+    return 0
+
+
+def parse_artifact_output(output: str, *, tag: str, commit: str, target: str) -> dict[str, Any]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_MISSING", "artifact freeze hook returned no evidence")
+    try:
+        value = require_mapping(json.loads(lines[-1]), "artifact freeze output")
+    except json.JSONDecodeError as exc:
+        raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_INVALID", "artifact freeze hook must end with one JSON object") from exc
+    if value.get("schema") != ARTIFACT_SCHEMA:
+        raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_INVALID", f"artifact schema must be {ARTIFACT_SCHEMA}")
+    artifacts = value.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_INVALID", "artifacts must be a non-empty list")
+    normalized: list[dict[str, str]] = []
+    for index, item in enumerate(artifacts):
+        entry = require_mapping(item, f"artifacts[{index}]")
+        normalized.append({"name": require_string(entry.get("name"), f"artifacts[{index}].name"), "digest": require_string(entry.get("digest"), f"artifacts[{index}].digest")})
+    return {"schema": ARTIFACT_SCHEMA, "tag": tag, "commit": commit, "target": target, "artifacts": normalized, "frozenAt": datetime.now(timezone.utc).isoformat()}
+
+
+def annotated_tag_commit(root: Path, tag: str) -> str | None:
+    if not ref_exists(root, f"refs/tags/{tag}"):
+        return None
+    if git(root, "cat-file", "-t", f"refs/tags/{tag}") != "tag":
+        raise WorkflowError("RELEASE_TAG_NOT_ANNOTATED", f"release tag is not annotated: {tag}")
+    return full_commit(root, tag)
+
+
+def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, Any], worktree: Path, artifact: dict[str, Any], migration: bool) -> None:
+    version = state["version"]
+    tag = state["tag"]
+    target = state["target"]
+    artifact_file = artifact_path(root, tag)
+    values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
+    env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
+    assert_transaction_compatible(root, state)
+    transaction = {
+        "schema": "project-governance.deployment-transaction.v1",
+        "target": target,
+        "tag": tag,
+        "commit": state["candidateCommit"],
+        "artifactManifest": str(artifact_file),
+        "status": "running",
+        "phase": "artifact_frozen",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_json(transaction_path(root, target), transaction)
+    migration_config = config.get("migration")
+    if migration:
+        if not migration_config:
+            raise WorkflowError("MIGRATION_WORKFLOW_NOT_CONFIGURED", "--migration requires migration hooks", exit_code=2)
+        run_hook(migration_config["preflight"], cwd=worktree, values=values, env=env, code="MIGRATION_PREFLIGHT_FAILED")
+        transaction["phase"] = "migration_started"
+        atomic_json(transaction_path(root, target), transaction)
+        run_hook(migration_config["apply"], cwd=worktree, values=values, env=env, code="MIGRATION_FAILED")
+        run_hook(migration_config["verify"], cwd=worktree, values=values, env=env, code="MIGRATION_VERIFICATION_FAILED")
+        transaction["phase"] = "migration_completed"
+        atomic_json(transaction_path(root, target), transaction)
+    transaction["phase"] = "deployment_started"
+    atomic_json(transaction_path(root, target), transaction)
+    target_config = config["targets"][target]
+    run_hook(target_config["deploy"], cwd=worktree, values=values, env=env, code="DEPLOYMENT_FAILED")
+    transaction["phase"] = "deployed"
+    atomic_json(transaction_path(root, target), transaction)
+    run_hook(target_config["verify"], cwd=worktree, values=values, env=env, code="DEPLOYMENT_VERIFICATION_FAILED")
+    transaction.update({"phase": "completed", "status": "succeeded", "updatedAt": datetime.now(timezone.utc).isoformat()})
+    atomic_json(transaction_path(root, target), transaction)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    deploy_tag = f"deploy/{target}/{timestamp}/{tag}"
+    git(root, "tag", "-a", deploy_tag, state["candidateCommit"], "-m", f"Deploy {tag} to {target}")
+    emit("deployment_verified", tag=tag, commit=state["candidateCommit"], target=target, deploymentTag=deploy_tag, transaction=str(transaction_path(root, target)))
+
+
+def run_release(root: Path, *, version: str, target: str, migration: bool, repair_base: str | None = None) -> int:
+    config = load_config(root, require_complete=True, target=target)
+    state = read_json(state_path(root, version), "RELEASE_NOT_PREPARED")
+    expected_lineage = "repair" if repair_base else "release"
+    if state.get("lineage") != expected_lineage or state.get("target") != target:
+        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "prepared release identity does not match this operation", exit_code=2)
+    if repair_base and state.get("baseTag") != repair_base:
+        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "repair base does not match prepared lineage", exit_code=2)
+    worktree = Path(state["worktree"])
+    if not worktree.is_dir():
+        raise WorkflowError("RELEASE_WORKTREE_MISSING", f"missing prepared worktree: {worktree}")
+    with release_lock(root):
+        if git(worktree, "branch", "--show-current") != state["branch"]:
+            raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "release worktree branch changed")
+        if git(worktree, "status", "--porcelain"):
+            raise WorkflowError("RELEASE_WORKTREE_DIRTY", "commit the authorized candidate repair before continuing")
+        candidate = full_commit(worktree, "HEAD")
+        if not is_ancestor(root, state["sourceCommit"], candidate):
+            raise WorkflowError("RELEASE_LINEAGE_DIVERGED", "candidate is not a descendant of frozen source")
+        state["candidateCommit"] = candidate
+        tag = state["tag"]
+        if annotated_tag_commit(root, tag) is not None:
+            raise WorkflowError("RELEASE_ALREADY_TAGGED", f"use release retry for existing tag {tag}", exit_code=2)
+        values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_path(root, tag))}
+        env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_path(root, tag))
+        for index, gate in enumerate(config["gates"]):
+            emit("release_gate_started", index=index, executable=gate[0])
+            run_hook(gate, cwd=worktree, values=values, env=env, code="RELEASE_GATE_FAILED")
+        output = run_hook(config["artifact"]["freeze"], cwd=worktree, values=values, env=env, code="ARTIFACT_FREEZE_FAILED")
+        artifact = parse_artifact_output(output, tag=tag, commit=candidate, target=target)
+        if git(worktree, "status", "--porcelain"):
+            raise WorkflowError("ARTIFACT_FREEZE_MUTATED_SOURCE", "artifact freeze changed tracked source")
+        atomic_json(artifact_path(root, tag), artifact)
+        git(root, "tag", "-a", tag, candidate, "-m", f"Release {tag}")
+        if annotated_tag_commit(root, tag) != candidate:
+            raise WorkflowError("RELEASE_TAG_IDENTITY_MISMATCH", "annotated tag does not match frozen candidate")
+        state.update({"status": "tagged", "phase": "artifact_frozen", "candidateCommit": candidate, "updatedAt": datetime.now(timezone.utc).isoformat()})
+        atomic_json(state_path(root, version), state)
+        try:
+            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, migration=migration)
+        except WorkflowError:
+            state.update({"status": "failed", "phase": "deployment_failed", "updatedAt": datetime.now(timezone.utc).isoformat()})
+            atomic_json(state_path(root, version), state)
+            raise
+        state.update({"status": "succeeded", "phase": "completed", "updatedAt": datetime.now(timezone.utc).isoformat()})
+        atomic_json(state_path(root, version), state)
+        emit(
+            "release_completed",
+            tag=tag,
+            commit=candidate,
+            target=target,
+            artifactManifest=str(artifact_path(root, tag)),
+            releaseBoundary=release_boundary(),
+        )
+    return 0
+
+
+def retry(root: Path, *, tag: str, target: str) -> int:
+    if not TAG.fullmatch(tag):
+        raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
+    config = load_config(root, require_complete=True, target=target)
+    commit = annotated_tag_commit(root, tag)
+    if commit is None:
+        raise WorkflowError("RELEASE_TAG_MISSING", f"release tag does not exist: {tag}", exit_code=2)
+    artifact = read_json(artifact_path(root, tag), "ARTIFACT_FREEZE_EVIDENCE_MISSING")
+    if artifact.get("commit") != commit or artifact.get("target") != target:
+        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "frozen artifact identity does not match tag/target", exit_code=2)
+    version = tag[1:]
+    attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    worktree = worktree_root(root) / f"retry-{tag}-{target}-{attempt}"
+    with release_lock(root):
+        git(root, "worktree", "add", "--detach", str(worktree), tag)
+        try:
+            if full_commit(worktree, "HEAD") != commit or git(worktree, "status", "--porcelain"):
+                raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "retry worktree identity check failed")
+            for index, gate in enumerate(config["gates"]):
+                values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_path(root, tag))}
+                env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_path(root, tag))
+                emit("retry_gate_started", index=index, executable=gate[0])
+                run_hook(gate, cwd=worktree, values=values, env=env, code="RETRY_GATE_FAILED")
+            state = {"version": version, "tag": tag, "target": target, "candidateCommit": commit}
+            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, migration=False)
+            emit(
+                "release_retry_completed",
+                tag=tag,
+                commit=commit,
+                target=target,
+                artifactManifest=str(artifact_path(root, tag)),
+                releaseBoundary=release_boundary(),
+            )
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False, capture_output=True)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=("inspect", "sync-main-plan", "sync-main", "plan", "bootstrap-plan", "bootstrap", "prepare-plan", "prepare", "repair-prepare-plan", "repair-prepare", "run", "repair", "retry"))
+    parser.add_argument("--target")
+    parser.add_argument("--version")
+    parser.add_argument("--base-tag")
+    parser.add_argument("--tag")
+    parser.add_argument("--preset", default="auto", choices=("auto", "node-pnpm", "python-uv", "flutter-fvm"))
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--migration", action="store_true")
+    args = parser.parse_args(argv)
+    root = repo_root(Path.cwd())
+    try:
+        if args.operation == "inspect":
+            return release_inspect(root, args.target)
+        if args.operation == "sync-main-plan":
+            return sync_main(root, dry_run=True)
+        if args.operation == "sync-main":
+            return sync_main(root, dry_run=False)
+        if args.operation == "bootstrap-plan":
+            return bootstrap_plan(root, args.preset)
+        if args.operation == "bootstrap":
+            return bootstrap(root, args.preset)
+        if args.operation == "plan":
+            if not args.target:
+                raise WorkflowError("TARGET_REQUIRED", "plan requires --target", exit_code=2)
+            release_inspect(root, args.target)
+            load_config(root, require_complete=True, target=args.target)
+            return 0
+        if args.operation in {"prepare-plan", "prepare"}:
+            if not args.version or not args.target:
+                raise WorkflowError("RELEASE_IDENTITY_REQUIRED", f"{args.operation} requires --version and --target", exit_code=2)
+            return prepare(root, version=args.version, target=args.target, base_tag=None, dry_run=args.operation.endswith("plan"), resume=args.resume)
+        if args.operation in {"repair-prepare-plan", "repair-prepare"}:
+            if not args.version or not args.target or not args.base_tag:
+                raise WorkflowError("REPAIR_IDENTITY_REQUIRED", f"{args.operation} requires --base-tag, --version, and --target", exit_code=2)
+            return prepare(root, version=args.version, target=args.target, base_tag=args.base_tag, dry_run=args.operation.endswith("plan"), resume=args.resume)
+        if args.operation in {"run", "repair"}:
+            if not args.version or not args.target:
+                raise WorkflowError("RELEASE_IDENTITY_REQUIRED", f"{args.operation} requires --version and --target", exit_code=2)
+            if args.operation == "repair" and not args.base_tag:
+                raise WorkflowError("REPAIR_IDENTITY_REQUIRED", "repair requires --base-tag", exit_code=2)
+            return run_release(root, version=args.version, target=args.target, migration=args.migration, repair_base=args.base_tag if args.operation == "repair" else None)
+        if not args.tag or not args.target:
+            raise WorkflowError("RELEASE_IDENTITY_REQUIRED", "retry requires --tag and --target", exit_code=2)
+        return retry(root, tag=args.tag, target=args.target)
+    except WorkflowError as exc:
+        if args.operation in {"sync-main-plan", "sync-main"}:
+            emit(
+                "main_sync_failed",
+                scope="integration_branch",
+                status="blocked" if exc.exit_code == 2 else "failed",
+                releaseStatus="unchanged",
+                code=exc.code,
+                message=str(exc),
+            )
+        else:
+            emit(
+                "release_failed",
+                scope="release",
+                status="failed",
+                code=exc.code,
+                message=str(exc),
+            )
+        return exc.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

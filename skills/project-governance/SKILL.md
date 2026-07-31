@@ -35,7 +35,19 @@ uv run python <skill-root>/scripts/project-governance.py \
 
 Use `--authorized` only after the current user authorizes a non-read-only operation. The flag is a mechanical gate, not proof of authorization. Never bypass the runner with a declared command string when a v3 contract exists.
 
-Supported aliases are `defect collect`, `docs audit`, `git snapshot`, `release inspect`, `release plan`, `release run`, `release retry`, `release repair-plan`, and `release repair`. A project contract may expose only a subset.
+Supported release aliases include `release sync-main-plan`, `release sync-main`,
+`release inspect`, `release bootstrap-plan`, `release bootstrap`, `release plan`, `release prepare-plan`, `release prepare`,
+`release run`, `release retry`, `release repair-prepare-plan`,
+`release repair-prepare`, `release repair-plan`, and `release repair`. A
+project-owned contract may expose only a subset.
+
+When a repository does not register a `release-deployment` task, resolve the
+skill-owned managed contract. Do not treat a similarly named repository script
+as a substitute. Managed `inspect` and `bootstrap-plan` remain read-only;
+mutating operations fail closed until the repository has an explicit
+`release-workflow.json` with artifact and target hooks. Read
+[release-workflow-config.md](references/release-workflow-config.md) before
+bootstrapping or changing those hooks.
 
 Legacy v1/v2 profiles remain readable during migration. They return composed instructions and declarative command strings; read their resolved instructions because they do not provide executable contracts.
 
@@ -94,6 +106,37 @@ The audit requires `queryable-markdown` and treats a missing or invalid persiste
 
 Use `git snapshot`, `release inspect`, and the applicable normal or repair plan before semantic release decisions. Invoke `release run`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
 
+Treat a request for a full release or release-and-deploy as authority over an
+already committed source identity, not as authority to commit the control
+worktree. Never make the control worktree clean by committing, stashing,
+resetting, cleaning, or deleting its changes. Freeze the committed integration
+ref and use `release prepare` to create or resume the retained release worktree.
+When the highest stable tag is already reachable from that ref, tracked,
+staged, or untracked control-worktree changes do not block preparation and are
+excluded from the candidate. Require a clean checked-out integration worktree
+only for an operation that must actually mutate that branch, such as
+`release sync-main`; never require cleanliness merely to read and freeze its
+committed tip. If the user intends uncommitted bytes to enter the candidate,
+obtain separate scope for finishing and committing those bytes before release
+preparation.
+
+After preparation freezes the source commit, determine release, retry, and
+deployment status only from the retained release or repair lineage, immutable
+tag, frozen artifacts, target transaction, and verification evidence. Treat
+any later synchronization back to the integration branch as a separate
+post-release integration operation. Report its status separately; a dirty or
+moving control worktree may block that integration operation but must not
+reopen, invalidate, or be described as blocking the frozen release.
+
+For the managed contract, keep Git locking, version reservation,
+`release/v<version>` and `repair/v<version>` worktrees, annotated stable tags,
+artifact manifests, target transactions, and fixed-tag retries inside
+`release-workflow.py`. Project hooks may test, freeze artifacts, deploy, verify,
+or migrate, but must not recreate or bypass those identities. An artifact
+freeze hook must finish with the structured evidence required by
+[release-workflow-config.md](references/release-workflow-config.md). A deploy
+hook must consume the frozen manifest and must not rebuild it.
+
 Classify a failed deployment before the next mutation. Use `release retry` only when source remains unchanged at the fixed release tag. If source must change, use `release repair-plan` and `release repair` to create the next patch release from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 
 Treat a missing project repair contract as a release-tooling capability defect, not automatically as a new authorization decision. When the current request already authorizes repairing the failed source and continuing the same target deployment, add the smallest repair contract, executor support, and focused tests on the isolated repair lineage, resolve the updated contract, and continue without asking for the same authority again. Otherwise stop and request only the missing repair authority. Never bypass the contract with a normal release.
@@ -120,5 +163,9 @@ Report:
 - verification performed and remaining gaps;
 - breaking changes and compatibility provisions;
 - commits, tags, deployment refs, publication state, and unauthorized operations left untouched.
+
+For release work, always label the release/deployment state separately from
+post-release integration state. Do not collapse an integration-branch conflict
+or dirty-worktree blocker into `release failed` after source freeze.
 
 Do not release, deploy, publish, migrate live state, push, rewrite history, or move tags unless explicitly authorized in the current request.
