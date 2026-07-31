@@ -1,4 +1,4 @@
 interface:
   display_name: "Git Worktree & Branch Maintenance"
   short_description: "Safely organize all local branches and worktrees"
-  default_prompt: "Use $git-worktree to audit all local development surfaces, rescue detached work without treating rescue as completion, and continue until every selected branch and worktree is merged, deleted, or explicitly retained."
+  default_prompt: "Use $git-worktree to audit all local development surfaces, default active or dirty worktrees to retained without mutation, and continue until every selected clean candidate is merged, deleted, or explicitly retained."

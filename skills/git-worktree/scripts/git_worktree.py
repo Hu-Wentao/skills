@@ -415,31 +415,45 @@ def decision_evidence(
     uninspectable = any(not bool(item["inspectable"]) for item in worktrees)
     contained = bool(relation["contained_in_target"])
     patch_equivalent = bool(relation["patch_equivalent_to_target"])
+    retention_reasons: list[str] = []
+    if dirty:
+        retention_reasons.append("dirty_worktree_presumed_active")
+    if operations:
+        retention_reasons.append("active_git_operation")
+    if locked:
+        retention_reasons.append("locked_worktree")
+    if missing:
+        retention_reasons.append("missing_worktree")
+    if uninspectable:
+        retention_reasons.append("uninspectable_worktree")
+    mutation_blocked = bool(retention_reasons)
 
-    if kind == "worktree":
+    if mutation_blocked:
+        decision_scope = (
+            "worktree_only_branch_ref_retained"
+            if kind == "worktree"
+            else "branch_and_committed_history"
+        )
+        possible = ["retain"]
+    elif kind == "worktree":
         decision_scope = "worktree_only_branch_ref_retained"
-        if uninspectable:
-            possible = ["retain"]
-        elif dirty or operations or locked:
-            possible = ["merge", "retain"]
-        elif contained or not worktrees[0].get("detached", False):
+        if contained or not worktrees[0].get("detached", False):
             possible = ["delete", "retain"]
         else:
             possible = ["merge", "delete", "retain"]
     else:
         decision_scope = "branch_and_committed_history"
-        if uninspectable:
-            possible = ["retain"]
-        elif dirty or operations or locked:
-            possible = ["merge", "retain"]
-        elif contained or patch_equivalent:
+        if contained or patch_equivalent:
             possible = ["delete", "retain"]
         else:
             possible = ["merge", "delete", "retain"]
 
     requirements: list[str] = []
     if dirty:
-        requirements.append("commit authorization and validation before merge")
+        requirements.append(
+            "retain without mutation; a separate exact request must name this "
+            "candidate before rescue, commit, merge, deletion, or removal"
+        )
     if operations:
         requirements.append("finish or abort the active Git operation first")
     if locked:
@@ -448,8 +462,11 @@ def decision_evidence(
         requirements.append("prune only the missing registration; preserve branch refs")
     if uninspectable:
         requirements.append("repair or independently inspect the worktree before mutation")
-    if kind == "worktree" and worktrees[0].get("detached", False) and (
-        not contained or dirty
+    if (
+        kind == "worktree"
+        and worktrees[0].get("detached", False)
+        and not contained
+        and not mutation_blocked
     ):
         requirements.append(
             "create a rescue branch at the exact HEAD before preserving changes, "
@@ -470,6 +487,9 @@ def decision_evidence(
         "locked": locked,
         "missing": missing,
         "uninspectable": uninspectable,
+        "mutation_blocked": mutation_blocked,
+        "default_decision": "retain" if mutation_blocked else None,
+        "retention_reasons": retention_reasons,
     }
 
 
@@ -617,6 +637,35 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
         worktree_snapshot(worktree)
         for worktree in affected_worktrees(repo, target)
     ]
+    retained_worktrees: dict[str, dict[str, object]] = {}
+    for candidate in selected:
+        evidence = candidate["decision_evidence"]
+        if evidence["default_decision"] != "retain":
+            continue
+        for worktree in candidate["worktrees"]:
+            retained_worktrees[str(worktree["path"])] = {
+                "path": worktree["path"],
+                "branch": worktree["branch"],
+                "detached": worktree["detached"],
+                "head": worktree["head"],
+                "dirty": worktree["dirty"],
+                "changes": worktree["changes"],
+                "operations": worktree["operations"],
+                "locked": worktree["locked"],
+                "exists": worktree["exists"],
+                "inspectable": worktree["inspectable"],
+                "retention_reasons": evidence["retention_reasons"],
+                "mutations_skipped": [
+                    "modify",
+                    "stage",
+                    "commit",
+                    "switch",
+                    "merge",
+                    "delete",
+                    "remove",
+                    "rescue",
+                ],
+            }
     emit(
         {
             "action": "maintenance_audit",
@@ -630,6 +679,9 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
             "total_candidates": len(items),
             "selected_candidates": len(selected),
             "candidates": selected,
+            "retained_active_or_dirty_worktrees": sorted(
+                retained_worktrees.values(), key=lambda item: str(item["path"])
+            ),
         }
     )
 

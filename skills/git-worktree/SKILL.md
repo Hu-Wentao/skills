@@ -1,6 +1,6 @@
 ---
 name: git-worktree
-description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, validates exact audited HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
+description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
 ---
 
 # Git Worktree
@@ -82,6 +82,23 @@ available. Assign exactly one decision within its reported `decision_scope`:
 - **delete**: committed behavior is contained, patch-equivalent, demonstrably
   superseded, or has no remaining value. Record the evidence and exact commit.
 
+Treat a dirty worktree as presumptively active and default it to **retain**.
+This includes tracked modifications, staged changes, and untracked files. If
+the user identifies a branch/worktree as owned by another active thread, retain
+it even when it happens to be clean at one observation. During branch
+maintenance, do not modify, stage, commit, switch, merge, delete, remove,
+rescue, install dependencies in, run write-capable validation in, or otherwise
+advance an active or dirty worktree. Read-only inspection is allowed. A generic
+“整理分支” or “合并所有分支” request does not override this ownership boundary;
+acting on it requires a separate exact request that names the candidate and
+authorizes the needed mutation.
+
+If a candidate's HEAD, branch, or status changes after its audit, do not chase
+the new edits. Re-audit it, classify it as retain, and leave it for the owning
+thread. Dirty, active-operation, locked, missing, or uninspectable evidence is
+a mutation blocker, not a prompt to repair the worktree from the maintenance
+thread.
+
 Run maintenance as a fixed-point workflow. Preservation steps such as rescue
 or pruning are not candidate decisions. Keep every rescued branch in the
 current maintenance batch, even when its original commit falls outside a
@@ -117,10 +134,10 @@ Immediately inspect that candidate and continue with merge, evidence-based
 delete, or an explicit retain reason. Do not end “整理分支” merely because every
 detached HEAD now has a name.
 
-- If it is dirty, rescue it before committing. “整理分支” alone does not
-  authorize a commit. The rescued branch remains pending, but dirty evidence
-  normally forces retain until the user authorizes “commit and merge” or an
-  equivalent exact action.
+- If it is dirty, retain it without changing its detached state. “整理分支”
+  alone authorizes neither rescue nor commit. Rescue or “commit and merge” only
+  after a separate exact request names this worktree and no concurrent owner is
+  still editing it.
 - To discard a reviewed uncontained detached HEAD, prefer rescuing it and then
   using the classified branch-deletion workflow. Direct removal additionally
   requires `--allow-uncontained-detached --reason <evidence>`.
@@ -229,6 +246,9 @@ rebase, or squash without authorization for that exact operation.
 Report:
 
 - every branch and worktree decision with evidence and exact commit;
+- a separate **retained active/dirty work** list containing worktree path,
+  branch or detached state, observed HEAD, dirty/untracked paths, active Git
+  operations, retention reason, and the mutations intentionally skipped;
 - rescued detached HEADs, preserved dirty changes, and the terminal decision
   subsequently reached by every rescued branch;
 - source, target, and merge commit;

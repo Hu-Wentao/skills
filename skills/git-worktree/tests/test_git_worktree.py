@@ -410,12 +410,33 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertTrue(dirty_item["decision_evidence"]["dirty"])
         self.assertEqual(
             dirty_item["decision_evidence"]["possible_decisions"],
-            ["merge", "retain"],
+            ["retain"],
+        )
+        self.assertTrue(dirty_item["decision_evidence"]["mutation_blocked"])
+        self.assertEqual(
+            dirty_item["decision_evidence"]["default_decision"], "retain"
+        )
+        self.assertEqual(
+            dirty_item["decision_evidence"]["retention_reasons"],
+            ["dirty_worktree_presumed_active"],
         )
         self.assertIn(
             "?? uncommitted.txt",
             dirty_item["worktrees"][0]["changes"],
         )
+        retained = result["retained_active_or_dirty_worktrees"]
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(retained[0]["path"], str(detached_dirty.resolve()))
+        self.assertIsNone(retained[0]["branch"])
+        self.assertTrue(retained[0]["detached"])
+        self.assertEqual(retained[0]["head"], dirty_item["head"])
+        self.assertIn("?? uncommitted.txt", retained[0]["changes"])
+        self.assertEqual(
+            retained[0]["retention_reasons"],
+            ["dirty_worktree_presumed_active"],
+        )
+        self.assertIn("merge", retained[0]["mutations_skipped"])
+        self.assertIn("remove", retained[0]["mutations_skipped"])
 
     def test_maintenance_audit_separates_protected_branch_and_worktree(self) -> None:
         worktree = self.create("release/v2.0.0")
@@ -443,6 +464,47 @@ class GitWorktreeCliTests(unittest.TestCase):
             ["delete", "retain"],
         )
 
+    def test_maintenance_audit_defaults_dirty_attached_branch_to_retain(self) -> None:
+        worktree = self.create("feat/actively-edited")
+        (worktree / "draft.txt").write_text("in progress\n")
+
+        result = json.loads(self.cli("maintenance-audit", "--all").stdout)
+        candidates = {
+            item["candidate_id"]: item for item in result["candidates"]
+        }
+        branch_item = candidates["branch:feat/actively-edited"]
+        worktree_item = candidates[f"worktree:{worktree}"]
+
+        for item in (branch_item, worktree_item):
+            evidence = item["decision_evidence"]
+            self.assertEqual(evidence["possible_decisions"], ["retain"])
+            self.assertEqual(evidence["default_decision"], "retain")
+            self.assertTrue(evidence["mutation_blocked"])
+            self.assertEqual(
+                evidence["retention_reasons"],
+                ["dirty_worktree_presumed_active"],
+            )
+
+        retained = result["retained_active_or_dirty_worktrees"]
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(retained[0]["path"], str(worktree))
+        self.assertEqual(retained[0]["branch"], "feat/actively-edited")
+        self.assertFalse(retained[0]["detached"])
+        self.assertEqual(retained[0]["changes"], ["?? draft.txt"])
+        self.assertEqual(
+            retained[0]["mutations_skipped"],
+            [
+                "modify",
+                "stage",
+                "commit",
+                "switch",
+                "merge",
+                "delete",
+                "remove",
+                "rescue",
+            ],
+        )
+
     def test_maintenance_audit_reports_active_git_operation(self) -> None:
         worktree = self.create("operation-topic")
         marker = Path(
@@ -462,7 +524,12 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertEqual(item["decision_evidence"]["operations"], ["cherry_pick"])
         self.assertEqual(
             item["decision_evidence"]["possible_decisions"],
-            ["merge", "retain"],
+            ["retain"],
+        )
+        self.assertEqual(item["decision_evidence"]["default_decision"], "retain")
+        self.assertTrue(item["decision_evidence"]["mutation_blocked"])
+        self.assertIn(
+            "active_git_operation", item["decision_evidence"]["retention_reasons"]
         )
 
     def test_maintenance_audit_retains_uninspectable_worktree(self) -> None:
