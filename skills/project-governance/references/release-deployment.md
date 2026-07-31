@@ -42,6 +42,18 @@ deploying it, treat every named step as current authority for that sequence.
 Do not request the same authorization again between those steps. Do not extend
 the sequence to an unnamed mutation.
 
+Interpret retry and repair scope from the verbs the user actually authorized:
+
+- A request to retry or keep deploying one frozen release authorizes only
+  bounded attempts of the same commit, tag, artifact, and target.
+- A request to fix or repair the failed release and keep deploying it until
+  verified also authorizes the required next patch candidate and its named
+  target gates. Do not ask again between diagnosis, repair, patch publication,
+  fixed-artifact retry, and verification.
+- Neither form authorizes a different target, tag mutation, rollback, restore,
+  destructive migration, unrelated cleanup, or synchronization back to the
+  integration branch.
+
 If the release is blocked before its source is frozen:
 
 1. Identify the exact blocker and the next release stage it prevents.
@@ -190,6 +202,30 @@ Keep explicit contracted parameters as per-run overrides. A default-mode change
 does not authorize a release, deployment, retry, promotion, or a change to a
 frozen tag.
 
+## Classify a Failure Before the Next Mutation
+
+Record the failed phase, fixed identity, target, and whether source bytes must
+change before choosing the next operation:
+
+- Before a release tag exists, repair the authorized candidate and rerun its
+  gates; do not manufacture a failed release identity.
+- For a transient transport, registry, resource-admission, or host failure,
+  retry the same immutable tag, commit, artifact digest, and target.
+- For a source, migration, or packaging defect after tagging, preserve the
+  failed tag and create the next patch release through the repair workflow.
+- For an acceptance or evidence timeout with unchanged running source, rerun
+  only the project-owned verification or reconciliation boundary when it
+  supports that operation; do not rebuild.
+- For a partially switched or data-affecting deployment, preserve evidence and
+  use only the project executor's declared reconciliation path. Rollback,
+  restore, or destructive migration remains separate authority.
+
+Make transient retries bounded and idempotent. The project contract or executor
+must declare attempt limits, backoff, and the terminal state. A request to
+continue until verified keeps already-authorized retry or repair operations
+active; it does not convert repeated deterministic failures into transient
+ones or broaden the mutation scope.
+
 ## Repair a Frozen Release Without Advancing Main
 
 Distinguish retry from repair before selecting an executor:
@@ -197,8 +233,13 @@ Distinguish retry from repair before selecting an executor:
 - If source does not change, retry the exact failed tag and commit.
 - If source must change, create a new patch release from the failed immutable
   tag through the project-configured repair operation.
-- If the project has no repair contract, stop. Do not fall back to a normal
-  release from current `main`.
+- If the project has no repair contract and the current request already
+  authorizes source repair plus continued release/deployment, treat the missing
+  operation as a project release-tooling defect. On the isolated repair
+  lineage, add the smallest task contract, executor support, and focused tests;
+  resolve the updated contract and resume the same repair sequence.
+- If repair is not currently authorized, stop and request that exact authority.
+  Never fall back to a normal release from current `main`.
 
 For a repair release:
 
@@ -248,9 +289,10 @@ After a deployment failure:
 5. Never retry from a branch name, a newer `HEAD`, a reused uncertain
    worktree, or a newly inferred version.
 
-Retry authorization does not include diagnosis, repair, rollback, database
-restore, source retirement, or tag mutation. Obtain current authority for each
-additional action.
+A retry-only authorization does not include diagnosis, source repair,
+rollback, database restore, source retirement, or tag mutation. When the
+current request explicitly authorizes a larger fix-release-deploy sequence,
+carry that authority through its named steps without requesting it again.
 
 ## Respect Failure Boundaries
 
@@ -262,7 +304,9 @@ additional action.
   fixed. Report the target as failed or deployed but unverified according to
   project evidence.
 - After a failed acceptance check: do not print a success marker, create a
-  successful deployment tag, promote, retry, or roll back automatically.
+  successful deployment tag, promote, or roll back automatically. Retry or
+  reverify only when the current request and project contract already authorize
+  that exact fixed-artifact operation.
 - Never infer permission to restore a database, retire source data, change
   credentials, or run a live migration from release or deployment authority.
 

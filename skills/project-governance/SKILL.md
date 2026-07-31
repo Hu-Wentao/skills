@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -94,9 +94,11 @@ The audit requires `queryable-markdown` and treats a missing or invalid persiste
 
 Use `git snapshot`, `release inspect`, and the applicable normal or repair plan before semantic release decisions. Invoke `release run`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
 
-Use `release retry` only when source remains unchanged at the fixed release tag. If a failed release needs a source repair, use `release repair-plan` and `release repair` from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
+Classify a failed deployment before the next mutation. Use `release retry` only when source remains unchanged at the fixed release tag. If source must change, use `release repair-plan` and `release repair` to create the next patch release from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 
-Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Never auto-retry, auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
+Treat a missing project repair contract as a release-tooling capability defect, not automatically as a new authorization decision. When the current request already authorizes repairing the failed source and continuing the same target deployment, add the smallest repair contract, executor support, and focused tests on the isolated repair lineage, resolve the updated contract, and continue without asking for the same authority again. Otherwise stop and request only the missing repair authority. Never bypass the contract with a normal release.
+
+Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Do not retry by default; when the current request explicitly authorizes continued deployment or bounded retry, retry only transient failures with the same exact tag, commit, artifact, and target under the project contract. Never auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 
 ## Govern Defects
 
