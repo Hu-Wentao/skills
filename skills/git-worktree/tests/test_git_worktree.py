@@ -210,6 +210,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         worktree = self.create("obsolete")
         self.commit_file(worktree, "obsolete.txt", "obsolete\n")
         source_commit = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        target_commit = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
 
         rejected = self.cli(
             "branch-delete",
@@ -222,6 +223,19 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("--allow-unmerged", rejected.stderr)
 
+        stale_review = self.cli(
+            "branch-delete",
+            "--branch",
+            "obsolete",
+            "--reason",
+            "superseded",
+            "--allow-unmerged",
+            "--remove-worktree",
+            check=False,
+        )
+        self.assertEqual(stale_review.returncode, 2)
+        self.assertIn("--expected-target-head", stale_review.stderr)
+
         deleted = json.loads(
             self.cli(
                 "branch-delete",
@@ -231,6 +245,10 @@ class GitWorktreeCliTests(unittest.TestCase):
                 "superseded",
                 "--allow-unmerged",
                 "--remove-worktree",
+                "--expected-head",
+                source_commit,
+                "--expected-target-head",
+                target_commit,
             ).stdout
         )
         self.assertFalse(deleted["merged_into_target"])
@@ -245,6 +263,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         worktree = self.create("dirty-delete")
         self.commit_file(worktree, "tracked.txt", "tracked\n")
         (worktree / "dirty.txt").write_text("dirty\n")
+        target_commit = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
 
         rejected = self.cli(
             "branch-delete",
@@ -254,6 +273,8 @@ class GitWorktreeCliTests(unittest.TestCase):
             "obsolete",
             "--allow-unmerged",
             "--remove-worktree",
+            "--expected-target-head",
+            target_commit,
             check=False,
         )
         self.assertEqual(rejected.returncode, 2)
@@ -560,6 +581,7 @@ class GitWorktreeCliTests(unittest.TestCase):
             ).stdout
         )
         self.assertEqual(removed["head"], head)
+        self.assertFalse(removed["branch_retained"])
         self.assertFalse(worktree.exists())
 
     def test_remove_detached_rejects_uncontained_head(self) -> None:
@@ -604,6 +626,7 @@ class GitWorktreeCliTests(unittest.TestCase):
             ).stdout
         )
         self.assertTrue(pruned["branch_refs_retained"])
+        self.assertTrue(pruned["branch_refs_verified_unchanged"])
         self.assertEqual(pruned["pruned"], [{"head": head, "path": str(worktree)}])
         self.assertEqual(
             run(
@@ -612,6 +635,31 @@ class GitWorktreeCliTests(unittest.TestCase):
             ).returncode,
             0,
         )
+
+    def test_branch_delete_rejects_target_head_changed_since_review(self) -> None:
+        worktree = self.create("stale-target-review")
+        self.commit_file(worktree, "topic.txt", "topic\n")
+        source_commit = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        audited_target = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
+        self.commit_file(self.repo, "target.txt", "target moved\n")
+
+        rejected = self.cli(
+            "branch-delete",
+            "--branch",
+            "stale-target-review",
+            "--reason",
+            "superseded",
+            "--allow-unmerged",
+            "--remove-worktree",
+            "--expected-head",
+            source_commit,
+            "--expected-target-head",
+            audited_target,
+            check=False,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Target 'main' HEAD changed", rejected.stderr)
+        self.assertTrue(worktree.exists())
 
     def test_merge_rejects_changed_heads_from_audit(self) -> None:
         worktree = self.create("moving-source")

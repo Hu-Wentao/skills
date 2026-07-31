@@ -105,6 +105,16 @@ def local_branch_exists(repo: Path, branch: str) -> bool:
     )
 
 
+def local_branch_heads(repo: Path) -> dict[str, str]:
+    output = run_git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname:short)%00%(objectname)",
+        "refs/heads",
+    ).stdout
+    return dict(line.split("\0", 1) for line in output.splitlines() if line)
+
+
 def parse_worktrees(repo: Path) -> list[Worktree]:
     output = run_git(repo, "worktree", "list", "--porcelain").stdout
     records: list[dict[str, object]] = []
@@ -795,7 +805,7 @@ def command_remove(repo: Path, args: argparse.Namespace) -> None:
         {
             "action": "removed",
             "branch": selected.branch,
-            "branch_retained": True,
+            "branch_retained": selected.branch is not None,
             "head": actual_head,
             "reason": args.reason,
             "worktree": str(requested),
@@ -879,8 +889,17 @@ def command_prune_missing(repo: Path, args: argparse.Namespace) -> None:
     if not eligible:
         raise WorkflowError("No eligible missing worktree registrations to prune.")
 
+    branch_heads_before = local_branch_heads(repo)
     run_git(repo, "worktree", "prune", "--expire", "now")
-    remaining_paths = {worktree.path for worktree in parse_worktrees(repo)}
+    branch_heads_after = local_branch_heads(repo)
+    if branch_heads_after != branch_heads_before:
+        raise WorkflowError(
+            "Local branch refs changed while pruning missing worktrees; "
+            "review concurrent repository activity."
+        )
+    remaining_paths = {
+        str(Path(worktree.path).resolve()) for worktree in parse_worktrees(repo)
+    }
     failed = sorted(path for path in eligible if path in remaining_paths)
     if failed:
         raise WorkflowError(
@@ -890,6 +909,7 @@ def command_prune_missing(repo: Path, args: argparse.Namespace) -> None:
         {
             "action": "missing_worktrees_pruned",
             "branch_refs_retained": True,
+            "branch_refs_verified_unchanged": True,
             "locked_missing_retained": locked_missing,
             "pruned": [
                 {"path": path, "head": head}
@@ -913,7 +933,11 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
         )
 
     commit = run_git(repo, "rev-parse", f"{branch}^{{commit}}").stdout.strip()
+    target_commit = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
     verify_expected_head(commit, args.expected_head, f"Branch '{branch}'")
+    verify_expected_head(
+        target_commit, args.expected_target_head, f"Target '{target}'"
+    )
     merged = (
         run_git(
             repo,
@@ -929,6 +953,11 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
         raise WorkflowError(
             f"Branch '{branch}' is not merged into '{target}'; "
             "use --allow-unmerged only after evidence-based maintenance analysis."
+        )
+    if not merged and not args.expected_target_head:
+        raise WorkflowError(
+            "Deleting an unmerged branch requires --expected-target-head from "
+            "the evidence review."
         )
 
     removed_worktrees: list[str] = []
@@ -970,6 +999,7 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
             "remote_branch_untouched": True,
             "removed_worktrees": removed_worktrees,
             "target": target,
+            "target_commit": target_commit,
         }
     )
 
@@ -1049,6 +1079,7 @@ def build_parser() -> argparse.ArgumentParser:
     branch_delete.add_argument("--target")
     branch_delete.add_argument("--reason", required=True)
     branch_delete.add_argument("--expected-head")
+    branch_delete.add_argument("--expected-target-head")
     branch_delete.add_argument("--allow-unmerged", action="store_true")
     branch_delete.add_argument("--allow-protected", action="store_true")
     branch_delete.add_argument("--remove-worktree", action="store_true")
