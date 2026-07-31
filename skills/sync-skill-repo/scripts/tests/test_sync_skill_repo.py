@@ -307,6 +307,171 @@ class SyncSkillRepoTests(unittest.TestCase):
                     ):
                         MODULE.refresh_skill(args)
 
+    def test_install_global_targets_only_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / ".agents" / "skills" / "demo-skill"
+            source = root / "source" / "demo-skill"
+            write_skill(installed, "demo-skill", "published")
+            write_skill(source, "demo-skill", "published")
+            lock = root / ".agents" / ".skill-lock.json"
+            lock.parent.mkdir(exist_ok=True)
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "computedHash": "b" * 64,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                source="Hu-Wentao/skills",
+                skill_dir=str(installed),
+                source_skill_dir=str(source),
+                scope="global",
+                agent="codex",
+                project_root=str(root),
+                lock=str(lock),
+                attempts=3,
+                retry_delay=0,
+            )
+            succeeded = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="installed", stderr=""
+            )
+
+            with patch.object(
+                MODULE,
+                "_shared_global_skills_root",
+                return_value=root / ".agents" / "skills",
+            ):
+                with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                    with patch.object(
+                        MODULE.subprocess,
+                        "run",
+                        return_value=succeeded,
+                    ) as run:
+                        MODULE.install_skill(args)
+
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "/bin/pnpm",
+                    "dlx",
+                    "skills",
+                    "add",
+                    "Hu-Wentao/skills",
+                    "--skill",
+                    "demo-skill",
+                    "--agent",
+                    "codex",
+                    "--global",
+                    "--yes",
+                ],
+            )
+            self.assertNotIn("--copy", run.call_args.args[0])
+            self.assertNotIn("*", run.call_args.args[0])
+
+    def test_install_project_omits_global_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / ".agents" / "skills" / "demo-skill"
+            source = root / "source" / "demo-skill"
+            write_skill(installed, "demo-skill", "published")
+            write_skill(source, "demo-skill", "published")
+            (root / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "computedHash": "c" * 64,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                source="Hu-Wentao/skills",
+                skill_dir=str(installed),
+                source_skill_dir=str(source),
+                scope="project",
+                agent="codex",
+                project_root=str(root),
+                lock=None,
+                attempts=3,
+                retry_delay=0,
+            )
+            succeeded = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="installed", stderr=""
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    return_value=succeeded,
+                ) as run:
+                    MODULE.install_skill(args)
+
+            self.assertNotIn("--global", run.call_args.args[0])
+            self.assertIn("codex", run.call_args.args[0])
+
+    def test_install_rejects_wildcard_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source" / "demo-skill"
+            write_skill(source, "demo-skill", "published")
+            args = SimpleNamespace(
+                source="Hu-Wentao/skills",
+                skill_dir=str(root / ".agents" / "skills" / "demo-skill"),
+                source_skill_dir=str(source),
+                scope="global",
+                agent="*",
+                project_root=str(root),
+                lock=None,
+                attempts=3,
+                retry_delay=0,
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError,
+                    "one explicit agent",
+                ):
+                    MODULE.install_skill(args)
+
+    def test_permission_failure_is_not_retried(self) -> None:
+        failed = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="EPERM: operation not permitted, unlink '/home/me/.agents/skills'",
+        )
+        with patch.object(
+            MODULE.subprocess,
+            "run",
+            return_value=failed,
+        ) as run:
+            with self.assertRaisesRegex(
+                MODULE.SyncError,
+                "non-retryable filesystem permission error",
+            ):
+                MODULE._run_installer_with_retry(
+                    ["pnpm", "dlx", "skills", "add"],
+                    cwd=Path("/tmp"),
+                    attempts=3,
+                    retry_delay=0,
+                    action="Install",
+                )
+
+        self.assertEqual(run.call_count, 1)
+
     def test_installed_comparison_allows_normalized_executable_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

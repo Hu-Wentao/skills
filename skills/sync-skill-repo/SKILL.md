@@ -176,12 +176,31 @@ defaults to three attempts with a two-second delay. A failed attempt is not a
 reason to run an unscoped update. If all attempts fail, report the exact
 command and complete per-attempt output emitted by the helper.
 
-If the skill is not yet tracked in either scope, install only that skill from
-the pushed GitHub repository into the intended scope:
+If the skill is not yet tracked in either scope, use the deterministic install
+command. It defaults to the `codex` agent, never selects every detected agent,
+and never passes `--copy`, so global installations remain in the shared
+`~/.agents/skills` directory:
 
 ```bash
-pnpm dlx skills add <owner>/<repo> --skill <skill-name> -g -y
+# Project installation. Run from the project root.
+uv run python <skill-dir>/scripts/sync_skill_repo.py install \
+  <owner>/<repo> <project-installed-skill-dir> \
+  --source-skill-dir <source-repo-skill-dir> \
+  --scope project --project-root .
+
+# Global installation in ~/.agents/skills. Pass the shared global lock.
+uv run python <skill-dir>/scripts/sync_skill_repo.py install \
+  <owner>/<repo> ~/.agents/skills/<skill-name> \
+  --source-skill-dir <source-repo-skill-dir> \
+  --scope global --lock ~/.agents/.skill-lock.json
 ```
+
+Use `--agent <agent-id>` only when the user explicitly requests a consumer
+other than Codex. Never use `--agent '*'`. A PromptScript global-install error
+means the agent target was left implicit or broadened incorrectly. Treat
+`EPERM`, `EACCES`, and equivalent filesystem permission failures as
+non-retryable; report the exact command for execution in a terminal that can
+write the target directory.
 
 Never run an unscoped `skills update`; it can update unrelated skills. After
 the command succeeds, compare the installed skill with the pushed source,
