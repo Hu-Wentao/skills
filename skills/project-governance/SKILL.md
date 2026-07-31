@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, verification, branches, commits, worktrees, SemVer, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, fixed-tag retries, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -42,6 +42,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 ## Select the Governance Domain
 
 - For project design, architecture, module ownership, scaffolding, or implementation handoff, read [design-doc-rules.md](references/design-doc-rules.md), [project-scaffolding.md](references/project-scaffolding.md), and [legacy-extraction.md](references/legacy-extraction.md) as applicable.
+- For a current or proposed third-party library, framework, service, runtime, replacement, or technology fit assessment, read [dependency-evaluation.md](references/dependency-evaluation.md). Keep official upstream evidence, project facts, and AI inference distinct.
 - For SemVer, migrations, compatibility surfaces, release identities, tags, promotions, retries, or hotfix ancestry, read [git-version-governance.md](references/git-version-governance.md) and [release-deployment.md](references/release-deployment.md) only when the task contract cannot decide the required semantic boundary.
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
@@ -79,7 +80,7 @@ Before completing the write:
 3. run mdq `validate`, `diagnose`, representative exact and negative queries, and any required collection scan;
 4. stop with the document incomplete if the persistent contract is missing, invalid, ambiguous, or cannot expose the governed record.
 
-Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Archive, or Operational Workflow. Treat mdq as structural extraction only; AI and the applicable governance domain still decide status meaning, priority, completion, and authority.
+Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Evaluation Evidence, Archive, or Operational Workflow. Evaluation Evidence supports a decision but does not make a candidate an installed or adopted dependency. Treat mdq as structural extraction only; AI and the applicable governance domain still decide status meaning, priority, completion, and authority.
 
 Run the contracted `docs audit` operation when available. Otherwise run:
 
@@ -87,7 +88,7 @@ Run the contracted `docs audit` operation when available. Otherwise run:
 node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 ```
 
-The audit requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, defects, archives, coverage, verification, or traceability documents as a structural error. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
+The audit requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, dependency evaluations, defects, archives, coverage, verification, or traceability documents as a structural error. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
 
 ## Govern Git, Releases, and Deployment
 

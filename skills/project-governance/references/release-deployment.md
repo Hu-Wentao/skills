@@ -178,6 +178,18 @@ its configured completion evidence. A partial, failed, or unverified
 environment blocks automatic promotion but does not authorize rollback or
 another commit.
 
+## Resolve Target-Specific Execution Defaults
+
+A project may select different build or artifact-transfer defaults by deployment
+target. Keep that mapping in the project profile and resolve it deterministically
+inside the repository executor after the target is known. When the task contract
+cannot express a conditional default, omit the scalar parameter default so the
+runner does not overwrite the executor's target-aware choice.
+
+Keep explicit contracted parameters as per-run overrides. A default-mode change
+does not authorize a release, deployment, retry, promotion, or a change to a
+frozen tag.
+
 ## Repair a Frozen Release Without Advancing Main
 
 Distinguish retry from repair before selecting an executor:

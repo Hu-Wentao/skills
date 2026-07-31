@@ -167,6 +167,20 @@ Focused verification owns the invariant.
         self.assertIn("[profile_invalid]", result.stdout)
         self.assertIn("docs/archive/invalid.md", result.stdout)
 
+    def test_rejects_evaluation_without_persistent_contract(self) -> None:
+        evaluations = self.docs / "evaluations"
+        evaluations.mkdir()
+        (evaluations / "example.md").write_text(
+            "# TECH-EVAL-EXAMPLE Example\n\n- Status: assessed\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_validator()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[persistent_contract_required]", result.stdout)
+        self.assertIn("docs/evaluations/example.md:1", result.stdout)
+
     def test_ordinary_markdown_outside_governed_paths_does_not_require_contract(
         self,
     ) -> None:

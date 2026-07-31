@@ -44,6 +44,7 @@ function validatePersistentMdqContracts(docs, mdqScript) {
     "requirements/**/*.md",
     "baseline/**/*.md",
     "plans/**/*.md",
+    "evaluations/**/*.md",
     "defects/**/*.md",
     "archive/**/*.md",
     "*coverage*.md",
