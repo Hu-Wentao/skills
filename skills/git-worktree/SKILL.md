@@ -145,10 +145,14 @@ Delete one classified branch with:
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> branch-delete \
   --branch <branch> [--target <branch>] --reason "<evidence>" \
-  --expected-head <audited-head> [--allow-unmerged] [--remove-worktree]
+  --expected-head <audited-head> \
+  [--expected-target-head <audited-target-head>] \
+  [--allow-unmerged] [--remove-worktree]
 ```
 
 Use `--allow-unmerged` only after evidence-based classification. Use
+`--expected-target-head` for every unmerged deletion so target movement
+invalidates stale review evidence. Use
 `--remove-worktree` only after clean-state checks. The command refuses dirty,
 locked, prunable, missing, main, or Git-operation-in-progress worktrees.
 `release/*`, `repair/*`, and `hotfix/*` require separate
