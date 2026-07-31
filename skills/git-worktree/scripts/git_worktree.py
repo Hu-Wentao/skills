@@ -545,6 +545,34 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
     )
 
 
+def maintenance_branch_candidate(
+    repo: Path, target: str, branch: str
+) -> dict[str, object]:
+    candidate_id = f"branch:{branch}"
+    candidate = next(
+        (
+            item
+            for item in maintenance_candidates(repo, target)
+            if item["candidate_id"] == candidate_id
+        ),
+        None,
+    )
+    if candidate is None:
+        raise WorkflowError(
+            f"Rescued branch was not returned by maintenance audit: {branch}"
+        )
+    return candidate
+
+
+def main_worktree_branch(repo: Path) -> str:
+    main = next((worktree for worktree in parse_worktrees(repo) if worktree.main), None)
+    if main is None or not main.branch:
+        raise WorkflowError(
+            "The main worktree must be attached to a branch, or pass --target explicitly."
+        )
+    return main.branch
+
+
 def unmerged_candidates(repo: Path, target: str) -> list[str]:
     return sorted(item.branch for item in branch_audits(repo, target) if item.ahead)
 
@@ -840,16 +868,32 @@ def command_rescue_detached(repo: Path, args: argparse.Namespace) -> None:
     if check_name.returncode != 0:
         raise WorkflowError(f"Invalid branch name: {args.branch}")
 
+    target = args.target or main_worktree_branch(repo)
+    if not local_branch_exists(repo, target):
+        raise WorkflowError(f"Target branch does not exist locally: {target}")
+    if target == args.branch:
+        raise WorkflowError("Rescue branch and maintenance target must be different.")
+
     actual_head = run_git(requested, "rev-parse", "HEAD^{commit}").stdout.strip()
     verify_expected_head(actual_head, args.expected_head, f"Worktree '{requested}'")
     changes = status_lines(requested)
     run_git(requested, "switch", "-c", args.branch)
+    candidate = maintenance_branch_candidate(repo, target, args.branch)
     emit(
         {
             "action": "detached_rescued",
             "branch": args.branch,
+            "candidate": candidate,
+            "classification_status": "pending",
+            "decision_terminal": False,
             "dirty_changes_preserved": changes,
             "head": actual_head,
+            "next_action": {
+                "action": "classify_rescued_branch",
+                "candidate_id": candidate["candidate_id"],
+                "target": target,
+            },
+            "target": target,
             "worktree": str(requested),
         }
     )
@@ -1062,6 +1106,7 @@ def build_parser() -> argparse.ArgumentParser:
     rescue_detached.add_argument("--worktree", required=True)
     rescue_detached.add_argument("--branch", required=True)
     rescue_detached.add_argument("--expected-head", required=True)
+    rescue_detached.add_argument("--target")
     rescue_detached.set_defaults(handler=command_rescue_detached)
 
     prune_missing = commands.add_parser(

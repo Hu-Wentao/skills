@@ -552,12 +552,75 @@ class GitWorktreeCliTests(unittest.TestCase):
             ).stdout
         )
         self.assertEqual(rescued["head"], head)
+        self.assertEqual(rescued["target"], "main")
+        self.assertEqual(rescued["classification_status"], "pending")
+        self.assertFalse(rescued["decision_terminal"])
+        self.assertEqual(rescued["candidate"]["candidate_id"], "branch:feat/rescued")
+        self.assertTrue(rescued["candidate"]["decision_evidence"]["dirty"])
+        self.assertEqual(
+            rescued["next_action"],
+            {
+                "action": "classify_rescued_branch",
+                "candidate_id": "branch:feat/rescued",
+                "target": "main",
+            },
+        )
         self.assertIn("?? draft.txt", rescued["dirty_changes_preserved"])
         self.assertEqual(
             run(["git", "branch", "--show-current"], worktree).stdout.strip(),
             "feat/rescued",
         )
         self.assertEqual((worktree / "draft.txt").read_text(), "draft\n")
+
+    def test_rescued_clean_branch_is_returned_for_continued_maintenance(self) -> None:
+        worktree = self.create_detached("detached completed work")
+        self.commit_file(worktree, "completed.txt", "completed\n")
+        head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        rescued = json.loads(
+            self.cli(
+                "rescue-detached",
+                "--worktree",
+                str(worktree),
+                "--branch",
+                "feat/completed",
+                "--expected-head",
+                head,
+                "--target",
+                "main",
+            ).stdout
+        )
+
+        candidate = rescued["candidate"]
+        self.assertEqual(candidate["kind"], "branch")
+        self.assertEqual(candidate["branch"], "feat/completed")
+        self.assertEqual(candidate["head"], head)
+        self.assertFalse(candidate["relation"]["contained_in_target"])
+        self.assertEqual(
+            candidate["decision_evidence"]["possible_decisions"],
+            ["merge", "delete", "retain"],
+        )
+
+        target_head = run(["git", "rev-parse", "main"], self.repo).stdout.strip()
+        merged = json.loads(
+            self.cli(
+                "merge",
+                "--source",
+                "feat/completed",
+                "--target",
+                "main",
+                "--expected-source-head",
+                head,
+                "--expected-target-head",
+                target_head,
+            ).stdout
+        )
+        self.assertEqual(merged["source"], "feat/completed")
+        self.assertEqual(merged["target"], "main")
+        self.assertEqual(
+            run(["git", "merge-base", "--is-ancestor", head, "main"], self.repo).returncode,
+            0,
+        )
 
     def test_remove_detached_requires_containment_evidence(self) -> None:
         worktree = self.create_detached("detached contained")

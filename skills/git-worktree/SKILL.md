@@ -82,6 +82,14 @@ available. Assign exactly one decision within its reported `decision_scope`:
 - **delete**: committed behavior is contained, patch-equivalent, demonstrably
   superseded, or has no remaining value. Record the evidence and exact commit.
 
+Run maintenance as a fixed-point workflow. Preservation steps such as rescue
+or pruning are not candidate decisions. Keep every rescued branch in the
+current maintenance batch, even when its original commit falls outside a
+recent-count or recent-days window, and continue until it reaches exactly one
+terminal merge, retain, or delete decision. After any rescue, merge, or delete
+changes refs or the target HEAD, refresh the affected evidence before the next
+mutation.
+
 Do not infer that a clean directory is completed work. Do not interpret age as
 deletion evidence. Re-audit when any HEAD or worktree status changes. A request
 to maintain a selected local scope does not authorize remote deletion, push,
@@ -94,17 +102,25 @@ Never remove a detached worktree merely because it is clean.
 - If its HEAD is contained in the target and it is clean, remove it with both
   `--require-contained-in` and the audited `--expected-head`.
 - If it has unique commits, attach an exact rescue branch before merge or
-  evidence-based deletion:
+  evidence-based deletion. Rescue is a preservation transition, never an
+  implicit retain decision:
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> \
   rescue-detached --worktree <worktree-path> --branch <new-branch> \
-  --expected-head <audited-head>
+  --expected-head <audited-head> --target <target-branch>
 ```
 
+The result includes the rescued branch's fresh maintenance `candidate`, marks
+its `classification_status` as `pending`, and names the required next action.
+Immediately inspect that candidate and continue with merge, evidence-based
+delete, or an explicit retain reason. Do not end “整理分支” merely because every
+detached HEAD now has a name.
+
 - If it is dirty, rescue it before committing. “整理分支” alone does not
-  authorize a commit. Inspect and commit only after the user authorizes
-  “commit and merge” or an equivalent exact action.
+  authorize a commit. The rescued branch remains pending, but dirty evidence
+  normally forces retain until the user authorizes “commit and merge” or an
+  equivalent exact action.
 - To discard a reviewed uncontained detached HEAD, prefer rescuing it and then
   using the classified branch-deletion workflow. Direct removal additionally
   requires `--allow-uncontained-detached --reason <evidence>`.
@@ -213,7 +229,8 @@ rebase, or squash without authorization for that exact operation.
 Report:
 
 - every branch and worktree decision with evidence and exact commit;
-- rescued detached HEADs and preserved dirty changes;
+- rescued detached HEADs, preserved dirty changes, and the terminal decision
+  subsequently reached by every rescued branch;
 - source, target, and merge commit;
 - removed worktree paths and deleted branch identities;
 - pruned missing registrations and confirmation that branch refs remain;
