@@ -98,6 +98,8 @@ Classify a failed deployment before the next mutation. Use `release retry` only 
 
 Treat a missing project repair contract as a release-tooling capability defect, not automatically as a new authorization decision. When the current request already authorizes repairing the failed source and continuing the same target deployment, add the smallest repair contract, executor support, and focused tests on the isolated repair lineage, resolve the updated contract, and continue without asking for the same authority again. Otherwise stop and request only the missing repair authority. Never bypass the contract with a normal release.
 
+Keep a repair candidate untagged while source verification, representative migration rehearsal, candidate admission, or target preflight is failing. Record candidate commits, artifact digests, and attempt evidence instead of minting stable patch tags. Create the next immutable patch tag only after every pre-tag gate passes; retries of that tag never create another version.
+
 Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Do not retry by default; when the current request explicitly authorizes continued deployment or bounded retry, retry only transient failures with the same exact tag, commit, artifact, and target under the project contract. Never auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 
 ## Govern Defects

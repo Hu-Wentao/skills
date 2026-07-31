@@ -226,6 +226,34 @@ continue until verified keeps already-authorized retry or repair operations
 active; it does not convert repeated deterministic failures into transient
 ones or broaden the mutation scope.
 
+## Admit Stable Tags Only After Candidate Gates
+
+Do not create a stable patch tag merely because repair work has started or a
+candidate attempt exists. Keep the repair branch untagged while any pre-tag
+gate fails. Use commit ids, immutable candidate artifact digests, CI run ids,
+and deployment-attempt records for intermediate evidence.
+
+Before creating the stable repair tag, require all project-declared source
+verification, focused and regression tests, representative legacy-schema
+migration rehearsal, candidate admission, artifact verification, and target
+preflight gates to pass. Run migration rehearsal against a sanitized copy or
+fixture that preserves the relevant production schema shape; never use the
+live database as a speculative candidate test.
+
+After a stable tag exists:
+
+- Transient deployment or verification failures retry the same tag, commit,
+  and artifact digest and never consume another version.
+- A deterministic source defect that requires changed bytes produces the next
+  patch version because the published tag remains immutable.
+- Pre-release tags may be used only when the project explicitly publishes and
+  retains them as release identities. Do not create `-rc` tags merely as a
+  substitute for ordinary candidate build and attempt records.
+
+Frequent stable patch tags therefore indicate that a required failure mode is
+escaping the pre-tag admission suite. Record and repair that test escape rather
+than weakening tag immutability or reusing a version.
+
 ## Repair a Frozen Release Without Advancing Main
 
 Distinguish retry from repair before selecting an executor:
