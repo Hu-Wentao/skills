@@ -174,7 +174,9 @@ uv run python <skill-dir>/scripts/sync_skill_repo.py refresh \
 The helper runs only `pnpm dlx skills update <skill-name> <-p|-g> -y` and
 defaults to three attempts with a two-second delay. A failed attempt is not a
 reason to run an unscoped update. If all attempts fail, report the exact
-command and complete per-attempt output emitted by the helper.
+command and complete per-attempt output emitted by the helper. Accept the
+project lock's `computedHash` and the shared global lock's `skillFolderHash`
+formats during verification.
 
 If the skill is not yet tracked in either scope, use the deterministic install
 command. It defaults to the `codex` agent, never selects every detected agent,

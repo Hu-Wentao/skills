@@ -506,18 +506,28 @@ def _non_negative_float(value: str) -> float:
 def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
     try:
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        computed_hash = lock["skills"][skill_name]["computedHash"]
+        entry = lock["skills"][skill_name]
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise SyncError(
             f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
         ) from exc
-    if not isinstance(computed_hash, str) or not re.fullmatch(
-        r"[0-9a-f]{64}", computed_hash
-    ):
+    if not isinstance(entry, dict):
         raise SyncError(
-            f"Refresh succeeded but {lock_path} has an invalid {skill_name} hash"
+            f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
         )
-    return computed_hash
+    for field, length in (("computedHash", 64), ("skillFolderHash", 40)):
+        value = entry.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{length}}}", value):
+            return value
+        raise SyncError(
+            f"Refresh succeeded but {lock_path} has an invalid "
+            f"{skill_name} {field}"
+        )
+    raise SyncError(
+        f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
+    )
 
 
 def _run_installer_with_retry(
