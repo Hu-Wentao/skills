@@ -77,6 +77,12 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
 - Do not expose credentials, authorization headers, request bodies, captures, or provider secrets.
 - Do not mutate a published release tag or re-resolve a moving deployment ref.
 - Keep release/retry identity fixed to the recorded full commit and immutable tag.
+- When the highest stable tag is already reachable from the committed
+  integration ref, do not let staged, unstaged, or untracked control-worktree
+  changes block freezing that ref into an isolated retained release lineage.
+- After source freeze, do not make release or deployment status depend on the
+  moving integration branch. Treat synchronization back to it as a separately
+  authorized and separately reported operation.
 - Do not classify a defect root cause, recurrence, ownership, requirement status, priority, or breaking-change acceptance from a script result alone.
 - Do not turn passing checks into automatic proof of product semantics or deployment success.
 - Stop for a decision when resolution would change user outcomes, permissions, data guarantees, compatibility, accepted Git history, or release identity.
