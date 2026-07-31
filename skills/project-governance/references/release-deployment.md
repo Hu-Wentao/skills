@@ -1,3 +1,21 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+    key:
+      source: heading
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: false
+---
 # Release and Deployment Governance
 
 ## Separate Application Releases from Instance State
@@ -188,19 +206,33 @@ For a normal release, follow the project's contracted integration policy:
 
 Create a successful deployment tag only after the project's required health,
 identity, and acceptance evidence declares that target verified. Point it to
-the same release commit. A failed or unverified deployment must not receive a
-successful deployment tag.
+the same release commit as the stable release tag. Record the target, artifact
+manifest digest or immutable artifact digests, and deployment transaction
+identity in the annotated tag message or another immutable referenced record.
+Creating a deployment tag does not require or authorize a source commit. A
+failed or unverified deployment must not receive a successful deployment tag.
 
 Treat release and successful deployment tags as immutable records. Do not move,
 delete, replace, or reuse them without explicit authorization for that exact
 tag operation.
 
-## Promote the Same Artifact
+## Promote the Same Release Identity
 
 Promote one immutable release identity through environments. Resolve the
 release tag and full commit before the first environment and use that exact
-pair for every later environment. Do not rebuild from a branch, infer a newer
-commit, or create a second release merely because promotion occurs later.
+pair for every later environment. Reuse the exact same artifact digest when it
+is compatible with the next target. When targets require different platform or
+build artifacts, key each immutable manifest by `(release tag, target)`.
+
+A later authorized promotion may create the first manifest for a target after
+the stable tag exists only from a clean detached checkout of that exact tag.
+Persist the new manifest append-only before deployment. Never overwrite,
+delete, or rebuild an existing `(release tag, target)` manifest, and never read
+or resolve a moving branch for this operation. Resolve build and target hooks
+from the tagged checkout rather than the control worktree. This adds deployment
+evidence, not source history: do not create a source commit or move the release
+tag. If source or build configuration must change, create a new release
+version.
 
 Run every environment-specific gate from a clean checkout of the same commit.
 Advance to the next environment only after the preceding environment satisfies

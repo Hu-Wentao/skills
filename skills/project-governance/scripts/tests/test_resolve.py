@@ -300,6 +300,8 @@ tasks:
             "project-governance.release-deployment.managed.v1",
         )
         self.assertIn("prepare", manifest["contract"]["operations"])
+        self.assertIn("promote-plan", manifest["contract"]["operations"])
+        self.assertIn("promote", manifest["contract"]["operations"])
 
     def test_v3_rejects_missing_executor(self) -> None:
         config_root = self.write_v3_config()

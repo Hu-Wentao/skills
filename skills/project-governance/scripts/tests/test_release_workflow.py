@@ -31,7 +31,8 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
             "import json,os,sys\n"
             "mode=sys.argv[1]\n"
             "if mode == 'freeze':\n"
-            " print(json.dumps({'schema':'project-governance.artifact-freeze.v1','artifacts':[{'name':'app','digest':'sha256:test'}]}))\n"
+            " target=os.environ['PROJECT_GOVERNANCE_RELEASE_TARGET']\n"
+            " print(json.dumps({'schema':'project-governance.artifact-freeze.v1','artifacts':[{'name':'app','digest':'sha256:'+target}]}))\n"
             "elif mode in {'gate','deploy','verify'}:\n"
             " print(mode)\n"
             "else:\n"
@@ -50,6 +51,10 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
                     "artifact": {"freeze": [sys.executable, "hooks.py", "freeze"]},
                     "targets": {
                         "test": {
+                            "deploy": [sys.executable, "hooks.py", "deploy"],
+                            "verify": [sys.executable, "hooks.py", "verify"],
+                        },
+                        "production": {
                             "deploy": [sys.executable, "hooks.py", "deploy"],
                             "verify": [sys.executable, "hooks.py", "verify"],
                         }
@@ -195,6 +200,93 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         retry_event = self.events(retried)[-1]
         self.assertEqual(retry_event["event"], "release_retry_completed")
         self.assertEqual(retry_event["commit"], tag_commit)
+
+    def test_promote_same_release_commit_freezes_new_target_without_source_commit(self) -> None:
+        prepared = self.invoke(
+            "--authorized", "release", "prepare", "--version", "1.1.0", "--target", "test"
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        released = self.invoke(
+            "--authorized", "release", "run", "--version", "1.1.0", "--target", "test"
+        )
+        self.assertEqual(released.returncode, 0, released.stderr)
+        release_commit = self.git("rev-parse", "v1.1.0^{commit}")
+        branch_commit = self.git("rev-parse", "release/v1.1.0")
+
+        config_path = self.root / ".agents" / "skills-config" / "project-governance" / "release-workflow.json"
+        moving_config = json.loads(config_path.read_text(encoding="utf-8"))
+        del moving_config["targets"]["production"]
+        config_path.write_text(json.dumps(moving_config, indent=2) + "\n", encoding="utf-8")
+        self.git("add", str(config_path.relative_to(self.root)))
+        self.git("commit", "-m", "change moving deployment config")
+
+        planned = self.invoke(
+            "release", "promote-plan", "--tag", "v1.1.0", "--target", "production"
+        )
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        self.assertEqual(self.events(planned)[-1]["artifactAction"], "freeze_first_for_target")
+
+        promoted = self.invoke(
+            "--authorized", "release", "promote", "--tag", "v1.1.0", "--target", "production"
+        )
+        self.assertEqual(promoted.returncode, 0, promoted.stderr)
+        event = self.events(promoted)[-1]
+        self.assertEqual(event["event"], "release_promoted")
+        self.assertEqual(event["commit"], release_commit)
+        self.assertEqual(self.git("rev-parse", "release/v1.1.0"), branch_commit)
+        self.assertEqual(self.git("rev-parse", "v1.1.0^{commit}"), release_commit)
+
+        dev_tags = self.git("tag", "--list", "deploy/test/*/v1.1.0").splitlines()
+        production_tags = self.git("tag", "--list", "deploy/production/*/v1.1.0").splitlines()
+        self.assertEqual(len(dev_tags), 1)
+        self.assertEqual(len(production_tags), 1)
+        self.assertEqual(self.git("rev-parse", f"{dev_tags[0]}^{{commit}}"), release_commit)
+        self.assertEqual(self.git("rev-parse", f"{production_tags[0]}^{{commit}}"), release_commit)
+        annotation = self.git("for-each-ref", "--format=%(contents)", f"refs/tags/{production_tags[0]}")
+        evidence = json.loads(annotation)
+        self.assertEqual(evidence["releaseCommit"], release_commit)
+        self.assertEqual(evidence["target"], "production")
+        self.assertEqual(evidence["artifacts"], [{"digest": "sha256:production", "name": "app"}])
+
+        planned_again = self.invoke(
+            "release", "promote-plan", "--tag", "v1.1.0", "--target", "production"
+        )
+        self.assertEqual(planned_again.returncode, 0, planned_again.stderr)
+        self.assertEqual(self.events(planned_again)[-1]["artifactAction"], "reuse")
+        manifest = Path(event["artifactManifest"])
+        frozen_bytes = manifest.read_bytes()
+        promoted_again = self.invoke(
+            "--authorized", "release", "promote", "--tag", "v1.1.0", "--target", "production"
+        )
+        self.assertEqual(promoted_again.returncode, 0, promoted_again.stderr)
+        self.assertEqual(manifest.read_bytes(), frozen_bytes)
+
+    def test_retry_reads_legacy_single_target_manifest(self) -> None:
+        prepared = self.invoke(
+            "--authorized", "release", "prepare", "--version", "1.1.0", "--target", "test"
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        released = self.invoke(
+            "--authorized", "release", "run", "--version", "1.1.0", "--target", "test"
+        )
+        self.assertEqual(released.returncode, 0, released.stderr)
+        manifest = Path(self.events(released)[-1]["artifactManifest"])
+        legacy = manifest.parent.parent / "v1.1.0.json"
+        manifest.replace(legacy)
+
+        retried = self.invoke(
+            "--authorized", "release", "retry", "--tag", "v1.1.0", "--target", "test"
+        )
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        self.assertEqual(Path(self.events(retried)[-1]["artifactManifest"]), legacy)
+
+        promoted = self.invoke(
+            "--authorized", "release", "promote", "--tag", "v1.1.0", "--target", "production"
+        )
+        self.assertEqual(promoted.returncode, 0, promoted.stderr)
+        production_manifest = Path(self.events(promoted)[-1]["artifactManifest"])
+        self.assertNotEqual(production_manifest, legacy)
+        self.assertEqual(json.loads(production_manifest.read_text())["target"], "production")
 
     def test_failed_artifact_freeze_does_not_create_stable_tag(self) -> None:
         path = self.root / ".agents" / "skills-config" / "project-governance" / "release-workflow.json"

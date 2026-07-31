@@ -37,7 +37,7 @@ Use `--authorized` only after the current user authorizes a non-read-only operat
 
 Supported release aliases include `release sync-main-plan`, `release sync-main`,
 `release inspect`, `release bootstrap-plan`, `release bootstrap`, `release plan`, `release prepare-plan`, `release prepare`,
-`release run`, `release retry`, `release repair-prepare-plan`,
+`release run`, `release promote-plan`, `release promote`, `release retry`, `release repair-prepare-plan`,
 `release repair-prepare`, `release repair-plan`, and `release repair`. A
 project-owned contract may expose only a subset.
 
@@ -110,7 +110,7 @@ The audit requires `queryable-markdown` and treats a missing or invalid persiste
 
 ## Govern Git, Releases, and Deployment
 
-Use `git snapshot`, `release inspect`, and the applicable normal or repair plan before semantic release decisions. Invoke `release run`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
+Use `git snapshot`, `release inspect`, and the applicable normal, promotion, or repair plan before semantic release decisions. Invoke `release run`, `release promote`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
 
 Treat a request for a full release or release-and-deploy as authority over an
 already committed source identity, not as authority to commit the control
@@ -142,6 +142,13 @@ or migrate, but must not recreate or bypass those identities. An artifact
 freeze hook must finish with the structured evidence required by
 [release-workflow-config.md](references/release-workflow-config.md). A deploy
 hook must consume the frozen manifest and must not rebuild it.
+
+Keep a stable release tag bound only to its exact source commit. A later
+authorized `release promote` may append the first immutable artifact manifest
+for a new target from a clean checkout of that tag; it must not amend the tag,
+create a source commit, or replace an existing `(tag, target)` manifest. Every
+successful `deploy/<target>/<UTC timestamp>/v<version>` tag must point to the
+same release commit and record the selected artifact evidence.
 
 Classify a failed deployment before the next mutation. Use `release retry` only when source remains unchanged at the fixed release tag. If source must change, use `release repair-plan` and `release repair` to create the next patch release from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 

@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -191,6 +192,30 @@ def load_config(root: Path, *, require_complete: bool = False, target: str | Non
     return config
 
 
+def load_config_from_ref(root: Path, ref: str, *, require_complete: bool, target: str | None) -> dict[str, Any]:
+    relative_config = Path(".agents/skills-config/project-governance/release-workflow.json")
+    config_text = git(root, "show", f"{ref}:{relative_config.as_posix()}", code="RELEASE_CONFIG_AT_TAG_MISSING")
+    try:
+        raw = require_mapping(json.loads(config_text), "release workflow config")
+        version = require_mapping(raw.get("version"), "version")
+        version_relative = require_string(version.get("path"), "version.path")
+    except json.JSONDecodeError as exc:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", f"cannot parse release config at {ref}", exit_code=2) from exc
+    with tempfile.TemporaryDirectory(prefix="release-config-") as temporary_name:
+        temporary = Path(temporary_name)
+        config_copy = temporary / relative_config
+        config_copy.parent.mkdir(parents=True, exist_ok=True)
+        config_copy.write_text(config_text + "\n", encoding="utf-8")
+        version_copy = (temporary / version_relative).resolve()
+        try:
+            version_copy.relative_to(temporary.resolve())
+        except ValueError as exc:
+            raise WorkflowError("INVALID_RELEASE_CONFIG", "version.path escapes the repository", exit_code=2) from exc
+        version_copy.parent.mkdir(parents=True, exist_ok=True)
+        version_copy.write_text(git(root, "show", f"{ref}:{version_relative}", code="INVALID_RELEASE_CONFIG") + "\n", encoding="utf-8")
+        return load_config(temporary, require_complete=require_complete, target=target)
+
+
 def config_status(root: Path, target: str | None) -> dict[str, Any]:
     try:
         config = load_config(root)
@@ -240,8 +265,12 @@ def state_path(root: Path, version: str) -> Path:
     return runtime_root(root) / "releases" / f"v{version}.json"
 
 
-def artifact_path(root: Path, tag: str) -> Path:
+def legacy_artifact_path(root: Path, tag: str) -> Path:
     return runtime_root(root) / "artifacts" / f"{tag}.json"
+
+
+def artifact_path(root: Path, tag: str, target: str) -> Path:
+    return runtime_root(root) / "artifacts" / tag / f"{target}.json"
 
 
 def transaction_path(root: Path, target: str) -> Path:
@@ -253,6 +282,21 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def atomic_json_once(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise WorkflowError("ARTIFACT_MANIFEST_EXISTS", f"refusing to replace {path}", exit_code=2) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_json(path: Path, code: str) -> dict[str, Any]:
@@ -658,6 +702,29 @@ def parse_artifact_output(output: str, *, tag: str, commit: str, target: str) ->
     return {"schema": ARTIFACT_SCHEMA, "tag": tag, "commit": commit, "target": target, "artifacts": normalized, "frozenAt": datetime.now(timezone.utc).isoformat()}
 
 
+def load_target_artifact(root: Path, *, tag: str, commit: str, target: str, required: bool) -> tuple[Path, dict[str, Any]] | None:
+    selected = artifact_path(root, tag, target)
+    if not selected.is_file():
+        legacy = legacy_artifact_path(root, tag)
+        if legacy.is_file():
+            selected = legacy
+        elif not required:
+            return None
+    artifact = read_json(selected, "ARTIFACT_FREEZE_EVIDENCE_MISSING")
+    if selected == legacy_artifact_path(root, tag) and artifact.get("target") != target and not required:
+        if artifact.get("schema") == ARTIFACT_SCHEMA and artifact.get("tag") == tag and artifact.get("commit") == commit:
+            return None
+    if artifact.get("schema") != ARTIFACT_SCHEMA or artifact.get("tag") != tag or artifact.get("commit") != commit or artifact.get("target") != target:
+        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "frozen artifact identity does not match tag/commit/target", exit_code=2)
+    artifacts = artifact.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_INVALID", "frozen artifact manifest has no artifacts", exit_code=2)
+    for index, entry in enumerate(artifacts):
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) or not entry["name"] or not isinstance(entry.get("digest"), str) or not entry["digest"]:
+            raise WorkflowError("ARTIFACT_FREEZE_EVIDENCE_INVALID", f"invalid frozen artifact entry at index {index}", exit_code=2)
+    return selected, artifact
+
+
 def annotated_tag_commit(root: Path, tag: str) -> str | None:
     if not ref_exists(root, f"refs/tags/{tag}"):
         return None
@@ -666,11 +733,10 @@ def annotated_tag_commit(root: Path, tag: str) -> str | None:
     return full_commit(root, tag)
 
 
-def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, Any], worktree: Path, artifact: dict[str, Any], migration: bool) -> None:
+def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, Any], worktree: Path, artifact: dict[str, Any], artifact_file: Path, migration: bool) -> None:
     version = state["version"]
     tag = state["tag"]
     target = state["target"]
-    artifact_file = artifact_path(root, tag)
     values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
     env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
     assert_transaction_compatible(root, state)
@@ -707,8 +773,23 @@ def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, A
     atomic_json(transaction_path(root, target), transaction)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     deploy_tag = f"deploy/{target}/{timestamp}/{tag}"
-    git(root, "tag", "-a", deploy_tag, state["candidateCommit"], "-m", f"Deploy {tag} to {target}")
-    emit("deployment_verified", tag=tag, commit=state["candidateCommit"], target=target, deploymentTag=deploy_tag, transaction=str(transaction_path(root, target)))
+    manifest_digest = f"sha256:{hashlib.sha256(artifact_file.read_bytes()).hexdigest()}"
+    transaction_file = transaction_path(root, target)
+    transaction_digest = f"sha256:{hashlib.sha256(transaction_file.read_bytes()).hexdigest()}"
+    annotation = json.dumps(
+        {
+            "schema": "project-governance.deployment-tag.v1",
+            "releaseTag": tag,
+            "releaseCommit": state["candidateCommit"],
+            "target": target,
+            "artifactManifestDigest": manifest_digest,
+            "artifacts": artifact["artifacts"],
+            "deploymentTransactionDigest": transaction_digest,
+        },
+        sort_keys=True,
+    )
+    git(root, "tag", "-a", deploy_tag, state["candidateCommit"], "-m", annotation)
+    emit("deployment_verified", tag=tag, commit=state["candidateCommit"], target=target, deploymentTag=deploy_tag, artifactManifestDigest=manifest_digest, transaction=str(transaction_path(root, target)))
 
 
 def run_release(root: Path, *, version: str, target: str, migration: bool, repair_base: str | None = None) -> int:
@@ -734,8 +815,9 @@ def run_release(root: Path, *, version: str, target: str, migration: bool, repai
         tag = state["tag"]
         if annotated_tag_commit(root, tag) is not None:
             raise WorkflowError("RELEASE_ALREADY_TAGGED", f"use release retry for existing tag {tag}", exit_code=2)
-        values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_path(root, tag))}
-        env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_path(root, tag))
+        artifact_file = artifact_path(root, tag, target)
+        values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
+        env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
         for index, gate in enumerate(config["gates"]):
             emit("release_gate_started", index=index, executable=gate[0])
             run_hook(gate, cwd=worktree, values=values, env=env, code="RELEASE_GATE_FAILED")
@@ -743,14 +825,14 @@ def run_release(root: Path, *, version: str, target: str, migration: bool, repai
         artifact = parse_artifact_output(output, tag=tag, commit=candidate, target=target)
         if git(worktree, "status", "--porcelain"):
             raise WorkflowError("ARTIFACT_FREEZE_MUTATED_SOURCE", "artifact freeze changed tracked source")
-        atomic_json(artifact_path(root, tag), artifact)
+        atomic_json_once(artifact_file, artifact)
         git(root, "tag", "-a", tag, candidate, "-m", f"Release {tag}")
         if annotated_tag_commit(root, tag) != candidate:
             raise WorkflowError("RELEASE_TAG_IDENTITY_MISMATCH", "annotated tag does not match frozen candidate")
         state.update({"status": "tagged", "phase": "artifact_frozen", "candidateCommit": candidate, "updatedAt": datetime.now(timezone.utc).isoformat()})
         atomic_json(state_path(root, version), state)
         try:
-            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, migration=migration)
+            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, artifact_file=artifact_file, migration=migration)
         except WorkflowError:
             state.update({"status": "failed", "phase": "deployment_failed", "updatedAt": datetime.now(timezone.utc).isoformat()})
             atomic_json(state_path(root, version), state)
@@ -762,7 +844,7 @@ def run_release(root: Path, *, version: str, target: str, migration: bool, repai
             tag=tag,
             commit=candidate,
             target=target,
-            artifactManifest=str(artifact_path(root, tag)),
+            artifactManifest=str(artifact_file),
             releaseBoundary=release_boundary(),
         )
     return 0
@@ -771,13 +853,12 @@ def run_release(root: Path, *, version: str, target: str, migration: bool, repai
 def retry(root: Path, *, tag: str, target: str) -> int:
     if not TAG.fullmatch(tag):
         raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
-    config = load_config(root, require_complete=True, target=target)
     commit = annotated_tag_commit(root, tag)
     if commit is None:
         raise WorkflowError("RELEASE_TAG_MISSING", f"release tag does not exist: {tag}", exit_code=2)
-    artifact = read_json(artifact_path(root, tag), "ARTIFACT_FREEZE_EVIDENCE_MISSING")
-    if artifact.get("commit") != commit or artifact.get("target") != target:
-        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "frozen artifact identity does not match tag/target", exit_code=2)
+    selected = load_target_artifact(root, tag=tag, commit=commit, target=target, required=True)
+    assert selected is not None
+    artifact_file, artifact = selected
     version = tag[1:]
     attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     worktree = worktree_root(root) / f"retry-{tag}-{target}-{attempt}"
@@ -786,19 +867,20 @@ def retry(root: Path, *, tag: str, target: str) -> int:
         try:
             if full_commit(worktree, "HEAD") != commit or git(worktree, "status", "--porcelain"):
                 raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "retry worktree identity check failed")
+            config = load_config(worktree, require_complete=True, target=target)
             for index, gate in enumerate(config["gates"]):
-                values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_path(root, tag))}
-                env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_path(root, tag))
+                values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
+                env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
                 emit("retry_gate_started", index=index, executable=gate[0])
                 run_hook(gate, cwd=worktree, values=values, env=env, code="RETRY_GATE_FAILED")
             state = {"version": version, "tag": tag, "target": target, "candidateCommit": commit}
-            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, migration=False)
+            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, artifact_file=artifact_file, migration=False)
             emit(
                 "release_retry_completed",
                 tag=tag,
                 commit=commit,
                 target=target,
-                artifactManifest=str(artifact_path(root, tag)),
+                artifactManifest=str(artifact_file),
                 releaseBoundary=release_boundary(),
             )
         finally:
@@ -806,9 +888,68 @@ def retry(root: Path, *, tag: str, target: str) -> int:
     return 0
 
 
+def plan_promotion(root: Path, *, tag: str, target: str) -> int:
+    if not TAG.fullmatch(tag):
+        raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
+    commit = annotated_tag_commit(root, tag)
+    if commit is None:
+        raise WorkflowError("RELEASE_TAG_MISSING", f"release tag does not exist: {tag}", exit_code=2)
+    load_config_from_ref(root, tag, require_complete=True, target=target)
+    selected = load_target_artifact(root, tag=tag, commit=commit, target=target, required=False)
+    emit(
+        "release_promotion_planned",
+        tag=tag,
+        commit=commit,
+        target=target,
+        artifactAction="reuse" if selected else "freeze_first_for_target",
+        artifactManifest=str(selected[0]) if selected else str(artifact_path(root, tag, target)),
+    )
+    return 0
+
+
+def promote(root: Path, *, tag: str, target: str, migration: bool) -> int:
+    if not TAG.fullmatch(tag):
+        raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
+    commit = annotated_tag_commit(root, tag)
+    if commit is None:
+        raise WorkflowError("RELEASE_TAG_MISSING", f"release tag does not exist: {tag}", exit_code=2)
+    version = tag[1:]
+    attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    worktree = worktree_root(root) / f"promote-{tag}-{target}-{attempt}"
+    with release_lock(root):
+        git(root, "worktree", "add", "--detach", str(worktree), tag)
+        try:
+            if full_commit(worktree, "HEAD") != commit or git(worktree, "status", "--porcelain"):
+                raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "promotion worktree identity check failed")
+            config = load_config(worktree, require_complete=True, target=target)
+            selected = load_target_artifact(root, tag=tag, commit=commit, target=target, required=False)
+            if selected is None:
+                artifact_file = artifact_path(root, tag, target)
+            else:
+                artifact_file, artifact = selected
+            values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
+            env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
+            for index, gate in enumerate(config["gates"]):
+                emit("promotion_gate_started", index=index, executable=gate[0])
+                run_hook(gate, cwd=worktree, values=values, env=env, code="PROMOTION_GATE_FAILED")
+            if selected is None:
+                output = run_hook(config["artifact"]["freeze"], cwd=worktree, values=values, env=env, code="ARTIFACT_FREEZE_FAILED")
+                artifact = parse_artifact_output(output, tag=tag, commit=commit, target=target)
+                if git(worktree, "status", "--porcelain"):
+                    raise WorkflowError("ARTIFACT_FREEZE_MUTATED_SOURCE", "artifact freeze changed tracked source")
+                atomic_json_once(artifact_file, artifact)
+                emit("promotion_artifact_frozen", tag=tag, commit=commit, target=target, artifactManifest=str(artifact_file))
+            state = {"version": version, "tag": tag, "target": target, "candidateCommit": commit}
+            execute_deployment(root, config=config, state=state, worktree=worktree, artifact=artifact, artifact_file=artifact_file, migration=migration)
+            emit("release_promoted", tag=tag, commit=commit, target=target, artifactManifest=str(artifact_file), releaseBoundary=release_boundary())
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False, capture_output=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("inspect", "sync-main-plan", "sync-main", "plan", "bootstrap-plan", "bootstrap", "prepare-plan", "prepare", "repair-prepare-plan", "repair-prepare", "run", "repair", "retry"))
+    parser.add_argument("operation", choices=("inspect", "sync-main-plan", "sync-main", "plan", "bootstrap-plan", "bootstrap", "prepare-plan", "prepare", "repair-prepare-plan", "repair-prepare", "run", "repair", "promote-plan", "promote", "retry"))
     parser.add_argument("--target")
     parser.add_argument("--version")
     parser.add_argument("--base-tag")
@@ -850,7 +991,11 @@ def main(argv: list[str] | None = None) -> int:
                 raise WorkflowError("REPAIR_IDENTITY_REQUIRED", "repair requires --base-tag", exit_code=2)
             return run_release(root, version=args.version, target=args.target, migration=args.migration, repair_base=args.base_tag if args.operation == "repair" else None)
         if not args.tag or not args.target:
-            raise WorkflowError("RELEASE_IDENTITY_REQUIRED", "retry requires --tag and --target", exit_code=2)
+            raise WorkflowError("RELEASE_IDENTITY_REQUIRED", f"{args.operation} requires --tag and --target", exit_code=2)
+        if args.operation == "promote-plan":
+            return plan_promotion(root, tag=args.tag, target=args.target)
+        if args.operation == "promote":
+            return promote(root, tag=args.tag, target=args.target, migration=args.migration)
         return retry(root, tag=args.tag, target=args.target)
     except WorkflowError as exc:
         if args.operation in {"sync-main-plan", "sync-main"}:

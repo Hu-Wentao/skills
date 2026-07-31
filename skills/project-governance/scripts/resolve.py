@@ -442,6 +442,12 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
         "required": True,
         "pattern": tag,
     }
+    release_tag = {
+        "flag": "--tag",
+        "type": "string",
+        "required": True,
+        "pattern": tag,
+    }
     resume = {"flag": "--resume", "type": "boolean", "required": False}
     migration = {"flag": "--migration", "type": "boolean", "required": False}
     raw = {
@@ -568,6 +574,22 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
                 "release_workflow_completed",
                 ["report_release_evidence", "retry_same_fixed_tag", "repair_next_patch"],
             ),
+            "promote-plan": operation(
+                "promote-plan",
+                "Plan one exact release tag promotion to a target and report whether its immutable target artifact already exists.",
+                "read_only",
+                {"tag": release_tag, "target": target},
+                "release_promotion_planned",
+                ["authorized_release_promotion"],
+            ),
+            "promote": operation(
+                "promote",
+                "Deploy one exact release tag to a target, appending only that target's first immutable artifact manifest when needed.",
+                "external_write",
+                {"tag": release_tag, "target": target, "migration": migration},
+                "release_promoted",
+                ["report_promotion_evidence", "retry_same_fixed_tag", "repair_next_patch"],
+            ),
             "repair": operation(
                 "repair",
                 "Freeze, tag, deploy, and verify one prepared immediate-next-patch repair lineage.",
@@ -581,12 +603,7 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
                 "Retry deployment from one exact annotated tag, commit, frozen artifact manifest, and target in a fresh detached worktree.",
                 "external_write",
                 {
-                    "tag": {
-                        "flag": "--tag",
-                        "type": "string",
-                        "required": True,
-                        "pattern": tag,
-                    },
+                    "tag": release_tag,
                     "target": target,
                 },
                 "fixed_tag_retry_completed",

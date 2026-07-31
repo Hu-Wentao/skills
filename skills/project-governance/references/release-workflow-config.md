@@ -1,3 +1,21 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+    key:
+      source: heading
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: false
+---
 # Managed Release Workflow Configuration
 
 Use the managed workflow when a repository needs the universal release lineage
@@ -79,9 +97,11 @@ runtime mechanism.
 
 ## Artifact Boundary
 
-The artifact freeze hook runs before the annotated stable tag is created. It
-must build or stage the exact candidate artifact and finish stdout with one JSON
-object:
+For the first release target, the artifact freeze hook runs before the
+annotated stable tag is created. For a later target, `release promote` runs the
+same hook from a clean detached checkout of the exact stable tag before that
+target is deployed. In both cases the hook must build or stage the exact
+target artifact and finish stdout with one JSON object:
 
 ```json
 {
@@ -96,10 +116,12 @@ object:
 ```
 
 Artifact names and digests are opaque to the engine but must be immutable and
-content-identifying. The deploy hook receives the persisted manifest path and
-must consume those artifacts. It must not rebuild, retag different bytes, or
-resolve a moving branch. Fixed-tag retry skips artifact freeze and reuses that
-same manifest.
+content-identifying. The engine persists manifests by `(release tag, target)`.
+The deploy hook receives the selected manifest path and must consume those
+artifacts. It must not rebuild, retag different bytes, or resolve a moving
+branch. An existing target manifest is immutable; promotion and fixed-tag retry
+reuse it. Historical single-manifest records remain readable when their
+recorded target matches the requested target.
 
 ## Optional Migration Hooks
 
@@ -133,11 +155,16 @@ migration remain separate current-user authority.
 - Only one release command runs at a time per Git common directory.
 - Gates and artifact freeze run in the retained candidate worktree.
 - The stable annotated tag is created only after gates and artifact evidence
-  pass.
+  pass for the first target.
+- `release promote --tag <tag> --target <target>` creates no source commit. It
+  reuses an existing immutable target manifest or appends the target's first
+  manifest using hooks resolved from the exact tag checkout, then deploys that
+  same release commit.
 - Deployment success requires the configured verify hook and creates a
-  `deploy/<target>/<UTC timestamp>/v<version>` tag.
+  `deploy/<target>/<UTC timestamp>/v<version>` tag pointing to the same commit
+  as the stable release tag.
 - Retry creates a fresh detached worktree at the exact tag and reuses the frozen
-  artifact manifest.
+  target artifact manifest.
 - After preparation, release and deployment status come only from the retained
   lineage and frozen evidence. Synchronization back to the integration branch
   is a separately reported post-release operation; its dirty-worktree blocker

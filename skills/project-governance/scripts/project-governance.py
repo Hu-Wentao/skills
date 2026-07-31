@@ -27,6 +27,8 @@ ALIASES = {
     ("release", "prepare-plan"): ("release-deployment", "prepare-plan"),
     ("release", "prepare"): ("release-deployment", "prepare"),
     ("release", "run"): ("release-deployment", "run"),
+    ("release", "promote-plan"): ("release-deployment", "promote-plan"),
+    ("release", "promote"): ("release-deployment", "promote"),
     ("release", "retry"): ("release-deployment", "retry"),
     ("release", "repair-prepare-plan"): ("release-deployment", "repair-prepare-plan"),
     ("release", "repair-prepare"): ("release-deployment", "repair-prepare"),
