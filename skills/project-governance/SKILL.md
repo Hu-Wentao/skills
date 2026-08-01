@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for requirements, baselines, plans, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, project-wide Markdown inventory and lifecycle maintenance, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for document inspection, maintenance planning, mdq contract repair, stale plan or requirement status, baselines, archives, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -63,6 +63,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 - For a current or proposed third-party library, framework, service, runtime, replacement, or technology fit assessment, read [dependency-evaluation.md](references/dependency-evaluation.md). Keep official upstream evidence, project facts, and AI inference distinct.
 - For SemVer, migrations, compatibility surfaces, release identities, tags, promotions, retries, or hotfix ancestry, read [git-version-governance.md](references/git-version-governance.md) and [release-deployment.md](references/release-deployment.md) only when the task contract cannot decide the required semantic boundary.
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
+- For project-wide documentation inventory, missing or invalid `mdq` contracts, stale lifecycle state, link and index drift, or authorized documentation cleanup, resolve `document-maintenance` and read [document-maintenance.md](references/document-maintenance.md).
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
 - For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
 - Before creating, changing, reviewing, or accepting any host-visible port,
@@ -106,13 +107,22 @@ Before completing the write:
 
 Keep each fact in one primary authority layer: Requirement, Baseline, Plan, Code/Test Fact, Evaluation Evidence, Archive, or Operational Workflow. Evaluation Evidence supports a decision but does not make a candidate an installed or adopted dependency. Treat mdq as structural extraction only; AI and the applicable governance domain still decide status meaning, priority, completion, and authority.
 
-Run the contracted `docs audit` operation when available. Otherwise run:
+Use the contracted document-maintenance operations when available:
+
+- `docs inspect` and `docs plan` are read-only;
+- `docs maintain` requires current explicit write authorization and bounds the
+  documentation scope before edits;
+- `docs verify` is read-only and is required after maintenance;
+- `docs audit` remains a read-only compatibility operation with its legacy
+  output schema; use `docs verify` for the expanded lifecycle checks.
+
+Otherwise run:
 
 ```bash
 node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 ```
 
-The audit requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, dependency evaluations, defects, archives, coverage, verification, or traceability documents as a structural error. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority.
+Document maintenance requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, dependency evaluations, defects, archives, coverage, verification, or traceability documents as structural drift. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority. Inventorying all Markdown does not make ordinary README, package, or operations documents governed records.
 
 ## Govern Git, Releases, and Deployment
 

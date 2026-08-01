@@ -1,4 +1,30 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [1]
+      pattern: '^Document Audit Policy$'
+    key:
+      source: marker
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: true
+---
+<!-- mdq:record id="GOV-DOCUMENT-AUDIT" -->
 # Document Audit Policy
+
+This policy is the compatibility surface for configured `document-audit`
+tasks. Prefer [document-maintenance.md](document-maintenance.md) and its
+`inspect`, `plan`, `maintain`, and `verify` operations for new workflows.
+`docs audit` remains a read-only compatibility operation with its existing
+output schema; `docs verify` adds lifecycle-field maintenance checks.
 
 Use deterministic discovery and validation for Markdown contracts, local links,
 stable requirement and defect identifiers, lifecycle indexes, and verification

@@ -14,12 +14,13 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "7"
+RESOLVER_VERSION = "8"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
     "document-audit": "references/document-audit.md",
+    "document-maintenance": "references/document-maintenance.md",
     "git-snapshot": "references/git-snapshot.md",
     "port-allocation": "references/port-allocation.md",
     "release-deployment": "references/release-deployment.md",
@@ -620,6 +621,146 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
     )
 
 
+def managed_document_maintenance_contract(
+    repo_root: Path, skill_root: Path
+) -> dict[str, Any]:
+    """Return the project-neutral document maintenance contract."""
+
+    script = str(skill_root / "scripts" / "document-maintenance.py")
+    common_parameters = {
+        "docs": {
+            "flag": "--docs",
+            "type": "string",
+            "required": False,
+            "default": "docs",
+            "pattern": "^[A-Za-z0-9._/-]+$",
+        },
+        "scope": {
+            "flag": "--scope",
+            "type": "string",
+            "required": False,
+            "default": "governed",
+            "enum": ["governed", "all-markdown"],
+        },
+        "kind": {
+            "flag": "--kind",
+            "type": "string",
+            "required": False,
+            "default": "all",
+            "enum": [
+                "all",
+                "contracts",
+                "lifecycle",
+                "references",
+                "traceability",
+                "defects",
+                "structure",
+            ],
+        },
+        "limit": {
+            "flag": "--limit",
+            "type": "integer",
+            "required": False,
+            "default": 0,
+        },
+    }
+
+    def operation(
+        name: str,
+        description: str,
+        mutability: str,
+        success: str,
+        next_states: list[str],
+        *,
+        verification: bool = False,
+    ) -> dict[str, Any]:
+        exit_codes = {
+            "0": success,
+            "2": "document_maintenance_failed",
+        }
+        if verification:
+            exit_codes["1"] = "document_maintenance_incomplete"
+        return {
+            "description": description,
+            "command": [sys.executable, script, name, "--root", str(repo_root)],
+            "mutability": mutability,
+            "authorization": "none" if mutability == "read_only" else "current_user",
+            "parameters": common_parameters,
+            "output_schema": "project-governance.document-maintenance.v1",
+            "exit_codes": exit_codes,
+            "next_states": next_states,
+        }
+
+    raw = {
+        "schema": "project-governance.task-contract.v1",
+        "id": "project-governance.document-maintenance.managed.v1",
+        "task": "document-maintenance",
+        "operations": {
+            "audit": {
+                "description": "Run the legacy read-only governed-document audit with its stable v1 output schema.",
+                "command": [
+                    "node",
+                    str(skill_root / "scripts" / "validate-governance.mjs"),
+                    "--root",
+                    str(repo_root),
+                    "--json",
+                ],
+                "mutability": "read_only",
+                "authorization": "none",
+                "parameters": {
+                    "docs": common_parameters["docs"],
+                },
+                "output_schema": "project-governance.document-audit.v1",
+                "exit_codes": {
+                    "0": "audit_completed",
+                    "1": "structural_errors",
+                    "2": "audit_failed",
+                },
+                "next_states": [
+                    "document_maintenance_plan",
+                    "repair_mechanical_drift_if_authorized",
+                ],
+            },
+            "inspect": operation(
+                "inspect",
+                "Inventory project Markdown and inspect governed-document structure and lifecycle state.",
+                "read_only",
+                "document_inspection_completed",
+                ["document_maintenance_plan", "report_no_document_drift"],
+            ),
+            "plan": operation(
+                "plan",
+                "Create a source-hashed maintenance plan separating mechanical drift from semantic review.",
+                "read_only",
+                "document_maintenance_planned",
+                ["authorized_document_maintenance", "request_semantic_decision"],
+            ),
+            "maintain": operation(
+                "maintain",
+                "Preflight and authorize one bounded repository document-maintenance scope before governed edits.",
+                "repository_write",
+                "document_maintenance_scope_ready",
+                ["apply_scoped_document_edits", "document_maintenance_verify"],
+            ),
+            "verify": operation(
+                "verify",
+                "Verify governed Markdown contracts, lifecycle fields, links, identifiers, indexes, and traceability after maintenance.",
+                "read_only",
+                "document_maintenance_verified",
+                ["report_document_maintenance", "continue_authorized_document_maintenance"],
+                verification=True,
+            ),
+        },
+    }
+    return normalize_contract(
+        raw,
+        task="document-maintenance",
+        repo_root=repo_root,
+        skill_root=skill_root,
+        field="managed document maintenance contract",
+    )
+
+
 def normalize_port_config(value: Any) -> dict[str, Any]:
     ports = require_mapping(value, "ports")
     require_exact_keys(
@@ -766,6 +907,7 @@ def resolve_task(
     port_config: dict[str, Any] | None = None
     config_schema = ""
     managed_release = False
+    managed_document_maintenance = False
     if config:
         schema = config.get("schema")
         if schema == f"{SKILL_NAME}.config.v1":
@@ -798,8 +940,12 @@ def resolve_task(
         tasks = require_mapping(config.get("tasks"), "tasks")
         require_exact_keys(tasks, allowed_tasks, "tasks")
         raw_task_config = tasks.get(task)
-        if raw_task_config is None and task == "release-deployment":
-            managed_release = True
+        if raw_task_config is None and task in {
+            "release-deployment",
+            "document-maintenance",
+        }:
+            managed_release = task == "release-deployment"
+            managed_document_maintenance = task == "document-maintenance"
             task_config = {}
         else:
             task_config = require_mapping(raw_task_config, f"tasks.{task}")
@@ -815,6 +961,7 @@ def resolve_task(
     else:
         sources_configured = False
         managed_release = task == "release-deployment"
+        managed_document_maintenance = task == "document-maintenance"
 
     base_value = str(task_config.get("base", DEFAULT_BASES[task]))
     base_path = resolve_path(base_value, skill_root, f"tasks.{task}.base")
@@ -845,6 +992,13 @@ def resolve_task(
         workflow = {
             "mode": "managed",
             "configuration": "present" if release_config_text else "bootstrap_required",
+        }
+    elif managed_document_maintenance:
+        contract = managed_document_maintenance_contract(repo_root, skill_root)
+        release_config_text = ""
+        workflow = {
+            "mode": "managed",
+            "configuration": "project_defaults",
         }
     elif config_schema == f"{SKILL_NAME}.config.v3":
         contract_path = resolve_path(

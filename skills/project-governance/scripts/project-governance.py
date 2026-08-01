@@ -16,7 +16,11 @@ from resolve import ResolveError, resolve_task
 
 ALIASES = {
     ("defect", "collect"): ("defect-diagnosis", "collect"),
-    ("docs", "audit"): ("document-audit", "audit"),
+    ("docs", "audit"): ("document-maintenance", "audit"),
+    ("docs", "inspect"): ("document-maintenance", "inspect"),
+    ("docs", "plan"): ("document-maintenance", "plan"),
+    ("docs", "maintain"): ("document-maintenance", "maintain"),
+    ("docs", "verify"): ("document-maintenance", "verify"),
     ("git", "snapshot"): ("git-snapshot", "snapshot"),
     ("release", "sync-main-plan"): ("release-deployment", "sync-main-plan"),
     ("release", "sync-main"): ("release-deployment", "sync-main"),

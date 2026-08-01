@@ -204,6 +204,8 @@ tasks:
             "defect-feedback-lifecycle",
             "defect-diagnosis",
             "defect-history-review",
+            "document-audit",
+            "document-maintenance",
             "port-allocation",
             "release-deployment",
         ):
@@ -302,6 +304,30 @@ tasks:
         self.assertIn("prepare", manifest["contract"]["operations"])
         self.assertIn("promote-plan", manifest["contract"]["operations"])
         self.assertIn("promote", manifest["contract"]["operations"])
+
+    def test_missing_document_maintenance_task_uses_managed_contract(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "document-maintenance", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "project_defaults"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.document-maintenance.managed.v1",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["maintain"]["mutability"],
+            "repository_write",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["verify"]["mutability"],
+            "read_only",
+        )
 
     def test_v3_rejects_missing_executor(self) -> None:
         config_root = self.write_v3_config()

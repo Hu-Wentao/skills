@@ -22,9 +22,10 @@ mdq:
 
 This skill consumes optional repository-owned configuration for
 `defect-feedback-lifecycle`, `defect-diagnosis`, `defect-history-review`,
-`release-deployment`, and `port-allocation` through the configuration mechanism
-supplied by `skillcraft`. The mechanism belongs to `skillcraft`; it is not a
-Project Governance domain or a Project-Skill Governance capability.
+`document-audit`, `document-maintenance`, `release-deployment`, and
+`port-allocation` through the configuration mechanism supplied by `skillcraft`.
+The mechanism belongs to `skillcraft`; it is not a Project Governance domain
+or a Project-Skill Governance capability.
 
 ```text
 .agents/skills-config/project-governance/
@@ -81,6 +82,10 @@ tasks:
     base: references/defect-governance.md
     profile: project-defects.md
     contract: defect-history.contract.json
+  document-maintenance:
+    base: references/document-maintenance.md
+    profile: project-documents.md
+    contract: document-maintenance.contract.json
   release-deployment:
     base: references/release-deployment.md
     profile: project-release.md
@@ -89,6 +94,12 @@ tasks:
     base: references/port-allocation.md
     contract: port-allocation.contract.json
 ```
+
+When `document-maintenance` is not configured, the skill supplies a managed
+project-neutral contract with `inspect`, `plan`, `maintain`, and `verify`.
+Project configuration is required only when the repository needs different
+governed roots, status vocabularies, or deterministic document commands. The
+legacy `document-audit` task may remain configured during migration.
 
 Run the resolver adjacent to the installed skill and pass the target repository
 with `--cwd`. For v3 it validates the selected JSON task contract, returns a
