@@ -242,6 +242,59 @@ class GitWorktreeCliTests(unittest.TestCase):
         )
         self.assertEqual(run(["git", "tag", "--list"], self.repo).stdout, "")
 
+    def test_owner_status_discovers_preexisting_current_worktree(self) -> None:
+        worktree = self.create("feat/preexisting-owner-task")
+        self.commit_file(worktree, "complete.txt", "complete\n")
+        head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        inspected = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+
+        self.assertEqual(inspected["action"], "owner_status_inspected")
+        self.assertEqual(inspected["worktree"]["path"], str(worktree))
+        self.assertEqual(inspected["worktree"]["branch"], "feat/preexisting-owner-task")
+        self.assertEqual(inspected["worktree"]["head"], head)
+        self.assertFalse(inspected["worktree"]["main"])
+        self.assertTrue(inspected["completion_eligible"])
+        self.assertEqual(inspected["completion_blockers"], [])
+        self.assertEqual(
+            inspected["next_action"], "mark_complete_after_semantic_completion"
+        )
+
+        main = json.loads(self.cli("owner-status").stdout)
+        self.assertFalse(main["completion_eligible"])
+        self.assertIn("main_worktree", main["completion_blockers"])
+        self.assertEqual(main["completion"]["status"], "not_applicable")
+        self.assertIsNone(main["completion"]["ref"])
+
+        (worktree / "draft.txt").write_text("draft\n")
+        dirty = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertFalse(dirty["completion_eligible"])
+        self.assertTrue(
+            any(blocker.endswith(":dirty") for blocker in dirty["completion_blockers"])
+        )
+
     def test_maintenance_audit_reports_current_and_stale_completion(self) -> None:
         worktree = self.create("feat/completed-owner-task")
         self.commit_file(worktree, "first.txt", "first\n")

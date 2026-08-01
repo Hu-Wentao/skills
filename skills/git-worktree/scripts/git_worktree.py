@@ -893,6 +893,52 @@ def command_list(repo: Path, _args: argparse.Namespace) -> None:
     emit({"worktrees": [asdict(worktree) for worktree in parse_worktrees(repo)]})
 
 
+def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
+    current_path = repo.resolve()
+    worktree = next(
+        (
+            item
+            for item in parse_worktrees(repo)
+            if Path(item.path).resolve() == current_path
+        ),
+        None,
+    )
+    if worktree is None:
+        raise WorkflowError(
+            f"Current repository path is not a registered worktree: {current_path}"
+        )
+    snapshot = worktree_snapshot(worktree)
+    blockers: list[str] = []
+    if worktree.main:
+        blockers.append("main_worktree")
+    if worktree.detached or not worktree.branch:
+        blockers.append("detached_head")
+    blockers.extend(worktree_mutation_blockers([snapshot]))
+    completion = completion_evidence(
+        repo,
+        None if worktree.main or worktree.detached else worktree.branch,
+        worktree.head or "",
+        [snapshot],
+    )
+    emit(
+        {
+            "action": "owner_status_inspected",
+            "git_common_dir": str(git_common_dir(repo)),
+            "worktree": snapshot,
+            "completion": completion,
+            "completion_eligible": not blockers,
+            "completion_blockers": blockers,
+            "next_action": (
+                "mark_complete_after_semantic_completion"
+                if not blockers and completion["status"] != "current"
+                else "already_marked_complete"
+                if not blockers
+                else "resolve_or_report_blockers"
+            ),
+        }
+    )
+
+
 def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
     requested = Path(args.repo).expanduser().resolve()
     branch = args.branch or current_branch(requested)
@@ -1783,6 +1829,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = commands.add_parser("list", help="List registered worktrees")
     list_parser.set_defaults(handler=command_list)
+
+    owner_status = commands.add_parser(
+        "owner-status",
+        help="Inspect the current worktree's owner-completion eligibility",
+    )
+    owner_status.set_defaults(handler=command_owner_status)
 
     mark_complete = commands.add_parser(
         "mark-complete", help="Mark one clean task branch's exact HEAD as completed"

@@ -1,6 +1,6 @@
 ---
 name: git-worktree
-description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; mark an owner task's exact branch HEAD complete; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; apply an exact merge/delete/retain decision plan under a repository lock; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited snapshots and HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
+description: Manage Git worktrees, owner-task completion handoffs, and evidence-based local development-state maintenance. Use when Codex creates or enters a worktree; implements a plan, specification, or implementation prompt on a non-main task branch; must mark the final validated commit complete even when the worktree existed before the conversation; lists or creates worktrees; audits, merges, retains, deletes, rescues, or cleans local branches and worktrees; or safely removes stale registrations. Preserves active and dirty work, validates exact snapshots and HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
 ---
 
 # Git Worktree
@@ -18,6 +18,22 @@ unmerged branches.
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <repository-or-worktree> <command>
 ```
+
+4. For any code implementation task, inspect the current directory rather than
+   relying on whether this conversation created or remembers the worktree:
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <current-worktree> \
+  owner-status
+```
+
+Treat a user request to implement a plan, specification, or implementation
+prompt in the current non-main worktree as ownership of that task branch for
+this conversation. A worktree created before the conversation, created by
+Codex before this turn, created manually by the user, or created during the
+task has the same owner-completion lifecycle. Record the returned absolute
+worktree path, branch, exact HEAD, main/detached status, active operations, and
+completion state before editing.
 
 ## List Worktrees
 
@@ -50,8 +66,12 @@ when appropriate and follow the repository's package-manager instructions.
 
 ## Mark Owner Completion
 
-Before the owner task ends, commit its intended work, run every required
-validation, confirm the worktree is clean, and mark that exact HEAD complete:
+For an owned plan/specification implementation on an eligible non-main task
+branch, marking completion is a required terminal step, not an optional cleanup
+suggestion. After every authorized change is committed and every required
+validation passes, run `owner-status` again, confirm the worktree is clean and
+has no active Git operation, resolve its final exact HEAD, and mark that commit
+complete before sending the final response:
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <worktree-path> \
@@ -62,6 +82,15 @@ This creates the local custom ref `refs/agents/completed/<branch>` at the exact
 branch commit. It is neither a normal tag nor a remote ref. Only the task that
 owns the branch may create or refresh this handoff. Do not mark incomplete,
 blocked, dirty, uncommitted, or unvalidated work complete.
+
+Do not silently omit the terminal step. If the current path is the main
+worktree, detached, dirty, locked, missing, uninspectable, prunable, has an
+active Git operation, still has uncommitted authorized work, failed required
+validation, or the plan is only partially implemented, do not create the ref;
+report `completion marker: not created` and the exact blocker. If the owner
+task completes without code changes because the exact branch HEAD already
+satisfies and validates the requested plan, it may mark that validated clean
+HEAD complete. Never create a normal `refs/tags/*` tag as a substitute.
 
 A completion ref is current only while it equals the branch HEAD and every
 attached worktree is clean. A matching ref becomes blocked while an attached
@@ -350,11 +379,15 @@ Report:
 - unresolved dirty state, active operations, or conflicts;
 - validation commands and results;
 - whether remote branches remained untouched;
+- owner-task worktree identity discovered from the current directory, final
+  exact HEAD, and the created/current completion ref, or the exact reason no
+  completion marker was created;
 - breaking and compatibility effects.
 
 ## Resource
 
 - `scripts/git_worktree.py`: deterministic worktree lifecycle, unified
   maintenance audit and decision-plan runner, repository mutation locking,
-  detached rescue, exact stale-registration pruning, merge, and classified
-  deletion with cross-worktree safety checks.
+  current-worktree owner-status discovery, exact completion handoff, detached
+  rescue, exact stale-registration pruning, merge, and classified deletion
+  with cross-worktree safety checks.

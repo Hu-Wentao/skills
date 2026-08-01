@@ -1,4 +1,4 @@
 interface:
-  display_name: "Git Worktree & Branch Maintenance"
-  short_description: "Safely automate Git branch and worktree maintenance"
-  default_prompt: "Use $git-worktree to audit an exact repository snapshot, classify every branch and worktree, and apply the merge/delete/retain plan under the shared mutation lock while preserving active work."
+  display_name: "Git Worktree & Owner Completion"
+  short_description: "Manage worktrees and mark owner tasks complete"
+  default_prompt: "Use $git-worktree to discover the current worktree, complete the owned task safely, and mark its final validated commit complete."
