@@ -52,6 +52,12 @@ Record and present intentionally token-intensive development activities whose ro
 - **Why it consumes tokens:** It requires tracing build and runtime requirements across the project, inspecting image layers and dependency trees, comparing alternative bases and build strategies, and repeatedly rebuilding and testing images to prove that reductions preserve behavior.
 - **Why routine value is limited:** Without a measured image-size, pull-time, startup-time, storage-cost, security, or deployment constraint, further slimming can add build complexity and compatibility risk without producing a meaningful product benefit.
 
+### Add Internationalization Across the Project
+
+- **Activity:** Select and configure an internationalization framework, inventory and extract user-facing text from interfaces, APIs, errors, notifications, and templates, define locale resources and fallback behavior, implement pluralization and regional formatting, add translations, and run locale-specific tests.
+- **Why it consumes tokens:** It requires scanning and modifying many files, interpreting each string in context, designing stable translation keys, handling framework-specific rendering and formatting rules, coordinating resource files, and validating every supported locale across affected workflows.
+- **Why routine value is limited:** Without identified multilingual users, target locales, translators, or a localization delivery plan, the change creates ongoing translation, review, testing, and dependency costs while providing little immediate product benefit.
+
 ## Record Another Activity
 
 When the user explicitly supplies another activity to record, add it to the catalog with exactly these fields:
