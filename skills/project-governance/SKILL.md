@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, project-wide Markdown inventory and lifecycle maintenance, plan implementation completion handoffs, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use when executing a plan, specification, or implementation prompt in a task worktree; for document inspection, maintenance planning, mdq contract repair, stale plan or requirement status, baselines, archives, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, and feedback lifecycles. Use for plan or specification implementation in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, and archives; third-party technology assessment or replacement; verification, branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -55,6 +55,11 @@ Supported release aliases include `release sync-main-plan`, `release sync-main`,
 `release repair-prepare`, `release repair-plan`, and `release repair`. A
 project-owned contract may expose only a subset.
 
+Supported domain knowledge aliases are `domain inspect`, `domain get`,
+`domain search`, `domain plan`, `domain maintain`, and `domain verify`.
+The managed contract defaults to `docs/domain-concepts.md` and the `lite`
+profile when a project has not registered its own `domain-knowledge` task.
+
 When a repository does not register a `release-deployment` task, resolve the
 skill-owned managed contract. Do not treat a similarly named repository script
 as a substitute. Managed `inspect` and `bootstrap-plan` remain read-only;
@@ -72,6 +77,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 - For SemVer, migrations, compatibility surfaces, release identities, tags, promotions, retries, or hotfix ancestry, read [git-version-governance.md](references/git-version-governance.md) and [release-deployment.md](references/release-deployment.md) only when the task contract cannot decide the required semantic boundary.
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
 - For project-wide documentation inventory, missing or invalid `mdq` contracts, stale lifecycle state, link and index drift, or authorized documentation cleanup, resolve `document-maintenance` and read [document-maintenance.md](references/document-maintenance.md).
+- For ubiquitous language, stable concept identifiers, aliases, bounded-context ownership, glossaries, or semantic relationships, resolve `domain-knowledge` and read [domain-knowledge.md](references/domain-knowledge.md). Keep requirements, baselines, plans, code, and tests authoritative for their own facts.
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
 - For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
 - Before creating, changing, reviewing, or accepting any host-visible port,
@@ -131,6 +137,28 @@ node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 ```
 
 Document maintenance requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, dependency evaluations, defects, archives, coverage, verification, or traceability documents as structural drift. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority. Inventorying all Markdown does not make ordinary README, package, or operations documents governed records.
+
+## Govern Domain Knowledge
+
+Use one stable MDQ-backed concept protocol with the smallest profile that fits:
+
+- `lite` for a compact shared vocabulary;
+- `catalog` for structured concepts, aliases, kinds, scope notes, and
+  relationships;
+- `bounded` for DDD bounded contexts, arc42-style glossary and cross-cutting
+  concepts, and a small SKOS-inspired semantic field set.
+
+Do not create three incompatible document systems. Preserve concept IDs when
+upgrading profiles. Domain documents own names, definitions, contexts, and
+semantic relationships; they cite but do not duplicate requirement status,
+effective baseline behavior, planned behavior, or implementation evidence.
+
+Use `domain inspect/get/search/plan` for read-only discovery. `domain maintain`
+requires current write authorization and returns a source-hashed bounded scope;
+apply only the approved semantic edits, then run `domain verify`. A missing
+default concept document is `not_configured`, not a failure for an existing
+project. Scripts verify structure and relationships, while AI and project
+stakeholders decide meanings, context boundaries, and accepted terminology.
 
 ## Govern Git, Releases, and Deployment
 

@@ -14,13 +14,14 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "8"
+RESOLVER_VERSION = "9"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
     "document-audit": "references/document-audit.md",
     "document-maintenance": "references/document-maintenance.md",
+    "domain-knowledge": "references/domain-knowledge.md",
     "git-snapshot": "references/git-snapshot.md",
     "port-allocation": "references/port-allocation.md",
     "release-deployment": "references/release-deployment.md",
@@ -761,6 +762,145 @@ def managed_document_maintenance_contract(
     )
 
 
+def managed_domain_knowledge_contract(
+    repo_root: Path, skill_root: Path
+) -> dict[str, Any]:
+    """Return the project-neutral domain knowledge contract."""
+
+    script = str(skill_root / "scripts" / "domain-knowledge.py")
+    common_parameters = {
+        "docs": {
+            "flag": "--docs",
+            "type": "string",
+            "required": False,
+            "default": "docs/domain-concepts.md",
+            "pattern": "^[A-Za-z0-9._/-]+$",
+        },
+        "mode": {
+            "flag": "--mode",
+            "type": "string",
+            "required": False,
+            "default": "lite",
+            "enum": ["lite", "catalog", "bounded"],
+        },
+    }
+    limit_parameter = {
+        "flag": "--limit",
+        "type": "integer",
+        "required": False,
+        "default": 0,
+    }
+
+    def operation(
+        name: str,
+        description: str,
+        mutability: str,
+        success: str,
+        next_states: list[str],
+        *,
+        parameters: dict[str, Any] | None = None,
+        incomplete: bool = False,
+    ) -> dict[str, Any]:
+        exit_codes = {
+            "0": success,
+            "2": "domain_knowledge_failed",
+        }
+        if incomplete:
+            exit_codes["1"] = "domain_knowledge_incomplete"
+        return {
+            "description": description,
+            "command": [sys.executable, script, name, "--root", str(repo_root)],
+            "mutability": mutability,
+            "authorization": "none" if mutability == "read_only" else "current_user",
+            "parameters": parameters or dict(common_parameters),
+            "output_schema": "project-governance.domain-knowledge.v1",
+            "exit_codes": exit_codes,
+            "next_states": next_states,
+        }
+
+    inspect_parameters = {**common_parameters, "limit": limit_parameter}
+    get_parameters = {
+        **common_parameters,
+        "id": {
+            "flag": "--id",
+            "type": "string",
+            "required": True,
+            "pattern": "^CONCEPT-[A-Z0-9-]+$",
+        },
+    }
+    search_parameters = {
+        **common_parameters,
+        "text": {
+            "flag": "--text",
+            "type": "string",
+            "required": True,
+            "pattern": "^[^\\r\\n]{1,200}$",
+        },
+        "limit": limit_parameter,
+    }
+    raw = {
+        "schema": "project-governance.task-contract.v1",
+        "id": "project-governance.domain-knowledge.managed.v1",
+        "task": "domain-knowledge",
+        "operations": {
+            "inspect": operation(
+                "inspect",
+                "Inspect the configured domain concept catalog and its selected profile.",
+                "read_only",
+                "domain_knowledge_inspected",
+                ["domain_knowledge_plan", "report_domain_knowledge_state"],
+                parameters=inspect_parameters,
+            ),
+            "get": operation(
+                "get",
+                "Retrieve one domain concept by stable concept ID.",
+                "read_only",
+                "domain_concept_lookup_completed",
+                ["report_domain_concept", "domain_knowledge_plan"],
+                parameters=get_parameters,
+            ),
+            "search": operation(
+                "search",
+                "Search domain concepts through their MDQ contract.",
+                "read_only",
+                "domain_concept_search_completed",
+                ["report_domain_concepts", "domain_knowledge_plan"],
+                parameters=search_parameters,
+            ),
+            "plan": operation(
+                "plan",
+                "Create a source-hashed plan for the selected domain knowledge profile.",
+                "read_only",
+                "domain_knowledge_planned",
+                ["authorized_domain_maintenance", "request_semantic_decision"],
+            ),
+            "maintain": operation(
+                "maintain",
+                "Preflight one bounded repository-write scope for domain concept maintenance.",
+                "repository_write",
+                "domain_knowledge_scope_ready",
+                ["apply_scoped_domain_edits", "domain_knowledge_verify"],
+                incomplete=True,
+            ),
+            "verify": operation(
+                "verify",
+                "Verify MDQ contracts, profile fields, stable IDs, terms, and semantic relationships.",
+                "read_only",
+                "domain_knowledge_verified",
+                ["report_domain_knowledge", "continue_authorized_domain_maintenance"],
+                incomplete=True,
+            ),
+        },
+    }
+    return normalize_contract(
+        raw,
+        task="domain-knowledge",
+        repo_root=repo_root,
+        skill_root=skill_root,
+        field="managed domain knowledge contract",
+    )
+
+
 def normalize_port_config(value: Any) -> dict[str, Any]:
     ports = require_mapping(value, "ports")
     require_exact_keys(
@@ -908,6 +1048,7 @@ def resolve_task(
     config_schema = ""
     managed_release = False
     managed_document_maintenance = False
+    managed_domain_knowledge = False
     if config:
         schema = config.get("schema")
         if schema == f"{SKILL_NAME}.config.v1":
@@ -943,9 +1084,11 @@ def resolve_task(
         if raw_task_config is None and task in {
             "release-deployment",
             "document-maintenance",
+            "domain-knowledge",
         }:
             managed_release = task == "release-deployment"
             managed_document_maintenance = task == "document-maintenance"
+            managed_domain_knowledge = task == "domain-knowledge"
             task_config = {}
         else:
             task_config = require_mapping(raw_task_config, f"tasks.{task}")
@@ -962,6 +1105,7 @@ def resolve_task(
         sources_configured = False
         managed_release = task == "release-deployment"
         managed_document_maintenance = task == "document-maintenance"
+        managed_domain_knowledge = task == "domain-knowledge"
 
     base_value = str(task_config.get("base", DEFAULT_BASES[task]))
     base_path = resolve_path(base_value, skill_root, f"tasks.{task}.base")
@@ -995,6 +1139,13 @@ def resolve_task(
         }
     elif managed_document_maintenance:
         contract = managed_document_maintenance_contract(repo_root, skill_root)
+        release_config_text = ""
+        workflow = {
+            "mode": "managed",
+            "configuration": "project_defaults",
+        }
+    elif managed_domain_knowledge:
+        contract = managed_domain_knowledge_contract(repo_root, skill_root)
         release_config_text = ""
         workflow = {
             "mode": "managed",

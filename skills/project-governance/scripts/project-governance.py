@@ -21,6 +21,12 @@ ALIASES = {
     ("docs", "plan"): ("document-maintenance", "plan"),
     ("docs", "maintain"): ("document-maintenance", "maintain"),
     ("docs", "verify"): ("document-maintenance", "verify"),
+    ("domain", "inspect"): ("domain-knowledge", "inspect"),
+    ("domain", "get"): ("domain-knowledge", "get"),
+    ("domain", "search"): ("domain-knowledge", "search"),
+    ("domain", "plan"): ("domain-knowledge", "plan"),
+    ("domain", "maintain"): ("domain-knowledge", "maintain"),
+    ("domain", "verify"): ("domain-knowledge", "verify"),
     ("git", "snapshot"): ("git-snapshot", "snapshot"),
     ("release", "sync-main-plan"): ("release-deployment", "sync-main-plan"),
     ("release", "sync-main"): ("release-deployment", "sync-main"),
@@ -170,7 +176,9 @@ def main() -> int:
     )
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--authorized", action="store_true")
-    parser.add_argument("domain", choices=("defect", "docs", "git", "release", "execute"))
+    parser.add_argument(
+        "domain", choices=("defect", "docs", "domain", "git", "release", "execute")
+    )
     parser.add_argument("action", nargs="?")
     parser.add_argument("--task")
     parser.add_argument("--operation")

@@ -210,6 +210,27 @@ tasks:
         report = json.loads(result.stdout)
         self.assertEqual(report["schema"], "project-governance.document-audit.v1")
 
+    def test_domain_aliases_preserve_read_and_write_authority(self) -> None:
+        inspected = self.invoke("domain", "inspect", "--mode", "catalog")
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        inspected_report = json.loads(inspected.stdout)
+        self.assertEqual(inspected_report["operation"], "inspect")
+        self.assertEqual(inspected_report["state"], "not_configured")
+        self.assertEqual(inspected_report["mode"], "catalog")
+
+        blocked = self.invoke("domain", "maintain", "--mode", "bounded")
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("requires --authorized", blocked.stderr)
+
+        allowed = self.invoke(
+            "--authorized", "domain", "maintain", "--mode", "bounded"
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        allowed_report = json.loads(allowed.stdout)
+        self.assertEqual(allowed_report["operation"], "maintain")
+        self.assertEqual(allowed_report["state"], "maintenance_scope_ready")
+        self.assertTrue(allowed_report["ready_to_create"])
+
 
 if __name__ == "__main__":
     unittest.main()

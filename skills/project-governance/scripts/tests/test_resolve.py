@@ -206,6 +206,7 @@ tasks:
             "defect-history-review",
             "document-audit",
             "document-maintenance",
+            "domain-knowledge",
             "port-allocation",
             "release-deployment",
         ):
@@ -327,6 +328,36 @@ tasks:
         self.assertEqual(
             manifest["contract"]["operations"]["verify"]["mutability"],
             "read_only",
+        )
+
+    def test_missing_domain_knowledge_task_uses_managed_contract(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "domain-knowledge", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "project_defaults"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.domain-knowledge.managed.v1",
+        )
+        self.assertEqual(
+            set(manifest["contract"]["operations"]),
+            {"inspect", "get", "search", "plan", "maintain", "verify"},
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["maintain"]["mutability"],
+            "repository_write",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["inspect"]["parameters"]["mode"][
+                "enum"
+            ],
+            ["lite", "catalog", "bounded"],
         )
 
     def test_v3_rejects_missing_executor(self) -> None:
