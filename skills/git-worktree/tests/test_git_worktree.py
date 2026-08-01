@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ def run(
     *,
     check: bool = True,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
@@ -28,6 +30,7 @@ def run(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        input=input_text,
         check=False,
     )
     if check and result.returncode != 0:
@@ -55,12 +58,16 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def cli(
-        self, *arguments: str, check: bool = True
+        self,
+        *arguments: str,
+        check: bool = True,
+        input_text: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         return run(
             [sys.executable, str(SCRIPT), "--repo", str(self.repo), *arguments],
             self.repo,
             check=check,
+            input_text=input_text,
         )
 
     def create(self, branch: str = "feat/demo") -> Path:
@@ -97,6 +104,45 @@ class GitWorktreeCliTests(unittest.TestCase):
             ["git", "commit", "-m", f"add {filename}"],
             worktree,
             env=environment,
+        )
+
+    def maintenance_audit(self) -> dict[str, object]:
+        return json.loads(self.cli("maintenance-audit", "--all").stdout)
+
+    def maintenance_plan(
+        self,
+        audit: dict[str, object],
+        decisions: dict[str, tuple[str, str] | dict[str, object]],
+    ) -> dict[str, object]:
+        rendered: list[dict[str, object]] = []
+        for candidate in audit["candidates"]:
+            candidate_id = candidate["candidate_id"]
+            value = decisions[candidate_id]
+            if isinstance(value, tuple):
+                decision, reason = value
+                rendered.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "decision": decision,
+                        "reason": reason,
+                    }
+                )
+            else:
+                rendered.append({"candidate_id": candidate_id, **value})
+        return {
+            "schema_version": audit["plan_schema_version"],
+            "snapshot_id": audit["snapshot_id"],
+            "target": audit["target"]["branch"],
+            "decisions": rendered,
+        }
+
+    def run_maintenance_plan(
+        self, plan: dict[str, object], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return self.cli(
+            "maintenance-run",
+            check=check,
+            input_text=json.dumps(plan),
         )
 
     def test_create_and_list_worktree_with_sanitized_default_path(self) -> None:
@@ -252,6 +298,273 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertTrue(candidate["completion"]["worktrees_clean"])
         self.assertFalse(
             candidate["decision_evidence"]["owner_handoff_completed"]
+        )
+
+    def test_maintenance_audit_snapshot_tracks_worktree_state(self) -> None:
+        worktree = self.create("feat/snapshot")
+        self.commit_file(worktree, "snapshot.txt", "snapshot\n")
+
+        first = self.maintenance_audit()
+        second = self.maintenance_audit()
+        self.assertEqual(first["plan_schema_version"], 1)
+        self.assertEqual(len(first["snapshot_id"]), 64)
+        self.assertEqual(first["snapshot_id"], second["snapshot_id"])
+        missing = {
+            item["candidate_id"]: item["status"]
+            for item in first["owner_handoff_missing"]
+        }
+        self.assertEqual(missing["branch:feat/snapshot"], "absent")
+
+        (worktree / "draft.txt").write_text("draft\n")
+        changed = self.maintenance_audit()
+        self.assertNotEqual(first["snapshot_id"], changed["snapshot_id"])
+
+    def test_maintenance_run_merges_branch_and_retains_worktree(self) -> None:
+        worktree = self.create("feat/batch-merge")
+        self.commit_file(worktree, "batch.txt", "batch\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/batch-merge": ("merge", "feature is complete"),
+                f"worktree:{worktree}": (
+                    "retain",
+                    "validate the merged target before cleanup",
+                ),
+            },
+        )
+
+        completed = json.loads(self.run_maintenance_plan(plan).stdout)
+        self.assertEqual(completed["status"], "completed")
+        self.assertTrue(completed["remote_refs_untouched"])
+        self.assertTrue(Path(completed["repository_lock"]).exists())
+        self.assertTrue(worktree.exists())
+        self.assertEqual(
+            run(
+                ["git", "merge-base", "--is-ancestor", source_head, "main"],
+                self.repo,
+            ).returncode,
+            0,
+        )
+        outcomes = {
+            item["candidate_id"]: item
+            for item in completed["terminal_decisions"]
+        }
+        self.assertEqual(
+            outcomes[f"worktree:{worktree}"]["outcome"],
+            "retained_without_mutation",
+        )
+
+    def test_maintenance_run_rejects_stale_snapshot(self) -> None:
+        worktree = self.create("feat/stale-plan")
+        self.commit_file(worktree, "first.txt", "first\n")
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/stale-plan": ("merge", "feature is complete"),
+                f"worktree:{worktree}": ("retain", "keep until validation"),
+            },
+        )
+        self.commit_file(worktree, "second.txt", "second\n")
+
+        rejected = self.run_maintenance_plan(plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("snapshot changed", rejected.stderr)
+        self.assertEqual(
+            run(
+                ["git", "merge-base", "--is-ancestor", "feat/stale-plan", "main"],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+
+    def test_maintenance_run_rejects_dirty_target_before_mutation(self) -> None:
+        worktree = self.create("feat/dirty-target-plan")
+        self.commit_file(worktree, "feature.txt", "feature\n")
+        (self.repo / "target-draft.txt").write_text("draft\n")
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/dirty-target-plan": ("merge", "feature is complete"),
+                f"worktree:{worktree}": ("retain", "retain through validation"),
+            },
+        )
+
+        rejected = self.run_maintenance_plan(plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Target worktree is not safe", rejected.stderr)
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "merge-base",
+                    "--is-ancestor",
+                    "feat/dirty-target-plan",
+                    "main",
+                ],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+
+    def test_maintenance_run_deletes_merged_branch_and_worktree(self) -> None:
+        worktree = self.create("feat/batch-delete")
+        self.commit_file(worktree, "delete.txt", "delete\n")
+        self.cli("merge", "--source", "feat/batch-delete")
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/batch-delete": ("delete", "already merged"),
+                f"worktree:{worktree}": ("delete", "already merged"),
+            },
+        )
+
+        completed = json.loads(self.run_maintenance_plan(plan).stdout)
+        self.assertEqual(completed["status"], "completed")
+        self.assertFalse(worktree.exists())
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/feat/batch-delete",
+                ],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+        outcomes = {
+            item["candidate_id"]: item
+            for item in completed["terminal_decisions"]
+        }
+        self.assertEqual(
+            outcomes[f"worktree:{worktree}"]["outcome"],
+            "removed_with_branch_delete",
+        )
+
+    def test_maintenance_run_requires_post_merge_cleanup_reaudit(self) -> None:
+        worktree = self.create("feat/two-phase")
+        self.commit_file(worktree, "phase.txt", "phase\n")
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/two-phase": ("merge", "feature is complete"),
+                f"worktree:{worktree}": ("delete", "clean up after merge"),
+            },
+        )
+
+        rejected = self.run_maintenance_plan(plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Validate the merge, then audit again", rejected.stderr)
+        self.assertEqual(
+            run(
+                ["git", "merge-base", "--is-ancestor", "feat/two-phase", "main"],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+
+    def test_maintenance_run_reports_structured_merge_pause(self) -> None:
+        worktree = self.create("feat/batch-conflict")
+        (worktree / "base.txt").write_text("source\n")
+        run(["git", "commit", "-am", "source change"], worktree)
+        (self.repo / "base.txt").write_text("target\n")
+        run(["git", "commit", "-am", "target change"], self.repo)
+        audit = self.maintenance_audit()
+        plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/batch-conflict": ("merge", "behavior is required"),
+                f"worktree:{worktree}": ("retain", "retain through validation"),
+            },
+        )
+
+        paused = self.run_maintenance_plan(plan, check=False)
+        self.assertEqual(paused.returncode, 2)
+        report = json.loads(paused.stdout)
+        self.assertEqual(report["status"], "paused")
+        self.assertIn("Merge paused with conflicts", report["error"])
+        self.assertEqual(report["target_state"]["operations"], ["merge"])
+        self.assertTrue(report["target_state"]["dirty"])
+        self.assertEqual(report["completed_decisions"], [])
+
+    def test_maintenance_run_prunes_orphan_completion_refs(self) -> None:
+        head = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
+        ref = "refs/agents/completed/feat/deleted-owner"
+        stale_plan = self.maintenance_plan(self.maintenance_audit(), {})
+        run(["git", "update-ref", ref, head], self.repo)
+        rejected = self.run_maintenance_plan(stale_plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("snapshot changed", rejected.stderr)
+
+        audit = self.maintenance_audit()
+        self.assertEqual(audit["candidates"], [])
+        self.assertEqual(audit["orphan_completion_refs"][0]["ref"], ref)
+        plan = self.maintenance_plan(audit, {})
+
+        completed = json.loads(self.run_maintenance_plan(plan).stdout)
+        self.assertEqual(completed["removed_orphan_completion_refs"][0]["ref"], ref)
+        self.assertEqual(
+            run(
+                ["git", "show-ref", "--verify", "--quiet", ref],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+
+    def test_mutating_commands_share_repository_lock(self) -> None:
+        worktree = self.create("feat/blocked-by-lock")
+        head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        common = Path(
+            run(["git", "rev-parse", "--git-common-dir"], self.repo).stdout.strip()
+        )
+        if not common.is_absolute():
+            common = self.repo / common
+        lock_path = common.resolve() / "agents-worktree.lock"
+        with lock_path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            rejected = run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "mark-complete",
+                    "--expected-head",
+                    head,
+                ],
+                worktree,
+                check=False,
+            )
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("holds the repository lock", rejected.stderr)
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/agents/completed/feat/blocked-by-lock",
+                ],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
         )
 
     def test_merge_conflict_is_left_for_resolution(self) -> None:

@@ -1,6 +1,6 @@
 ---
 name: git-worktree
-description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; mark an owner task's exact branch HEAD complete; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
+description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; mark an owner task's exact branch HEAD complete; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; apply an exact merge/delete/retain decision plan under a repository lock; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited snapshots and HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
 ---
 
 # Git Worktree
@@ -81,6 +81,11 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> \
   maintenance-audit --target <branch> --all
 ```
 
+The audit emits a stable `snapshot_id` over the target HEAD, every candidate,
+all attached worktree state, and completion evidence. Any relevant state change
+invalidates that snapshot. Only an `--all` audit is eligible as input to
+`maintenance-run`; bounded audits remain inspection-only.
+
 Use `--recent-count <N>` or `--recent-days <N>` instead of `--all` when the user
 supplies a bounded window. The audit emits separate candidates for branch
 history and worktree directories so a protected branch can be retained while
@@ -140,6 +145,61 @@ Do not infer that a clean directory is completed work. Do not interpret age as
 deletion evidence. Re-audit when any HEAD or worktree status changes. A request
 to maintain a selected local scope does not authorize remote deletion, push,
 tag changes, or cleanup outside that scope.
+
+### Apply an exact decision plan
+
+After semantic review, submit every candidate's terminal decision as JSON. Keep
+the plan in the pipeline when practical; the script does not require a durable
+state-file location.
+
+```json
+{
+  "schema_version": 1,
+  "snapshot_id": "<maintenance-audit snapshot_id>",
+  "target": "main",
+  "decisions": [
+    {
+      "candidate_id": "branch:feat/example",
+      "decision": "merge",
+      "reason": "required behavior is complete and validated"
+    },
+    {
+      "candidate_id": "worktree:/absolute/example-path",
+      "decision": "retain",
+      "reason": "validate the merged target before cleanup"
+    }
+  ]
+}
+```
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <target-worktree> \
+  maintenance-run --plan - < <decision-plan.json>
+```
+
+The plan must classify every candidate from the `--all` audit as `merge`,
+`delete`, or `retain`, and every decision requires a reason. The runner:
+
+- acquires one non-blocking Agent mutation lock in the repository's Git common
+  directory; all mutating commands from this CLI use the same lock;
+- refuses mutations while the target worktree is dirty, locked, missing,
+  uninspectable, prunable, or has an active Git operation;
+- rejects a changed snapshot before mutation, then rechecks each candidate and
+  the expected target HEAD before every operation;
+- executes branch merges first, classified branch deletions second, and clean
+  worktree removals third;
+- removes completion refs whose local branches no longer exist after a
+  successful run;
+- emits one structured completed report, or a structured paused report when a
+  conflict or safety check stops execution; and
+- never pushes, deletes remote refs, or changes normal tags.
+
+Do not plan deletion of a source worktree in the same run that merges its
+branch. Retain it, validate the merged target, audit again, then submit cleanup
+as a second exact plan. Set `allow_protected: true` only when deletion of the
+named `release/*`, `repair/*`, or `hotfix/*` branch is separately authorized.
+Set `allow_uncontained_detached: true` only for an evidence-reviewed discard.
+Rescue an uncontained detached worktree before planning `merge`.
 
 ### Detached worktrees
 
@@ -277,6 +337,8 @@ Report:
 - every branch and worktree decision with evidence and exact commit;
 - every observed completion ref as current, blocked, stale, absent, or not
   applicable;
+- maintenance snapshot IDs, repository-lock evidence, terminal decision
+  reports, paused operations, and removed orphan completion refs;
 - a separate **retained active/dirty work** list containing worktree path,
   branch or detached state, observed HEAD, dirty/untracked paths, active Git
   operations, retention reason, and the mutations intentionally skipped;
@@ -293,5 +355,6 @@ Report:
 ## Resource
 
 - `scripts/git_worktree.py`: deterministic worktree lifecycle, unified
-  maintenance audit, detached rescue, exact stale-registration pruning, merge,
-  and classified deletion with cross-worktree safety checks.
+  maintenance audit and decision-plan runner, repository mutation locking,
+  detached rescue, exact stale-registration pruning, merge, and classified
+  deletion with cross-worktree safety checks.
