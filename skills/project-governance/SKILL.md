@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, project-wide Markdown inventory and lifecycle maintenance, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use for document inspection, maintenance planning, mdq contract repair, stale plan or requirement status, baselines, archives, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, project-wide Markdown inventory and lifecycle maintenance, plan implementation completion handoffs, external dependency and technology evaluations, compatibility, Git lineage, releases and deployments, project skills, runtime ports, defects, and feedback lifecycles. Use when executing a plan, specification, or implementation prompt in a task worktree; for document inspection, maintenance planning, mdq contract repair, stale plan or requirement status, baselines, archives, third-party framework/library/service/runtime assessment, technology selection or replacement, verification, branches, commits, worktrees, SemVer, release tags, promotions, deployment failure recovery, fixed-tag retries, patch repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -12,6 +12,14 @@ description: "Bootstrap, review, and maintain project architecture, governed doc
 3. Keep universal policy in this skill, project facts in repository configuration, deterministic operations in tested scripts, and runtime output in ignored caches.
 4. Preserve current terminology and authority unless the user approves a migration.
 5. Treat release, deployment, publishing, rollback, live migration, reward, and destructive authority as current-turn permissions only.
+6. When the user asks to implement a plan, specification, or implementation
+   prompt, use `git-worktree` `owner-status` on the current directory before
+   editing. Treat an eligible non-main worktree as this conversation's owner
+   task even when the worktree existed before the conversation or was created
+   outside this turn. After the implementation is fully validated, committed,
+   and clean, use `git-worktree` `mark-complete` on the final exact HEAD before
+   reporting completion. Never mark partial, blocked, dirty, unvalidated,
+   detached, or main-worktree work complete; report the exact blocker instead.
 
 For read-only review, inspect and report without editing. Do not classify a
 project-scoped external dependency or technology evaluation as read-only merely
