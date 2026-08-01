@@ -515,11 +515,17 @@ def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
         raise SyncError(
             f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
         )
-    for field, length in (("computedHash", 64), ("skillFolderHash", 40)):
+    for field, lengths in (
+        ("computedHash", (64,)),
+        ("skillFolderHash", (40, 64)),
+    ):
         value = entry.get(field)
         if value is None:
             continue
-        if isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{length}}}", value):
+        if isinstance(value, str) and any(
+            re.fullmatch(rf"[0-9a-f]{{{length}}}", value)
+            for length in lengths
+        ):
             return value
         raise SyncError(
             f"Refresh succeeded but {lock_path} has an invalid "

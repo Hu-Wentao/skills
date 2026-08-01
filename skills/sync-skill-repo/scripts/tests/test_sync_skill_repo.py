@@ -376,7 +376,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             self.assertNotIn("--copy", run.call_args.args[0])
             self.assertNotIn("*", run.call_args.args[0])
 
-    def test_global_lock_accepts_skill_folder_hash(self) -> None:
+    def test_global_lock_accepts_legacy_git_tree_skill_folder_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             lock = Path(temporary) / ".skill-lock.json"
             lock.write_text(
@@ -397,6 +397,51 @@ class SyncSkillRepoTests(unittest.TestCase):
                 MODULE._verified_lock_hash(lock, "demo-skill"),
                 "d" * 40,
             )
+
+    def test_global_lock_accepts_sha256_skill_folder_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / ".skill-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "skills": {
+                            "demo-skill": {
+                                "skillFolderHash": "e" * 64,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                MODULE._verified_lock_hash(lock, "demo-skill"),
+                "e" * 64,
+            )
+
+    def test_global_lock_rejects_unknown_skill_folder_hash_length(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / ".skill-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "skills": {
+                            "demo-skill": {
+                                "skillFolderHash": "f" * 63,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError,
+                "invalid demo-skill skillFolderHash",
+            ):
+                MODULE._verified_lock_hash(lock, "demo-skill")
 
     def test_install_project_omits_global_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

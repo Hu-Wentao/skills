@@ -175,8 +175,9 @@ The helper runs only `pnpm dlx skills update <skill-name> <-p|-g> -y` and
 defaults to three attempts with a two-second delay. A failed attempt is not a
 reason to run an unscoped update. If all attempts fail, report the exact
 command and complete per-attempt output emitted by the helper. Accept the
-project lock's `computedHash` and the shared global lock's `skillFolderHash`
-formats during verification.
+project lock's 64-character SHA-256 `computedHash`. Accept both the current
+64-character SHA-256 and legacy 40-character Git tree `skillFolderHash`
+formats in the shared global lock.
 
 If the skill is not yet tracked in either scope, use the deterministic install
 command. It defaults to the `codex` agent, never selects every detected agent,
