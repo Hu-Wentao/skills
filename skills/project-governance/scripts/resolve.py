@@ -14,12 +14,13 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "5"
+RESOLVER_VERSION = "8"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
     "defect-history-review": "references/defect-governance.md",
     "document-audit": "references/document-audit.md",
+    "document-maintenance": "references/document-maintenance.md",
     "git-snapshot": "references/git-snapshot.md",
     "port-allocation": "references/port-allocation.md",
     "release-deployment": "references/release-deployment.md",
@@ -394,6 +395,372 @@ def normalize_contract(
     }
 
 
+def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any]:
+    """Return the project-neutral release contract supplied by this skill."""
+
+    script = str(skill_root / "scripts" / "release-workflow.py")
+    semver = "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    tag = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+
+    def operation(
+        name: str,
+        description: str,
+        mutability: str,
+        parameters: dict[str, Any],
+        success: str,
+        next_states: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "description": description,
+            "command": [sys.executable, script, name],
+            "mutability": mutability,
+            "authorization": "none" if mutability == "read_only" else "current_user",
+            "parameters": parameters,
+            "output_schema": "project-governance.release-event.v1",
+            "exit_codes": {
+                "0": success,
+                "1": "release_operation_failed",
+                "2": "release_workflow_not_configured_or_invalid",
+            },
+            "next_states": next_states,
+        }
+
+    target = {
+        "flag": "--target",
+        "type": "string",
+        "required": True,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    }
+    version = {
+        "flag": "--version",
+        "type": "string",
+        "required": True,
+        "pattern": semver,
+    }
+    base_tag = {
+        "flag": "--base-tag",
+        "type": "string",
+        "required": True,
+        "pattern": tag,
+    }
+    release_tag = {
+        "flag": "--tag",
+        "type": "string",
+        "required": True,
+        "pattern": tag,
+    }
+    resume = {"flag": "--resume", "type": "boolean", "required": False}
+    migration = {"flag": "--migration", "type": "boolean", "required": False}
+    raw = {
+        "schema": "project-governance.task-contract.v1",
+        "id": "project-governance.release-deployment.managed.v1",
+        "task": "release-deployment",
+        "operations": {
+            "sync-main-plan": operation(
+                "sync-main-plan",
+                "Inspect whether the highest stable tag must be synchronized into committed integration history.",
+                "read_only",
+                {},
+                "main_sync_inspected",
+                ["authorized_main_sync", "release_prepare_plan"],
+            ),
+            "sync-main": operation(
+                "sync-main",
+                "Synchronize the highest stable tag into a clean checked-out integration branch without starting a release.",
+                "repository_write",
+                {},
+                "main_synchronized",
+                ["release_prepare_plan", "report_main_sync_conflict"],
+            ),
+            "inspect": operation(
+                "inspect",
+                "Inspect committed source, control-worktree state, stable tags, and managed workflow readiness without changing state.",
+                "read_only",
+                {
+                    "target": {
+                        "flag": "--target",
+                        "type": "string",
+                        "required": False,
+                        "pattern": target["pattern"],
+                    }
+                },
+                "release_inspected",
+                ["release_bootstrap_plan", "release_plan"],
+            ),
+            "bootstrap-plan": operation(
+                "bootstrap-plan",
+                "Inspect a reusable release-workflow preset without writing project configuration.",
+                "read_only",
+                {
+                    "preset": {
+                        "flag": "--preset",
+                        "type": "string",
+                        "required": False,
+                        "default": "auto",
+                        "enum": ["auto", "node-pnpm", "python-uv", "flutter-fvm"],
+                    }
+                },
+                "release_bootstrap_planned",
+                ["authorized_release_bootstrap"],
+            ),
+            "bootstrap": operation(
+                "bootstrap",
+                "Create a minimal managed release hook scaffold without inventing deployment targets.",
+                "repository_write",
+                {
+                    "preset": {
+                        "flag": "--preset",
+                        "type": "string",
+                        "required": False,
+                        "default": "auto",
+                        "enum": ["auto", "node-pnpm", "python-uv", "flutter-fvm"],
+                    }
+                },
+                "release_bootstrapped",
+                ["configure_artifact_and_target_hooks"],
+            ),
+            "plan": operation(
+                "plan",
+                "Validate the managed workflow and exact target without changing repository or external state.",
+                "read_only",
+                {"target": target},
+                "release_planned",
+                ["release_prepare_plan"],
+            ),
+            "prepare-plan": operation(
+                "prepare-plan",
+                "Plan version reservation and an isolated retained release worktree from committed integration source.",
+                "read_only",
+                {"version": version, "target": target},
+                "release_prepare_planned",
+                ["authorized_release_prepare"],
+            ),
+            "prepare": operation(
+                "prepare",
+                "Reserve a version and create or resume its retained release branch worktree without mutating the control worktree.",
+                "repository_write",
+                {"version": version, "target": target, "resume": resume},
+                "release_prepared_and_version_reserved",
+                ["authorized_release_run", "repair_untagged_candidate"],
+            ),
+            "repair-prepare-plan": operation(
+                "repair-prepare-plan",
+                "Plan the immediate next patch repair lineage directly from one failed immutable tag.",
+                "read_only",
+                {"base_tag": base_tag, "version": version, "target": target},
+                "repair_prepare_planned",
+                ["authorized_repair_prepare"],
+            ),
+            "repair-prepare": operation(
+                "repair-prepare",
+                "Reserve the immediate next patch and create its retained repair worktree from the failed tag.",
+                "repository_write",
+                {"base_tag": base_tag, "version": version, "target": target, "resume": resume},
+                "repair_prepared_and_version_reserved",
+                ["commit_minimal_repair", "authorized_repair_run"],
+            ),
+            "repair-plan": operation(
+                "repair-prepare-plan",
+                "Validate the immediate-next-patch repair identity and target without changing state.",
+                "read_only",
+                {"base_tag": base_tag, "version": version, "target": target},
+                "repair_release_planned",
+                ["authorized_repair_prepare", "authorized_repair_run"],
+            ),
+            "run": operation(
+                "run",
+                "Run gates, freeze content-identified artifacts, create one immutable tag, deploy, and verify the prepared lineage.",
+                "external_write",
+                {"version": version, "target": target, "migration": migration},
+                "release_workflow_completed",
+                ["report_release_evidence", "retry_same_fixed_tag", "repair_next_patch"],
+            ),
+            "promote-plan": operation(
+                "promote-plan",
+                "Plan one exact release tag promotion to a target and report whether its immutable target artifact already exists.",
+                "read_only",
+                {"tag": release_tag, "target": target},
+                "release_promotion_planned",
+                ["authorized_release_promotion"],
+            ),
+            "promote": operation(
+                "promote",
+                "Deploy one exact release tag to a target, appending only that target's first immutable artifact manifest when needed.",
+                "external_write",
+                {"tag": release_tag, "target": target, "migration": migration},
+                "release_promoted",
+                ["report_promotion_evidence", "retry_same_fixed_tag", "repair_next_patch"],
+            ),
+            "repair": operation(
+                "repair",
+                "Freeze, tag, deploy, and verify one prepared immediate-next-patch repair lineage.",
+                "external_write",
+                {"base_tag": base_tag, "version": version, "target": target, "migration": migration},
+                "repair_release_workflow_completed",
+                ["report_repair_evidence", "retry_same_fixed_tag"],
+            ),
+            "retry": operation(
+                "retry",
+                "Retry deployment from one exact annotated tag, commit, frozen artifact manifest, and target in a fresh detached worktree.",
+                "external_write",
+                {
+                    "tag": release_tag,
+                    "target": target,
+                },
+                "fixed_tag_retry_completed",
+                ["report_retry_evidence", "repair_next_patch", "request_rollback_authority"],
+            ),
+        },
+    }
+    return normalize_contract(
+        raw,
+        task="release-deployment",
+        repo_root=repo_root,
+        skill_root=skill_root,
+        field="managed release contract",
+    )
+
+
+def managed_document_maintenance_contract(
+    repo_root: Path, skill_root: Path
+) -> dict[str, Any]:
+    """Return the project-neutral document maintenance contract."""
+
+    script = str(skill_root / "scripts" / "document-maintenance.py")
+    common_parameters = {
+        "docs": {
+            "flag": "--docs",
+            "type": "string",
+            "required": False,
+            "default": "docs",
+            "pattern": "^[A-Za-z0-9._/-]+$",
+        },
+        "scope": {
+            "flag": "--scope",
+            "type": "string",
+            "required": False,
+            "default": "governed",
+            "enum": ["governed", "all-markdown"],
+        },
+        "kind": {
+            "flag": "--kind",
+            "type": "string",
+            "required": False,
+            "default": "all",
+            "enum": [
+                "all",
+                "contracts",
+                "lifecycle",
+                "references",
+                "traceability",
+                "defects",
+                "structure",
+            ],
+        },
+        "limit": {
+            "flag": "--limit",
+            "type": "integer",
+            "required": False,
+            "default": 0,
+        },
+    }
+
+    def operation(
+        name: str,
+        description: str,
+        mutability: str,
+        success: str,
+        next_states: list[str],
+        *,
+        verification: bool = False,
+    ) -> dict[str, Any]:
+        exit_codes = {
+            "0": success,
+            "2": "document_maintenance_failed",
+        }
+        if verification:
+            exit_codes["1"] = "document_maintenance_incomplete"
+        return {
+            "description": description,
+            "command": [sys.executable, script, name, "--root", str(repo_root)],
+            "mutability": mutability,
+            "authorization": "none" if mutability == "read_only" else "current_user",
+            "parameters": common_parameters,
+            "output_schema": "project-governance.document-maintenance.v1",
+            "exit_codes": exit_codes,
+            "next_states": next_states,
+        }
+
+    raw = {
+        "schema": "project-governance.task-contract.v1",
+        "id": "project-governance.document-maintenance.managed.v1",
+        "task": "document-maintenance",
+        "operations": {
+            "audit": {
+                "description": "Run the legacy read-only governed-document audit with its stable v1 output schema.",
+                "command": [
+                    "node",
+                    str(skill_root / "scripts" / "validate-governance.mjs"),
+                    "--root",
+                    str(repo_root),
+                    "--json",
+                ],
+                "mutability": "read_only",
+                "authorization": "none",
+                "parameters": {
+                    "docs": common_parameters["docs"],
+                },
+                "output_schema": "project-governance.document-audit.v1",
+                "exit_codes": {
+                    "0": "audit_completed",
+                    "1": "structural_errors",
+                    "2": "audit_failed",
+                },
+                "next_states": [
+                    "document_maintenance_plan",
+                    "repair_mechanical_drift_if_authorized",
+                ],
+            },
+            "inspect": operation(
+                "inspect",
+                "Inventory project Markdown and inspect governed-document structure and lifecycle state.",
+                "read_only",
+                "document_inspection_completed",
+                ["document_maintenance_plan", "report_no_document_drift"],
+            ),
+            "plan": operation(
+                "plan",
+                "Create a source-hashed maintenance plan separating mechanical drift from semantic review.",
+                "read_only",
+                "document_maintenance_planned",
+                ["authorized_document_maintenance", "request_semantic_decision"],
+            ),
+            "maintain": operation(
+                "maintain",
+                "Preflight and authorize one bounded repository document-maintenance scope before governed edits.",
+                "repository_write",
+                "document_maintenance_scope_ready",
+                ["apply_scoped_document_edits", "document_maintenance_verify"],
+            ),
+            "verify": operation(
+                "verify",
+                "Verify governed Markdown contracts, lifecycle fields, links, identifiers, indexes, and traceability after maintenance.",
+                "read_only",
+                "document_maintenance_verified",
+                ["report_document_maintenance", "continue_authorized_document_maintenance"],
+                verification=True,
+            ),
+        },
+    }
+    return normalize_contract(
+        raw,
+        task="document-maintenance",
+        repo_root=repo_root,
+        skill_root=skill_root,
+        field="managed document maintenance contract",
+    )
+
+
 def normalize_port_config(value: Any) -> dict[str, Any]:
     ports = require_mapping(value, "ports")
     require_exact_keys(
@@ -539,6 +906,8 @@ def resolve_task(
     task_config: dict[str, Any] = {}
     port_config: dict[str, Any] | None = None
     config_schema = ""
+    managed_release = False
+    managed_document_maintenance = False
     if config:
         schema = config.get("schema")
         if schema == f"{SKILL_NAME}.config.v1":
@@ -560,8 +929,7 @@ def resolve_task(
             config_schema = schema
             require_exact_keys(config, {"schema", "profile", "ports", "tasks"}, "config.yaml")
             allowed_tasks = set(DEFAULT_BASES)
-            if "ports" in config:
-                port_config = normalize_port_config(config.get("ports"))
+            port_config = normalize_port_config(config.get("ports"))
         else:
             raise ResolveError(
                 "config.yaml schema must be "
@@ -571,18 +939,29 @@ def resolve_task(
         profile = require_string(config.get("profile"), "profile")
         tasks = require_mapping(config.get("tasks"), "tasks")
         require_exact_keys(tasks, allowed_tasks, "tasks")
-        task_config = require_mapping(tasks.get(task), f"tasks.{task}")
-        if config_schema == f"{SKILL_NAME}.config.v3":
-            require_exact_keys(
-                task_config, {"base", "profile", "contract"}, f"tasks.{task}"
-            )
+        raw_task_config = tasks.get(task)
+        if raw_task_config is None and task in {
+            "release-deployment",
+            "document-maintenance",
+        }:
+            managed_release = task == "release-deployment"
+            managed_document_maintenance = task == "document-maintenance"
+            task_config = {}
         else:
-            require_exact_keys(
-                task_config, {"base", "profile", "commands"}, f"tasks.{task}"
-            )
+            task_config = require_mapping(raw_task_config, f"tasks.{task}")
+            if config_schema == f"{SKILL_NAME}.config.v3":
+                require_exact_keys(
+                    task_config, {"base", "profile", "contract"}, f"tasks.{task}"
+                )
+            else:
+                require_exact_keys(
+                    task_config, {"base", "profile", "commands"}, f"tasks.{task}"
+                )
         sources_configured = True
     else:
         sources_configured = False
+        managed_release = task == "release-deployment"
+        managed_document_maintenance = task == "document-maintenance"
 
     base_value = str(task_config.get("base", DEFAULT_BASES[task]))
     base_path = resolve_path(base_value, skill_root, f"tasks.{task}.base")
@@ -602,7 +981,26 @@ def resolve_task(
         profile_text = profile_path.read_text(encoding="utf-8").strip()
         sources["profile"] = display_path(profile_path, repo_root)
 
-    if config_schema == f"{SKILL_NAME}.config.v3":
+    contract: dict[str, Any] | None = None
+    if managed_release:
+        contract = managed_release_contract(repo_root, skill_root)
+        release_config_path = config_root / "release-workflow.json"
+        release_config_text = ""
+        if release_config_path.is_file():
+            release_config_text = release_config_path.read_text(encoding="utf-8")
+            sources["release_config"] = display_path(release_config_path, repo_root)
+        workflow = {
+            "mode": "managed",
+            "configuration": "present" if release_config_text else "bootstrap_required",
+        }
+    elif managed_document_maintenance:
+        contract = managed_document_maintenance_contract(repo_root, skill_root)
+        release_config_text = ""
+        workflow = {
+            "mode": "managed",
+            "configuration": "project_defaults",
+        }
+    elif config_schema == f"{SKILL_NAME}.config.v3":
         contract_path = resolve_path(
             require_string(task_config.get("contract"), f"tasks.{task}.contract"),
             config_root,
@@ -615,11 +1013,15 @@ def resolve_task(
             skill_root=skill_root,
             field=f"tasks.{task}.contract",
         )
+        release_config_text = ""
+        workflow = {"mode": "project_contract", "configuration": "project_owned"}
+        sources["contract"] = display_path(contract_path, repo_root)
+
+    if contract is not None:
         if selected_operation is not None and selected_operation not in contract["operations"]:
             raise ResolveError(
                 f"operation {selected_operation!r} is not declared for task {task}"
             )
-        sources["contract"] = display_path(contract_path, repo_root)
         policy_paths = [display_path(base_path, repo_root)]
         if profile_text:
             policy_paths.append(sources["profile"])
@@ -633,12 +1035,14 @@ def resolve_task(
             "contract": contract,
             "policy_refs": policy_paths,
             "sources": sources,
+            "workflow": workflow,
         }
         hash_input = {
             "resolver_version": RESOLVER_VERSION,
             "state": state,
             "ports": port_config,
             "config": config_text,
+            "release_config": release_config_text,
         }
         digest = hashlib.sha256(
             json.dumps(hash_input, sort_keys=True).encode("utf-8")
@@ -678,6 +1082,7 @@ def resolve_task(
             "contract": contract_view,
             "entry_command": state["entry_command"],
             "sources": sources,
+            "workflow": workflow,
         }
         if selected_operation is not None:
             manifest["selected_operation"] = selected_operation

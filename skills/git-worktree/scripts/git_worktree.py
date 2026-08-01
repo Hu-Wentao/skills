@@ -4,14 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence, TextIO
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None  # type: ignore[assignment]
 
 
 class WorkflowError(RuntimeError):
@@ -55,6 +62,21 @@ OPERATION_MARKERS = {
     "bisect": ("BISECT_LOG",),
 }
 
+COMPLETION_REF_PREFIX = "refs/agents/completed/"
+MAINTENANCE_PLAN_SCHEMA_VERSION = 1
+MUTATING_COMMANDS = frozenset(
+    {
+        "mark-complete",
+        "maintenance-run",
+        "create",
+        "merge",
+        "remove",
+        "rescue-detached",
+        "prune-missing",
+        "branch-delete",
+    }
+)
+
 
 def run_git(
     cwd: Path,
@@ -82,6 +104,73 @@ def repository_root(path: str) -> Path:
         raise WorkflowError(f"Repository path does not exist: {candidate}")
     result = run_git(candidate, "rev-parse", "--show-toplevel")
     return Path(result.stdout.strip()).resolve()
+
+
+def git_common_dir(repo: Path) -> Path:
+    value = run_git(repo, "rev-parse", "--git-common-dir").stdout.strip()
+    path = Path(value)
+    if not path.is_absolute():
+        path = repo / path
+    return path.resolve()
+
+
+def repository_lock_path(repo: Path) -> Path:
+    return git_common_dir(repo) / "agents-worktree.lock"
+
+
+def acquire_file_lock(handle: TextIO) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    import msvcrt  # pragma: no cover - Windows-only fallback
+
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write("\0")
+        handle.flush()
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as error:
+        raise BlockingIOError from error
+
+
+def release_file_lock(handle: TextIO) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    import msvcrt  # pragma: no cover - Windows-only fallback
+
+    handle.seek(0)
+    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+@contextmanager
+def repository_lock(repo: Path, command: str) -> Iterator[Path]:
+    lock_path = repository_lock_path(repo)
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(descriptor, "r+", encoding="utf-8") as handle:
+        try:
+            acquire_file_lock(handle)
+        except BlockingIOError as error:
+            raise WorkflowError(
+                "Another Agent worktree mutation holds the repository lock: "
+                f"{lock_path}"
+            ) from error
+        handle.seek(0)
+        handle.truncate()
+        handle.write(
+            json.dumps(
+                {"command": command, "pid": os.getpid()},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        handle.flush()
+        try:
+            yield lock_path
+        finally:
+            release_file_lock(handle)
 
 
 def current_branch(repo: Path) -> str:
@@ -113,6 +202,102 @@ def local_branch_heads(repo: Path) -> dict[str, str]:
         "refs/heads",
     ).stdout
     return dict(line.split("\0", 1) for line in output.splitlines() if line)
+
+
+def completion_ref_name(branch: str) -> str:
+    return f"{COMPLETION_REF_PREFIX}{branch}"
+
+
+def ref_object_id(repo: Path, ref: str) -> str | None:
+    result = run_git(repo, "rev-parse", "--verify", "--quiet", ref, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def completion_evidence(
+    repo: Path,
+    branch: str | None,
+    head: str,
+    worktrees: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    if branch is None:
+        return {
+            "ref": None,
+            "head": None,
+            "matches_head": False,
+            "worktrees_clean": False,
+            "status": "not_applicable",
+        }
+    ref = completion_ref_name(branch)
+    completed_head = ref_object_id(repo, ref)
+    matches_head = completed_head == head
+    worktrees_clean = all(
+        bool(item["exists"])
+        and bool(item["inspectable"])
+        and not bool(item["dirty"])
+        and not item.get("operations")
+        and not bool(item["locked"])
+        and not bool(item["prunable"])
+        for item in worktrees
+    )
+    return {
+        "ref": ref,
+        "head": completed_head,
+        "matches_head": matches_head,
+        "worktrees_clean": worktrees_clean,
+        "status": (
+            "current"
+            if matches_head and worktrees_clean
+            else "blocked"
+            if matches_head
+            else "stale"
+            if completed_head is not None
+            else "absent"
+        ),
+    }
+
+
+def clear_completion_ref(repo: Path, branch: str) -> bool:
+    ref = completion_ref_name(branch)
+    object_id = ref_object_id(repo, ref)
+    if object_id is None:
+        return False
+    return run_git(repo, "update-ref", "-d", ref, object_id, check=False).returncode == 0
+
+
+def completion_refs(repo: Path) -> list[dict[str, str]]:
+    output = run_git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)",
+        COMPLETION_REF_PREFIX,
+    ).stdout
+    refs: list[dict[str, str]] = []
+    for line in output.splitlines():
+        ref, head = line.split("\0", 1)
+        refs.append(
+            {
+                "branch": ref.removeprefix(COMPLETION_REF_PREFIX),
+                "head": head,
+                "ref": ref,
+            }
+        )
+    return refs
+
+
+def orphan_completion_refs(repo: Path) -> list[dict[str, str]]:
+    return [
+        item
+        for item in completion_refs(repo)
+        if not local_branch_exists(repo, item["branch"])
+    ]
+
+
+def prune_orphan_completion_refs(repo: Path) -> list[dict[str, str]]:
+    removed: list[dict[str, str]] = []
+    for item in orphan_completion_refs(repo):
+        run_git(repo, "update-ref", "-d", item["ref"], item["head"])
+        removed.append(item)
+    return removed
 
 
 def parse_worktrees(repo: Path) -> list[Worktree]:
@@ -251,6 +436,29 @@ def worktree_evidence(repo: Path, branch: str) -> tuple[dict[str, object], ...]:
         worktree_snapshot(worktree)
         for worktree in affected_worktrees(repo, branch)
     )
+
+
+def worktree_mutation_blockers(
+    worktrees: Sequence[dict[str, object]],
+) -> list[str]:
+    blockers: list[str] = []
+    for worktree in worktrees:
+        path = str(worktree["path"])
+        if not worktree["exists"]:
+            blockers.append(f"{path}:missing")
+        if not worktree["inspectable"]:
+            blockers.append(f"{path}:uninspectable")
+        if worktree["dirty"]:
+            blockers.append(f"{path}:dirty")
+        if worktree["operations"]:
+            blockers.append(
+                f"{path}:operation={','.join(worktree['operations'])}"
+            )
+        if worktree["locked"]:
+            blockers.append(f"{path}:locked")
+        if worktree["prunable"]:
+            blockers.append(f"{path}:prunable")
+    return blockers
 
 
 def commit_metadata(repo: Path, commit: str) -> dict[str, object]:
@@ -401,6 +609,7 @@ def decision_evidence(
     relation: dict[str, object],
     worktrees: Sequence[dict[str, object]],
     protected: bool,
+    completion: dict[str, object],
 ) -> dict[str, object]:
     dirty = any(bool(item["dirty"]) for item in worktrees)
     operations = sorted(
@@ -415,31 +624,45 @@ def decision_evidence(
     uninspectable = any(not bool(item["inspectable"]) for item in worktrees)
     contained = bool(relation["contained_in_target"])
     patch_equivalent = bool(relation["patch_equivalent_to_target"])
+    retention_reasons: list[str] = []
+    if dirty:
+        retention_reasons.append("dirty_worktree_presumed_active")
+    if operations:
+        retention_reasons.append("active_git_operation")
+    if locked:
+        retention_reasons.append("locked_worktree")
+    if missing:
+        retention_reasons.append("missing_worktree")
+    if uninspectable:
+        retention_reasons.append("uninspectable_worktree")
+    mutation_blocked = bool(retention_reasons)
 
-    if kind == "worktree":
+    if mutation_blocked:
+        decision_scope = (
+            "worktree_only_branch_ref_retained"
+            if kind == "worktree"
+            else "branch_and_committed_history"
+        )
+        possible = ["retain"]
+    elif kind == "worktree":
         decision_scope = "worktree_only_branch_ref_retained"
-        if uninspectable:
-            possible = ["retain"]
-        elif dirty or operations or locked:
-            possible = ["merge", "retain"]
-        elif contained or not worktrees[0].get("detached", False):
+        if contained or not worktrees[0].get("detached", False):
             possible = ["delete", "retain"]
         else:
             possible = ["merge", "delete", "retain"]
     else:
         decision_scope = "branch_and_committed_history"
-        if uninspectable:
-            possible = ["retain"]
-        elif dirty or operations or locked:
-            possible = ["merge", "retain"]
-        elif contained or patch_equivalent:
+        if contained or patch_equivalent:
             possible = ["delete", "retain"]
         else:
             possible = ["merge", "delete", "retain"]
 
     requirements: list[str] = []
     if dirty:
-        requirements.append("commit authorization and validation before merge")
+        requirements.append(
+            "retain without mutation; a separate exact request must name this "
+            "candidate before rescue, commit, merge, deletion, or removal"
+        )
     if operations:
         requirements.append("finish or abort the active Git operation first")
     if locked:
@@ -448,8 +671,11 @@ def decision_evidence(
         requirements.append("prune only the missing registration; preserve branch refs")
     if uninspectable:
         requirements.append("repair or independently inspect the worktree before mutation")
-    if kind == "worktree" and worktrees[0].get("detached", False) and (
-        not contained or dirty
+    if (
+        kind == "worktree"
+        and worktrees[0].get("detached", False)
+        and not contained
+        and not mutation_blocked
     ):
         requirements.append(
             "create a rescue branch at the exact HEAD before preserving changes, "
@@ -470,6 +696,10 @@ def decision_evidence(
         "locked": locked,
         "missing": missing,
         "uninspectable": uninspectable,
+        "mutation_blocked": mutation_blocked,
+        "default_decision": "retain" if mutation_blocked else None,
+        "retention_reasons": retention_reasons,
+        "owner_handoff_completed": completion["status"] == "current",
     }
 
 
@@ -496,6 +726,7 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
             worktree_snapshot(worktree) for worktree in by_branch.get(branch, [])
         ]
         protected = protected_branch(branch)
+        completion = completion_evidence(repo, branch, head, snapshots)
         items.append(
             {
                 "candidate_id": f"branch:{branch}",
@@ -506,8 +737,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 **metadata,
                 "relation": relation,
                 "worktrees": snapshots,
+                "completion": completion,
                 "decision_evidence": decision_evidence(
-                    "branch", relation, snapshots, protected
+                    "branch", relation, snapshots, protected, completion
                 ),
             }
         )
@@ -521,6 +753,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
         relation = target_relation(repo, target, worktree.head)
         snapshots = [worktree_snapshot(worktree)]
         protected = bool(worktree.branch and protected_branch(worktree.branch))
+        completion = completion_evidence(
+            repo, worktree.branch, worktree.head, snapshots
+        )
         items.append(
             {
                 "candidate_id": f"worktree:{worktree.path}",
@@ -532,8 +767,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 **metadata,
                 "relation": relation,
                 "worktrees": snapshots,
+                "completion": completion,
                 "decision_evidence": decision_evidence(
-                    "worktree", relation, snapshots, protected
+                    "worktree", relation, snapshots, protected, completion
                 ),
             }
         )
@@ -545,12 +781,105 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
     )
 
 
+def stable_json_hash(payload: object) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def maintenance_snapshot(
+    repo: Path,
+    target: str,
+    candidates: Sequence[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    items = (
+        list(candidates)
+        if candidates is not None
+        else maintenance_candidates(repo, target)
+    )
+    target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
+    target_worktrees = [
+        worktree_snapshot(worktree)
+        for worktree in affected_worktrees(repo, target)
+    ]
+    basis = {
+        "target": {
+            "branch": target,
+            "head": target_head,
+            "worktrees": target_worktrees,
+        },
+        "candidates": items,
+        "orphan_completion_refs": orphan_completion_refs(repo),
+    }
+    return {**basis, "snapshot_id": stable_json_hash(basis)}
+
+
+def candidate_stability_evidence(candidate: dict[str, object]) -> dict[str, object]:
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "kind": candidate["kind"],
+        "branch": candidate.get("branch"),
+        "head": candidate["head"],
+        "worktrees": candidate["worktrees"],
+        "completion": candidate["completion"],
+    }
+
+
+def verify_candidate_unchanged(
+    expected: dict[str, object], actual: dict[str, object]
+) -> None:
+    if candidate_stability_evidence(expected) != candidate_stability_evidence(actual):
+        raise WorkflowError(
+            f"Candidate changed since audit: {expected['candidate_id']}"
+        )
+
+
+def maintenance_branch_candidate(
+    repo: Path, target: str, branch: str
+) -> dict[str, object]:
+    candidate_id = f"branch:{branch}"
+    candidate = next(
+        (
+            item
+            for item in maintenance_candidates(repo, target)
+            if item["candidate_id"] == candidate_id
+        ),
+        None,
+    )
+    if candidate is None:
+        raise WorkflowError(
+            f"Rescued branch was not returned by maintenance audit: {branch}"
+        )
+    return candidate
+
+
+def main_worktree_branch(repo: Path) -> str:
+    main = next((worktree for worktree in parse_worktrees(repo) if worktree.main), None)
+    if main is None or not main.branch:
+        raise WorkflowError(
+            "The main worktree must be attached to a branch, or pass --target explicitly."
+        )
+    return main.branch
+
+
 def unmerged_candidates(repo: Path, target: str) -> list[str]:
     return sorted(item.branch for item in branch_audits(repo, target) if item.ahead)
 
 
 def emit(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def emit_command_result(
+    args: argparse.Namespace, payload: dict[str, object]
+) -> dict[str, object]:
+    if not getattr(args, "suppress_emit", False):
+        emit(payload)
+    return payload
 
 
 def verify_expected_head(actual: str, expected: str | None, label: str) -> None:
@@ -564,9 +893,87 @@ def command_list(repo: Path, _args: argparse.Namespace) -> None:
     emit({"worktrees": [asdict(worktree) for worktree in parse_worktrees(repo)]})
 
 
+def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
+    current_path = repo.resolve()
+    worktree = next(
+        (
+            item
+            for item in parse_worktrees(repo)
+            if Path(item.path).resolve() == current_path
+        ),
+        None,
+    )
+    if worktree is None:
+        raise WorkflowError(
+            f"Current repository path is not a registered worktree: {current_path}"
+        )
+    snapshot = worktree_snapshot(worktree)
+    blockers: list[str] = []
+    if worktree.main:
+        blockers.append("main_worktree")
+    if worktree.detached or not worktree.branch:
+        blockers.append("detached_head")
+    blockers.extend(worktree_mutation_blockers([snapshot]))
+    completion = completion_evidence(
+        repo,
+        None if worktree.main or worktree.detached else worktree.branch,
+        worktree.head or "",
+        [snapshot],
+    )
+    emit(
+        {
+            "action": "owner_status_inspected",
+            "git_common_dir": str(git_common_dir(repo)),
+            "worktree": snapshot,
+            "completion": completion,
+            "completion_eligible": not blockers,
+            "completion_blockers": blockers,
+            "next_action": (
+                "mark_complete_after_semantic_completion"
+                if not blockers and completion["status"] != "current"
+                else "already_marked_complete"
+                if not blockers
+                else "resolve_or_report_blockers"
+            ),
+        }
+    )
+
+
+def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
+    requested = Path(args.repo).expanduser().resolve()
+    branch = args.branch or current_branch(requested)
+    if not local_branch_exists(repo, branch):
+        raise WorkflowError(f"Local branch does not exist: {branch}")
+    worktrees = affected_worktrees(repo, branch)
+    if len(worktrees) != 1:
+        raise WorkflowError(
+            f"Branch '{branch}' must be checked out in exactly one registered worktree."
+        )
+    if worktrees[0].main:
+        raise WorkflowError("The main worktree branch cannot be marked as task-complete.")
+    ensure_affected_worktrees_clean(repo, branch)
+    head = run_git(repo, "rev-parse", f"{branch}^{{commit}}").stdout.strip()
+    verify_expected_head(head, args.expected_head, f"Branch '{branch}'")
+    ref = completion_ref_name(branch)
+    previous = ref_object_id(repo, ref)
+    null_object_id = "0" * len(head)
+    run_git(repo, "update-ref", ref, head, previous or null_object_id)
+    emit(
+        {
+            "action": "branch_marked_complete",
+            "branch": branch,
+            "completion_ref": ref,
+            "head": head,
+            "previous_completion_head": previous,
+            "remote_refs_untouched": True,
+        }
+    )
+
+
 def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
     target = args.target or current_branch(repo)
     items = maintenance_candidates(repo, target)
+    snapshot = maintenance_snapshot(repo, target, items)
     if args.all:
         selected = items
         selection: dict[str, object] = {"kind": "all"}
@@ -584,26 +991,414 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
             "cutoff_unix": cutoff,
         }
 
-    target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
-    target_worktrees = [
-        worktree_snapshot(worktree)
-        for worktree in affected_worktrees(repo, target)
-    ]
+    retained_worktrees: dict[str, dict[str, object]] = {}
+    for candidate in selected:
+        evidence = candidate["decision_evidence"]
+        if evidence["default_decision"] != "retain":
+            continue
+        for worktree in candidate["worktrees"]:
+            retained_worktrees[str(worktree["path"])] = {
+                "path": worktree["path"],
+                "branch": worktree["branch"],
+                "detached": worktree["detached"],
+                "head": worktree["head"],
+                "dirty": worktree["dirty"],
+                "changes": worktree["changes"],
+                "operations": worktree["operations"],
+                "locked": worktree["locked"],
+                "exists": worktree["exists"],
+                "inspectable": worktree["inspectable"],
+                "completion": candidate["completion"],
+                "retention_reasons": evidence["retention_reasons"],
+                "mutations_skipped": [
+                    "modify",
+                    "stage",
+                    "commit",
+                    "switch",
+                    "merge",
+                    "delete",
+                    "remove",
+                    "rescue",
+                ],
+            }
     emit(
         {
             "action": "maintenance_audit",
             "scope": "local_branches_and_worktrees",
-            "target": {
-                "branch": target,
-                "head": target_head,
-                "worktrees": target_worktrees,
-            },
+            "plan_schema_version": MAINTENANCE_PLAN_SCHEMA_VERSION,
+            "snapshot_id": snapshot["snapshot_id"],
+            "snapshot_scope": "all_candidates",
+            "maintenance_run_eligible": bool(args.all),
+            "target": snapshot["target"],
             "selection": selection,
             "total_candidates": len(items),
             "selected_candidates": len(selected),
             "candidates": selected,
+            "owner_handoff_missing": [
+                {
+                    "branch": candidate["branch"],
+                    "candidate_id": candidate["candidate_id"],
+                    "head": candidate["head"],
+                    "status": candidate["completion"]["status"],
+                }
+                for candidate in selected
+                if candidate["kind"] == "branch"
+                and candidate["completion"]["status"] != "current"
+            ],
+            "orphan_completion_refs": snapshot["orphan_completion_refs"],
+            "retained_active_or_dirty_worktrees": sorted(
+                retained_worktrees.values(), key=lambda item: str(item["path"])
+            ),
         }
     )
+
+
+def read_maintenance_plan(value: str) -> dict[str, object]:
+    if value == "-":
+        raw = sys.stdin.read()
+        source = "stdin"
+    else:
+        path = Path(value).expanduser().resolve()
+        if not path.is_file():
+            raise WorkflowError(f"Maintenance plan does not exist: {path}")
+        raw = path.read_text(encoding="utf-8")
+        source = str(path)
+    if not raw.strip():
+        raise WorkflowError(f"Maintenance plan from {source} is empty.")
+    try:
+        plan = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise WorkflowError(
+            f"Maintenance plan from {source} is not valid JSON: {error}"
+        ) from error
+    if not isinstance(plan, dict):
+        raise WorkflowError("Maintenance plan must be a JSON object.")
+    return plan
+
+
+def validate_maintenance_plan(
+    plan: dict[str, object], snapshot: dict[str, object]
+) -> dict[str, dict[str, object]]:
+    if plan.get("schema_version") != MAINTENANCE_PLAN_SCHEMA_VERSION:
+        raise WorkflowError(
+            "Maintenance plan schema_version must be "
+            f"{MAINTENANCE_PLAN_SCHEMA_VERSION}."
+        )
+    target = snapshot["target"]
+    if plan.get("target") != target["branch"]:
+        raise WorkflowError(
+            f"Maintenance plan target must be '{target['branch']}'."
+        )
+    if plan.get("snapshot_id") != snapshot["snapshot_id"]:
+        raise WorkflowError(
+            "Maintenance snapshot changed; run maintenance-audit again and "
+            "rebuild the decision plan."
+        )
+    raw_decisions = plan.get("decisions")
+    if not isinstance(raw_decisions, list):
+        raise WorkflowError("Maintenance plan decisions must be a JSON array.")
+
+    candidates = {
+        str(candidate["candidate_id"]): candidate
+        for candidate in snapshot["candidates"]
+    }
+    decisions: dict[str, dict[str, object]] = {}
+    for raw in raw_decisions:
+        if not isinstance(raw, dict):
+            raise WorkflowError("Every maintenance decision must be a JSON object.")
+        candidate_id = raw.get("candidate_id")
+        decision = raw.get("decision")
+        reason = raw.get("reason")
+        if not isinstance(candidate_id, str) or candidate_id not in candidates:
+            raise WorkflowError(f"Unknown maintenance candidate: {candidate_id}")
+        if candidate_id in decisions:
+            raise WorkflowError(f"Duplicate maintenance decision: {candidate_id}")
+        if decision not in {"merge", "delete", "retain"}:
+            raise WorkflowError(
+                f"Decision for {candidate_id} must be merge, delete, or retain."
+            )
+        if not isinstance(reason, str) or not reason.strip():
+            raise WorkflowError(
+                f"Decision for {candidate_id} requires a non-empty reason."
+            )
+        candidate = candidates[candidate_id]
+        possible = candidate["decision_evidence"]["possible_decisions"]
+        if decision not in possible:
+            raise WorkflowError(
+                f"Decision '{decision}' is not allowed for {candidate_id}; "
+                f"allowed: {', '.join(possible)}."
+            )
+        if decision == "merge" and candidate["kind"] == "worktree":
+            raise WorkflowError(
+                f"Rescue detached worktree {candidate_id} before planning its merge."
+            )
+        if (
+            decision == "delete"
+            and candidate["kind"] == "branch"
+            and candidate["protected"]
+            and raw.get("allow_protected") is not True
+        ):
+            raise WorkflowError(
+                f"Protected branch {candidate_id} requires allow_protected=true."
+            )
+        if (
+            decision == "delete"
+            and candidate["kind"] == "worktree"
+            and candidate.get("detached")
+            and not candidate["relation"]["contained_in_target"]
+            and raw.get("allow_uncontained_detached") is not True
+        ):
+            raise WorkflowError(
+                f"Uncontained detached worktree {candidate_id} requires "
+                "allow_uncontained_detached=true."
+            )
+        decisions[candidate_id] = raw
+
+    missing = sorted(set(candidates) - set(decisions))
+    if missing:
+        raise WorkflowError(
+            "Maintenance plan must classify every audited candidate; missing: "
+            + ", ".join(missing)
+        )
+
+    will_mutate = any(
+        decision["decision"] != "retain" for decision in decisions.values()
+    ) or bool(snapshot["orphan_completion_refs"])
+    target_blockers = worktree_mutation_blockers(snapshot["target"]["worktrees"])
+    if will_mutate and target_blockers:
+        raise WorkflowError(
+            "Target worktree is not safe for maintenance mutations: "
+            + ", ".join(target_blockers)
+        )
+
+    branch_decisions = {
+        str(candidates[candidate_id]["branch"]): decision
+        for candidate_id, decision in decisions.items()
+        if candidates[candidate_id]["kind"] == "branch"
+    }
+    for candidate_id, decision in decisions.items():
+        candidate = candidates[candidate_id]
+        if candidate["kind"] != "worktree" or not candidate.get("branch"):
+            continue
+        branch_decision = branch_decisions.get(str(candidate["branch"]))
+        if branch_decision is None:
+            continue
+        if branch_decision["decision"] == "merge" and decision["decision"] == "delete":
+            raise WorkflowError(
+                "Do not delete a source worktree in the same run that merges its "
+                f"branch: {candidate_id}. Validate the merge, then audit again."
+            )
+        if branch_decision["decision"] == "delete" and decision["decision"] == "retain":
+            raise WorkflowError(
+                f"Cannot retain {candidate_id} while deleting its branch."
+            )
+    return decisions
+
+
+def current_candidate(
+    repo: Path, target: str, candidate_id: str
+) -> dict[str, object] | None:
+    return next(
+        (
+            candidate
+            for candidate in maintenance_candidates(repo, target)
+            if candidate["candidate_id"] == candidate_id
+        ),
+        None,
+    )
+
+
+def command_maintenance_run(repo: Path, args: argparse.Namespace) -> None:
+    plan = read_maintenance_plan(args.plan)
+    planned_target = plan.get("target")
+    if not isinstance(planned_target, str) or not planned_target:
+        raise WorkflowError("Maintenance plan requires a target branch.")
+    if not local_branch_exists(repo, planned_target):
+        raise WorkflowError(f"Target branch does not exist locally: {planned_target}")
+    if current_branch(repo) != planned_target:
+        raise WorkflowError(
+            f"Run maintenance-run from the target worktree '{planned_target}'."
+        )
+
+    initial_snapshot = maintenance_snapshot(repo, planned_target)
+    decisions = validate_maintenance_plan(plan, initial_snapshot)
+    initial_candidates = {
+        str(candidate["candidate_id"]): candidate
+        for candidate in initial_snapshot["candidates"]
+    }
+    results: list[dict[str, object]] = []
+    expected_target_head = str(initial_snapshot["target"]["head"])
+
+    def ensure_target_unchanged() -> None:
+        actual = run_git(
+            repo, "rev-parse", f"{planned_target}^{{commit}}"
+        ).stdout.strip()
+        verify_expected_head(actual, expected_target_head, f"Target '{planned_target}'")
+
+    def record(
+        candidate_id: str,
+        operation: dict[str, object] | None = None,
+        *,
+        outcome: str | None = None,
+    ) -> None:
+        decision = decisions[candidate_id]
+        item: dict[str, object] = {
+            "candidate_id": candidate_id,
+            "decision": decision["decision"],
+            "reason": decision["reason"],
+        }
+        if operation is not None:
+            item["operation"] = operation
+        if outcome is not None:
+            item["outcome"] = outcome
+        results.append(item)
+
+    try:
+        branch_merges = sorted(
+            candidate_id
+            for candidate_id, decision in decisions.items()
+            if initial_candidates[candidate_id]["kind"] == "branch"
+            and decision["decision"] == "merge"
+        )
+        for candidate_id in branch_merges:
+            expected = initial_candidates[candidate_id]
+            actual = current_candidate(repo, planned_target, candidate_id)
+            if actual is None:
+                raise WorkflowError(f"Candidate disappeared since audit: {candidate_id}")
+            verify_candidate_unchanged(expected, actual)
+            ensure_target_unchanged()
+            operation = command_merge(
+                repo,
+                argparse.Namespace(
+                    source=actual["branch"],
+                    target=planned_target,
+                    expected_source_head=expected["head"],
+                    expected_target_head=expected_target_head,
+                    suppress_emit=True,
+                ),
+            )
+            expected_target_head = str(operation["commit"])
+            record(candidate_id, operation)
+
+        branch_deletes = sorted(
+            candidate_id
+            for candidate_id, decision in decisions.items()
+            if initial_candidates[candidate_id]["kind"] == "branch"
+            and decision["decision"] == "delete"
+        )
+        deleted_worktrees: set[str] = set()
+        for candidate_id in branch_deletes:
+            expected = initial_candidates[candidate_id]
+            actual = current_candidate(repo, planned_target, candidate_id)
+            if actual is None:
+                raise WorkflowError(f"Candidate disappeared since audit: {candidate_id}")
+            verify_candidate_unchanged(expected, actual)
+            ensure_target_unchanged()
+            decision = decisions[candidate_id]
+            operation = command_branch_delete(
+                repo,
+                argparse.Namespace(
+                    branch=actual["branch"],
+                    target=planned_target,
+                    reason=decision["reason"],
+                    expected_head=expected["head"],
+                    expected_target_head=expected_target_head,
+                    allow_unmerged=not bool(
+                        actual["relation"]["contained_in_target"]
+                    ),
+                    allow_protected=decision.get("allow_protected") is True,
+                    remove_worktree=bool(actual["worktrees"]),
+                    suppress_emit=True,
+                ),
+            )
+            deleted_worktrees.update(str(path) for path in operation["removed_worktrees"])
+            record(candidate_id, operation)
+
+        worktree_deletes = sorted(
+            candidate_id
+            for candidate_id, decision in decisions.items()
+            if initial_candidates[candidate_id]["kind"] == "worktree"
+            and decision["decision"] == "delete"
+        )
+        for candidate_id in worktree_deletes:
+            expected = initial_candidates[candidate_id]
+            path = str(expected["worktrees"][0]["path"])
+            if path in deleted_worktrees:
+                record(candidate_id, outcome="removed_with_branch_delete")
+                continue
+            actual = current_candidate(repo, planned_target, candidate_id)
+            if actual is None:
+                raise WorkflowError(f"Candidate disappeared since audit: {candidate_id}")
+            verify_candidate_unchanged(expected, actual)
+            ensure_target_unchanged()
+            decision = decisions[candidate_id]
+            detached = bool(actual.get("detached"))
+            contained = bool(actual["relation"]["contained_in_target"])
+            operation = command_remove(
+                repo,
+                argparse.Namespace(
+                    worktree=path,
+                    require_merged_into=(
+                        planned_target if not detached and contained else None
+                    ),
+                    require_contained_in=(
+                        planned_target if detached and contained else None
+                    ),
+                    expected_head=expected["head"],
+                    allow_uncontained_detached=(
+                        decision.get("allow_uncontained_detached") is True
+                    ),
+                    reason=decision["reason"],
+                    suppress_emit=True,
+                ),
+            )
+            record(candidate_id, operation)
+
+        for candidate_id, decision in sorted(decisions.items()):
+            if decision["decision"] == "retain":
+                record(candidate_id, outcome="retained_without_mutation")
+
+        removed_orphan_refs = prune_orphan_completion_refs(repo)
+        final_snapshot = maintenance_snapshot(repo, planned_target)
+        emit(
+            {
+                "action": "maintenance_run",
+                "status": "completed",
+                "initial_snapshot_id": initial_snapshot["snapshot_id"],
+                "final_snapshot_id": final_snapshot["snapshot_id"],
+                "target": final_snapshot["target"],
+                "terminal_decisions": results,
+                "removed_orphan_completion_refs": removed_orphan_refs,
+                "remaining_candidates": [
+                    candidate["candidate_id"]
+                    for candidate in final_snapshot["candidates"]
+                ],
+                "remote_refs_untouched": True,
+                "repository_lock": str(repository_lock_path(repo)),
+            }
+        )
+    except WorkflowError as error:
+        target_head = run_git(
+            repo, "rev-parse", f"{planned_target}^{{commit}}"
+        ).stdout.strip()
+        emit(
+            {
+                "action": "maintenance_run",
+                "status": "paused",
+                "error": str(error),
+                "initial_snapshot_id": initial_snapshot["snapshot_id"],
+                "completed_decisions": results,
+                "target_state": {
+                    "branch": planned_target,
+                    "head": target_head,
+                    "dirty": bool(status_lines(repo)),
+                    "operations": list(operation_state(repo)),
+                },
+                "remote_refs_untouched": True,
+                "repository_lock": str(repository_lock_path(repo)),
+            }
+        )
+        raise
 
 
 def command_branch_audit(repo: Path, args: argparse.Namespace) -> None:
@@ -677,7 +1472,7 @@ def resolve_source(repo: Path, source: str | None, target: str) -> str:
     )
 
 
-def command_merge(repo: Path, args: argparse.Namespace) -> None:
+def command_merge(repo: Path, args: argparse.Namespace) -> dict[str, object]:
     target = args.target or current_branch(repo)
     if current_branch(repo) != target:
         raise WorkflowError(
@@ -710,17 +1505,18 @@ def command_merge(repo: Path, args: argparse.Namespace) -> None:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
         raise WorkflowError(f"Merge failed: {detail}")
 
-    emit(
+    return emit_command_result(
+        args,
         {
             "action": "merged",
             "commit": run_git(repo, "rev-parse", "HEAD").stdout.strip(),
             "source": source,
             "target": target,
-        }
+        },
     )
 
 
-def command_remove(repo: Path, args: argparse.Namespace) -> None:
+def command_remove(repo: Path, args: argparse.Namespace) -> dict[str, object]:
     requested = Path(args.worktree).expanduser().resolve()
     worktrees = parse_worktrees(repo)
     selected = next(
@@ -801,7 +1597,8 @@ def command_remove(repo: Path, args: argparse.Namespace) -> None:
             )
 
     run_git(repo, "worktree", "remove", str(requested))
-    emit(
+    return emit_command_result(
+        args,
         {
             "action": "removed",
             "branch": selected.branch,
@@ -809,7 +1606,7 @@ def command_remove(repo: Path, args: argparse.Namespace) -> None:
             "head": actual_head,
             "reason": args.reason,
             "worktree": str(requested),
-        }
+        },
     )
 
 
@@ -840,16 +1637,32 @@ def command_rescue_detached(repo: Path, args: argparse.Namespace) -> None:
     if check_name.returncode != 0:
         raise WorkflowError(f"Invalid branch name: {args.branch}")
 
+    target = args.target or main_worktree_branch(repo)
+    if not local_branch_exists(repo, target):
+        raise WorkflowError(f"Target branch does not exist locally: {target}")
+    if target == args.branch:
+        raise WorkflowError("Rescue branch and maintenance target must be different.")
+
     actual_head = run_git(requested, "rev-parse", "HEAD^{commit}").stdout.strip()
     verify_expected_head(actual_head, args.expected_head, f"Worktree '{requested}'")
     changes = status_lines(requested)
     run_git(requested, "switch", "-c", args.branch)
+    candidate = maintenance_branch_candidate(repo, target, args.branch)
     emit(
         {
             "action": "detached_rescued",
             "branch": args.branch,
+            "candidate": candidate,
+            "classification_status": "pending",
+            "decision_terminal": False,
             "dirty_changes_preserved": changes,
             "head": actual_head,
+            "next_action": {
+                "action": "classify_rescued_branch",
+                "candidate_id": candidate["candidate_id"],
+                "target": target,
+            },
+            "target": target,
             "worktree": str(requested),
         }
     )
@@ -919,7 +1732,7 @@ def command_prune_missing(repo: Path, args: argparse.Namespace) -> None:
     )
 
 
-def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
+def command_branch_delete(repo: Path, args: argparse.Namespace) -> dict[str, object]:
     branch = args.branch
     target = args.target or current_branch(repo)
     if branch == target:
@@ -989,18 +1802,21 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
         removed_worktrees.append(str(requested))
 
     run_git(repo, "branch", "-d" if merged else "-D", "--", branch)
-    emit(
+    completion_ref_removed = clear_completion_ref(repo, branch)
+    return emit_command_result(
+        args,
         {
             "action": "branch_deleted",
             "branch": branch,
             "commit": commit,
+            "completion_ref_removed": completion_ref_removed,
             "merged_into_target": merged,
             "reason": args.reason,
             "remote_branch_untouched": True,
             "removed_worktrees": removed_worktrees,
             "target": target,
             "target_commit": target_commit,
-        }
+        },
     )
 
 
@@ -1014,6 +1830,19 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = commands.add_parser("list", help="List registered worktrees")
     list_parser.set_defaults(handler=command_list)
 
+    owner_status = commands.add_parser(
+        "owner-status",
+        help="Inspect the current worktree's owner-completion eligibility",
+    )
+    owner_status.set_defaults(handler=command_owner_status)
+
+    mark_complete = commands.add_parser(
+        "mark-complete", help="Mark one clean task branch's exact HEAD as completed"
+    )
+    mark_complete.add_argument("--branch")
+    mark_complete.add_argument("--expected-head", required=True)
+    mark_complete.set_defaults(handler=command_mark_complete)
+
     maintenance_audit = commands.add_parser(
         "maintenance-audit",
         help="Inventory local branches, attached worktrees, and detached work",
@@ -1024,6 +1853,17 @@ def build_parser() -> argparse.ArgumentParser:
     maintenance_window.add_argument("--recent-count", type=positive_int)
     maintenance_window.add_argument("--recent-days", type=positive_int)
     maintenance_audit.set_defaults(handler=command_maintenance_audit)
+
+    maintenance_run = commands.add_parser(
+        "maintenance-run",
+        help="Apply one exact, fully classified maintenance snapshot",
+    )
+    maintenance_run.add_argument(
+        "--plan",
+        default="-",
+        help="Decision-plan JSON path, or - for stdin (default: stdin)",
+    )
+    maintenance_run.set_defaults(handler=command_maintenance_run)
 
     branch_audit = commands.add_parser(
         "branch-audit", help="Inventory recent unmerged local branches"
@@ -1062,6 +1902,7 @@ def build_parser() -> argparse.ArgumentParser:
     rescue_detached.add_argument("--worktree", required=True)
     rescue_detached.add_argument("--branch", required=True)
     rescue_detached.add_argument("--expected-head", required=True)
+    rescue_detached.add_argument("--target")
     rescue_detached.set_defaults(handler=command_rescue_detached)
 
     prune_missing = commands.add_parser(
@@ -1092,7 +1933,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         repo = repository_root(args.repo)
-        args.handler(repo, args)
+        if args.command in MUTATING_COMMANDS:
+            with repository_lock(repo, args.command):
+                args.handler(repo, args)
+        else:
+            args.handler(repo, args)
     except WorkflowError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2

@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern releases, defects, feedback, and project lifecycle"
-  default_prompt: "Use $project-governance to govern this project’s design, releases, defect feedback, Git lineage, and verification."
+  short_description: "Govern plans, releases, recovery, and defects"
+  default_prompt: "Use $project-governance to govern this project’s plans, implementation completion handoffs, dependencies, releases, recovery, defects, and verification."

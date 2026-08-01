@@ -126,6 +126,21 @@ tasks:
         (config_root / "config.yaml").write_text(
             f"""schema: {SKILL_NAME}.config.v3
 profile: test-project
+ports:
+  project_segment: "42"
+  instances:
+    local_dev: 0
+    local_e2e: 1
+    local_preproduction: 2
+    remote_preproduction: 5
+    remote_production: 6
+  services:
+    allocation: sequential
+    start: 0
+    capacity: 100
+    assignments:
+      api: 0
+      worker: 1
 tasks:
   defect-diagnosis:
     base: references/defect-governance.md
@@ -171,11 +186,26 @@ tasks:
         )
         return config_root
 
+    def test_v3_config_requires_ppiss_ports(self) -> None:
+        config_root = self.write_v3_config()
+        config_path = config_root / "config.yaml"
+        text = config_path.read_text(encoding="utf-8")
+        start = text.index("ports:\n")
+        end = text.index("tasks:\n")
+        config_path.write_text(text[:start] + text[end:], encoding="utf-8")
+
+        result = self.run_resolver("--task", "defect-diagnosis")
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ports must be a mapping", result.stderr)
+
     def test_generic_fallback_and_stable_id_for_both_tasks(self) -> None:
         for task in (
             "defect-feedback-lifecycle",
             "defect-diagnosis",
             "defect-history-review",
+            "document-audit",
+            "document-maintenance",
             "port-allocation",
             "release-deployment",
         ):
@@ -255,6 +285,49 @@ tasks:
             list(selected_manifest["contract"]["operations"]), ["collect"]
         )
         self.assertEqual(selected_manifest["entry_command"][-1], "collect")
+
+    def test_missing_release_task_uses_managed_contract_instead_of_mapping_error(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "release-deployment", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "bootstrap_required"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.release-deployment.managed.v1",
+        )
+        self.assertIn("prepare", manifest["contract"]["operations"])
+        self.assertIn("promote-plan", manifest["contract"]["operations"])
+        self.assertIn("promote", manifest["contract"]["operations"])
+
+    def test_missing_document_maintenance_task_uses_managed_contract(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "document-maintenance", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "project_defaults"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.document-maintenance.managed.v1",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["maintain"]["mutability"],
+            "repository_write",
+        )
+        self.assertEqual(
+            manifest["contract"]["operations"]["verify"]["mutability"],
+            "read_only",
+        )
 
     def test_v3_rejects_missing_executor(self) -> None:
         config_root = self.write_v3_config()

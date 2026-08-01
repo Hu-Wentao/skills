@@ -33,6 +33,21 @@ class TaskRunnerTest(unittest.TestCase):
         (config_root / "config.yaml").write_text(
             """schema: project-governance.config.v3
 profile: test
+ports:
+  project_segment: "42"
+  instances:
+    local_dev: 0
+    local_e2e: 1
+    local_preproduction: 2
+    remote_preproduction: 5
+    remote_production: 6
+  services:
+    allocation: sequential
+    start: 0
+    capacity: 100
+    assignments:
+      api: 0
+      worker: 1
 tasks:
   defect-diagnosis:
     base: references/defect-governance.md
@@ -171,6 +186,29 @@ tasks:
             "--authorized", "release", "repair", "--base-tag", "v1.2.3"
         )
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    def test_document_maintenance_aliases_preserve_operation_authority(self) -> None:
+        inspected = self.invoke("docs", "inspect", "--limit", "1")
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        inspected_report = json.loads(inspected.stdout)
+        self.assertEqual(inspected_report["operation"], "inspect")
+
+        blocked = self.invoke("docs", "maintain", "--limit", "1")
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("requires --authorized", blocked.stderr)
+
+        allowed = self.invoke(
+            "--authorized", "docs", "maintain", "--limit", "1"
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        allowed_report = json.loads(allowed.stdout)
+        self.assertEqual(allowed_report["operation"], "maintain")
+
+    def test_docs_audit_is_read_only_maintenance_verification_alias(self) -> None:
+        result = self.invoke("docs", "audit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["schema"], "project-governance.document-audit.v1")
 
 
 if __name__ == "__main__":

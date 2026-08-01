@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function parseArgs(argv) {
-  const args = { root: process.cwd(), docs: "docs", json: false };
+  const args = { root: process.cwd(), docs: "docs", json: false, mdqScript: null };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
-    if (value === "--root" || value === "--docs") {
+    if (value === "--root" || value === "--docs" || value === "--mdq-script") {
       const next = argv[index + 1];
       if (!next) throw new Error(`${value} requires a value`);
-      args[value.slice(2)] = next;
+      const key = value === "--mdq-script" ? "mdqScript" : value.slice(2);
+      args[key] = next;
       index += 1;
     } else if (value === "--json") {
       args.json = true;
@@ -21,6 +25,53 @@ function parseArgs(argv) {
     }
   }
   return args;
+}
+
+function resolveMdqScript(configured) {
+  const skillRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const candidates = [
+    configured,
+    join(dirname(skillRoot), "queryable-markdown", "scripts", "mdq.py"),
+    join(homedir(), ".codex", "skills", "queryable-markdown", "scripts", "mdq.py"),
+    join(homedir(), ".agents", "skills", "queryable-markdown", "scripts", "mdq.py"),
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function validatePersistentMdqContracts(docs, mdqScript) {
+  const globs = [
+    "requirements.md",
+    "requirements/**/*.md",
+    "baseline/**/*.md",
+    "plans/**/*.md",
+    "evaluations/**/*.md",
+    "defects/**/*.md",
+    "archive/**/*.md",
+    "*coverage*.md",
+    "*verification*.md",
+    "*traceability*.md",
+  ];
+  const command = ["run", mdqScript, "scan", docs, "--require-contract", "--limit", "1"];
+  for (const pattern of globs) command.push("--glob", pattern);
+  const completed = spawnSync("uv", command, {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (completed.error) {
+    return {
+      report: null,
+      error: `persistent mdq validation could not run: ${completed.error.message}`,
+    };
+  }
+  try {
+    return { report: JSON.parse(completed.stdout), error: null };
+  } catch (error) {
+    const detail = completed.stderr.trim() || completed.stdout.trim();
+    return {
+      report: null,
+      error: `persistent mdq validation returned invalid JSON: ${error.message}${detail ? `; ${detail}` : ""}`,
+    };
+  }
 }
 
 function markdownFiles(directory) {
@@ -73,7 +124,7 @@ function parseFrontmatter(content) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
-    console.log("Usage: validate-governance.mjs [--root PROJECT] [--docs RELATIVE_OR_ABSOLUTE_PATH] [--json]");
+    console.log("Usage: validate-governance.mjs [--root PROJECT] [--docs RELATIVE_OR_ABSOLUTE_PATH] [--mdq-script PATH] [--json]");
     return 0;
   }
 
@@ -85,6 +136,40 @@ function main() {
   }
 
   const files = markdownFiles(docs);
+  const mdqScript = resolveMdqScript(args.mdqScript);
+  const blockingMdqDiagnostics = new Set([
+    "duplicate_key",
+    "field_conflict",
+    "incomplete_record",
+    "key_conflict",
+    "marker_conflict",
+    "missing_key",
+    "no_records",
+  ]);
+  if (!mdqScript) {
+    issues.push({
+      level: "error",
+      message: "queryable-markdown mdq.py is required to validate governed Markdown contracts",
+    });
+  } else if (existsSync(docs) && statSync(docs).isDirectory()) {
+    const { report, error } = validatePersistentMdqContracts(docs, mdqScript);
+    if (error) {
+      issues.push({ level: "error", message: error });
+    } else {
+      for (const item of report.diagnostics ?? []) {
+        if (
+          item.severity !== "error"
+          && !blockingMdqDiagnostics.has(item.code)
+        ) continue;
+        issues.push({
+          level: "error",
+          file: item.document ? resolve(item.document) : undefined,
+          line: item.line ?? null,
+          message: `[${item.code}] ${item.message}`,
+        });
+      }
+    }
+  }
   const declarations = new Map();
   const references = [];
   const defectRecords = new Map();
@@ -110,18 +195,6 @@ function main() {
     const relativeFile = relative(docs, file);
     if (/(?:verification|coverage|traceability)/i.test(relativeFile)) {
       hasVerificationDocument = true;
-    }
-    const governedDirectory = relativeFile.split(/[\\/]/, 1)[0];
-    if (
-      ["requirements", "baseline", "plans", "defects"].includes(governedDirectory)
-      && !/^---\n[\s\S]*?^mdq:\s*$/m.test(content)
-    ) {
-      issues.push({
-        level: "warning",
-        file,
-        line: 1,
-        message: "governed Markdown has no persistent mdq contract",
-      });
     }
     for (const match of content.matchAll(headingPattern)) {
       const id = match[1];

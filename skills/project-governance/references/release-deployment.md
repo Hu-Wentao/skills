@@ -1,3 +1,21 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+    key:
+      source: heading
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: false
+---
 # Release and Deployment Governance
 
 ## Separate Application Releases from Instance State
@@ -42,13 +60,27 @@ deploying it, treat every named step as current authority for that sequence.
 Do not request the same authorization again between those steps. Do not extend
 the sequence to an unnamed mutation.
 
+Interpret retry and repair scope from the verbs the user actually authorized:
+
+- A request to retry or keep deploying one frozen release authorizes only
+  bounded attempts of the same commit, tag, artifact, and target.
+- A request to fix or repair the failed release and keep deploying it until
+  verified also authorizes the required next patch candidate and its named
+  target gates. Do not ask again between diagnosis, repair, patch publication,
+  fixed-artifact retry, and verification.
+- Neither form authorizes a different target, tag mutation, rollback, restore,
+  destructive migration, unrelated cleanup, or synchronization back to the
+  integration branch.
+
 If the release is blocked before its source is frozen:
 
 1. Identify the exact blocker and the next release stage it prevents.
 2. Perform only the smallest already-authorized action needed to clear it.
 3. Return immediately to the next incomplete release stage after it clears.
 4. Freeze the source as soon as the authorized changes are committed and the
-   integration worktree satisfies the project rules.
+   committed integration ref satisfies the project rules. Unrelated tracked,
+   staged, or untracked control-worktree changes are not a source-freeze
+   blocker unless the next required operation must mutate that worktree.
 
 Classify a discovery as a hard blocker only when it prevents producing the
 explicitly requested committed source, leaves the source or target identity
@@ -69,20 +101,30 @@ currently authorized release is waiting to advance.
 
 1. Read repository instructions and inspect the control worktree without
    modifying it.
-2. Resolve the intended source once to a full commit id and record it.
-3. Require committed state. Never synthesize a release from uncommitted or
-   untracked files.
-4. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
+2. Resolve the intended committed integration ref once to a full commit id and
+   record it.
+3. Require committed source identity. Never synthesize a release from staged,
+   unstaged, or untracked files; those bytes remain excluded even when the
+   control worktree is dirty.
+4. When the highest stable tag is already reachable from the committed
+   integration ref, create the retained release branch and worktree from that
+   commit without requiring the control worktree to be clean.
+5. Require a clean checked-out integration worktree only when the next required
+   step must mutate that branch, such as synchronizing an unreachable previous
+   stable tag. Do not commit, stash, reset, clean, or delete unrelated changes
+   merely to satisfy release preparation.
+6. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
    frozen.
-5. Keep the release tag, full commit id, and deployment target together in
+7. Keep the release tag, full commit id, and deployment target together in
    every plan, command boundary, retry, and report.
 
-For a normal full release, require the primary integration worktree to be
-clean, checked out on its integration branch, and still at the frozen source
-commit before it is advanced. For a repair release, freeze the failed release
-tag and its peeled commit as the base identity, then follow the isolated repair
-rules below. For deploy-only work, use the exact user-authorized commit or
-immutable tag and do not mutate the control worktree.
+For a normal full release, the retained release lineage becomes the release
+identity authority at source freeze. Later control-worktree dirtiness or branch
+movement can block only a separately required integration mutation; it cannot
+reopen or invalidate that frozen release. For a repair release, freeze the
+failed release tag and its peeled commit as the base identity, then follow the
+isolated repair rules below. For deploy-only work, use the exact
+user-authorized commit or immutable tag and do not mutate the control worktree.
 
 ## Separate Project Releases from Module Artifacts
 
@@ -114,21 +156,22 @@ is forbidden.
 
 ## Isolate Work in Fresh Worktrees
 
-Use a new temporary worktree for release planning, release preparation,
+Use a new isolated worktree for release planning, release preparation,
 deploy-only work, and every retry. Verify its exact `HEAD` and cleanliness
 before running checks, builds, version edits, or deployment commands.
 
 - Use a detached worktree for a preview, deploy-only operation, or retry.
-- Use a temporary `release/v<version>` branch at the frozen source for a normal
+- Use a retained `release/v<version>` branch at the frozen source for a normal
   full release.
-- Use a temporary `repair/v<version>` branch rooted at the failed immutable
+- Use a retained `repair/v<version>` branch rooted at the failed immutable
   release tag for a repair release.
 - Run release checks, version edits, builds, and deployment from the isolated
   worktree.
 - Never use `stash`, `reset`, `clean`, or forced removal to prepare the user's
   control worktree.
-- Remove a successful clean worktree when it is no longer needed. Preserve and
-  report a failed or dirty worktree while its evidence is still useful.
+- Remove a successful clean worktree when it is no longer needed, but retain
+  its release or repair branch according to project policy. Preserve and report
+  a failed or dirty worktree while its evidence is still useful.
 
 ## Create and Preserve Git Identities
 
@@ -146,37 +189,120 @@ The UTC timestamp must be an unambiguous, filename-safe UTC instant. A project
 profile may select a precise rendering, but it must preserve UTC ordering and
 must not replace the target or release version components.
 
-For a normal release:
+For a normal release, follow the project's contracted integration policy:
 
-1. Create the version commit on the temporary release branch.
-2. Revalidate that the integration worktree is clean and unchanged.
-3. Fast-forward or apply the project's explicitly approved integration policy.
-4. Create the annotated `v<version>` tag only after the release commit is in
-   integration history.
-5. Verify the release worktree, integration branch, and peeled release tag
-   resolve to the same full commit.
+1. Create the version commit on the retained release branch.
+2. Keep the release branch and its clean worktree fixed as the candidate
+   authority.
+3. If the contract requires the release commit in integration history before
+   tagging, revalidate the integration ref and require a clean control worktree
+   only for that mutation. If it is dirty or moved, report the integration
+   operation as blocked without changing the frozen release status.
+4. Apply only the project's explicitly approved integration policy.
+5. Create the annotated `v<version>` tag at the contracted admission point.
+6. Verify the retained release branch and peeled tag resolve to the same full
+   commit; also verify the integration branch only when the contract makes it
+   an identity participant.
 
 Create a successful deployment tag only after the project's required health,
 identity, and acceptance evidence declares that target verified. Point it to
-the same release commit. A failed or unverified deployment must not receive a
-successful deployment tag.
+the same release commit as the stable release tag. Record the target, artifact
+manifest digest or immutable artifact digests, and deployment transaction
+identity in the annotated tag message or another immutable referenced record.
+Creating a deployment tag does not require or authorize a source commit. A
+failed or unverified deployment must not receive a successful deployment tag.
 
 Treat release and successful deployment tags as immutable records. Do not move,
 delete, replace, or reuse them without explicit authorization for that exact
 tag operation.
 
-## Promote the Same Artifact
+## Promote the Same Release Identity
 
 Promote one immutable release identity through environments. Resolve the
 release tag and full commit before the first environment and use that exact
-pair for every later environment. Do not rebuild from a branch, infer a newer
-commit, or create a second release merely because promotion occurs later.
+pair for every later environment. Reuse the exact same artifact digest when it
+is compatible with the next target. When targets require different platform or
+build artifacts, key each immutable manifest by `(release tag, target)`.
+
+A later authorized promotion may create the first manifest for a target after
+the stable tag exists only from a clean detached checkout of that exact tag.
+Persist the new manifest append-only before deployment. Never overwrite,
+delete, or rebuild an existing `(release tag, target)` manifest, and never read
+or resolve a moving branch for this operation. Resolve build and target hooks
+from the tagged checkout rather than the control worktree. This adds deployment
+evidence, not source history: do not create a source commit or move the release
+tag. If source or build configuration must change, create a new release
+version.
 
 Run every environment-specific gate from a clean checkout of the same commit.
 Advance to the next environment only after the preceding environment satisfies
 its configured completion evidence. A partial, failed, or unverified
 environment blocks automatic promotion but does not authorize rollback or
 another commit.
+
+## Resolve Target-Specific Execution Defaults
+
+A project may select different build or artifact-transfer defaults by deployment
+target. Keep that mapping in the project profile and resolve it deterministically
+inside the repository executor after the target is known. When the task contract
+cannot express a conditional default, omit the scalar parameter default so the
+runner does not overwrite the executor's target-aware choice.
+
+Keep explicit contracted parameters as per-run overrides. A default-mode change
+does not authorize a release, deployment, retry, promotion, or a change to a
+frozen tag.
+
+## Classify a Failure Before the Next Mutation
+
+Record the failed phase, fixed identity, target, and whether source bytes must
+change before choosing the next operation:
+
+- Before a release tag exists, repair the authorized candidate and rerun its
+  gates; do not manufacture a failed release identity.
+- For a transient transport, registry, resource-admission, or host failure,
+  retry the same immutable tag, commit, artifact digest, and target.
+- For a source, migration, or packaging defect after tagging, preserve the
+  failed tag and create the next patch release through the repair workflow.
+- For an acceptance or evidence timeout with unchanged running source, rerun
+  only the project-owned verification or reconciliation boundary when it
+  supports that operation; do not rebuild.
+- For a partially switched or data-affecting deployment, preserve evidence and
+  use only the project executor's declared reconciliation path. Rollback,
+  restore, or destructive migration remains separate authority.
+
+Make transient retries bounded and idempotent. The project contract or executor
+must declare attempt limits, backoff, and the terminal state. A request to
+continue until verified keeps already-authorized retry or repair operations
+active; it does not convert repeated deterministic failures into transient
+ones or broaden the mutation scope.
+
+## Admit Stable Tags Only After Candidate Gates
+
+Do not create a stable patch tag merely because repair work has started or a
+candidate attempt exists. Keep the repair branch untagged while any pre-tag
+gate fails. Use commit ids, immutable candidate artifact digests, CI run ids,
+and deployment-attempt records for intermediate evidence.
+
+Before creating the stable repair tag, require all project-declared source
+verification, focused and regression tests, representative legacy-schema
+migration rehearsal, candidate admission, artifact verification, and target
+preflight gates to pass. Run migration rehearsal against a sanitized copy or
+fixture that preserves the relevant production schema shape; never use the
+live database as a speculative candidate test.
+
+After a stable tag exists:
+
+- Transient deployment or verification failures retry the same tag, commit,
+  and artifact digest and never consume another version.
+- A deterministic source defect that requires changed bytes produces the next
+  patch version because the published tag remains immutable.
+- Pre-release tags may be used only when the project explicitly publishes and
+  retains them as release identities. Do not create `-rc` tags merely as a
+  substitute for ordinary candidate build and attempt records.
+
+Frequent stable patch tags therefore indicate that a required failure mode is
+escaping the pre-tag admission suite. Record and repair that test escape rather
+than weakening tag immutability or reusing a version.
 
 ## Repair a Frozen Release Without Advancing Main
 
@@ -185,8 +311,13 @@ Distinguish retry from repair before selecting an executor:
 - If source does not change, retry the exact failed tag and commit.
 - If source must change, create a new patch release from the failed immutable
   tag through the project-configured repair operation.
-- If the project has no repair contract, stop. Do not fall back to a normal
-  release from current `main`.
+- If the project has no repair contract and the current request already
+  authorizes source repair plus continued release/deployment, treat the missing
+  operation as a project release-tooling defect. On the isolated repair
+  lineage, add the smallest task contract, executor support, and focused tests;
+  resolve the updated contract and resume the same repair sequence.
+- If repair is not currently authorized, stop and request that exact authority.
+  Never fall back to a normal release from current `main`.
 
 For a repair release:
 
@@ -236,9 +367,10 @@ After a deployment failure:
 5. Never retry from a branch name, a newer `HEAD`, a reused uncertain
    worktree, or a newly inferred version.
 
-Retry authorization does not include diagnosis, repair, rollback, database
-restore, source retirement, or tag mutation. Obtain current authority for each
-additional action.
+A retry-only authorization does not include diagnosis, source repair,
+rollback, database restore, source retirement, or tag mutation. When the
+current request explicitly authorizes a larger fix-release-deploy sequence,
+carry that authority through its named steps without requesting it again.
 
 ## Respect Failure Boundaries
 
@@ -250,7 +382,9 @@ additional action.
   fixed. Report the target as failed or deployed but unverified according to
   project evidence.
 - After a failed acceptance check: do not print a success marker, create a
-  successful deployment tag, promote, retry, or roll back automatically.
+  successful deployment tag, promote, or roll back automatically. Retry or
+  reverify only when the current request and project contract already authorize
+  that exact fixed-artifact operation.
 - Never infer permission to restore a database, retire source data, change
   credentials, or run a live migration from release or deployment authority.
 
@@ -274,6 +408,9 @@ terminal emits only explicit phase events and failures.
 - On failure, emit the phase, stable command identifier, exit status, fixed
   identity, log path, and at most a bounded sanitized summary. Keep the full
   diagnostic output in the detailed log.
+- Emit release/deployment state and post-release integration state as separate
+  scopes. After source freeze, an integration conflict, dirty control worktree,
+  or later branch movement must not emit or be summarized as a release failure.
 - Continue draining every child stream even when its lines are not forwarded
   to the terminal. Output suppression must never allow a pipe buffer to block
   the child process.
@@ -296,3 +433,9 @@ verification evidence, safe log paths, preserved failure worktrees, and every
 operation that remains unauthorized or incomplete. Never report secrets,
 authorization headers, request or response bodies, or private captured
 payloads.
+
+When synchronization back to the integration branch is requested, report it
+under a separate post-release integration heading or structured scope. A
+blocked or incomplete integration operation does not downgrade a successfully
+tagged and verified release, and a successful release does not imply that
+post-release integration completed.

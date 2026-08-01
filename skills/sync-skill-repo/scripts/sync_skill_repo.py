@@ -506,18 +506,173 @@ def _non_negative_float(value: str) -> float:
 def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
     try:
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        computed_hash = lock["skills"][skill_name]["computedHash"]
+        entry = lock["skills"][skill_name]
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise SyncError(
             f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
         ) from exc
-    if not isinstance(computed_hash, str) or not re.fullmatch(
-        r"[0-9a-f]{64}", computed_hash
-    ):
+    if not isinstance(entry, dict):
         raise SyncError(
-            f"Refresh succeeded but {lock_path} has an invalid {skill_name} hash"
+            f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
         )
-    return computed_hash
+    for field, length in (("computedHash", 64), ("skillFolderHash", 40)):
+        value = entry.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str) and re.fullmatch(rf"[0-9a-f]{{{length}}}", value):
+            return value
+        raise SyncError(
+            f"Refresh succeeded but {lock_path} has an invalid "
+            f"{skill_name} {field}"
+        )
+    raise SyncError(
+        f"Refresh succeeded but {lock_path} has no usable {skill_name} hash"
+    )
+
+
+def _run_installer_with_retry(
+    command: list[str],
+    *,
+    cwd: Path,
+    attempts: int,
+    retry_delay: float,
+    action: str,
+) -> None:
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        if result.returncode == 0:
+            if output:
+                print(output)
+            print(f"{action} on attempt {attempt}/{attempts}.")
+            return
+        rendered_output = output or "<no installer output>"
+        failures.append(
+            f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
+            f"{rendered_output}"
+        )
+        normalized_output = rendered_output.lower()
+        if any(
+            marker in normalized_output
+            for marker in (
+                "eperm",
+                "eacces",
+                "operation not permitted",
+                "permission denied",
+            )
+        ):
+            raise SyncError(
+                f"{action} failed with a non-retryable filesystem permission "
+                f"error. Command: {' '.join(command)}\n{failures[-1]}\n"
+                "Run the exact command in a terminal that can write the target "
+                "skill directory."
+            )
+        if attempt < attempts and retry_delay:
+            time.sleep(retry_delay)
+    rendered = "\n\n".join(failures)
+    raise SyncError(
+        f"{action} failed after {attempts} attempts. "
+        f"Command: {' '.join(command)}\n{rendered}"
+    )
+
+
+def _verify_installed_skill(
+    source_skill: Path, installed_skill: Path, lock_path: Path | None
+) -> None:
+    skill_name = read_skill_name(source_skill)
+    if read_skill_name(installed_skill) != skill_name:
+        raise SyncError("Installed and source skill names do not match")
+    changes = installed_content_changes(source_skill, installed_skill)
+    if changes:
+        detail = ", ".join(f"{action} {path}" for action, path in changes)
+        raise SyncError(
+            f"Installed {skill_name} differs from source after installer success: "
+            f"{detail}"
+        )
+    print(f"Verified installed skill matches source: {source_skill}")
+    if lock_path is not None:
+        computed_hash = _verified_lock_hash(lock_path, skill_name)
+        print(f"Verified lock hash: {computed_hash} ({lock_path})")
+
+
+def _shared_global_skills_root() -> Path:
+    return Path.home() / ".agents" / "skills"
+
+
+def install_skill(args: argparse.Namespace) -> None:
+    installed_skill = Path(args.skill_dir).expanduser().resolve()
+    source_skill = Path(args.source_skill_dir).expanduser().resolve()
+    skill_name = read_skill_name(source_skill)
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        raise SyncError(
+            "pnpm is not available; load the repository's configured nvm runtime first"
+        )
+    if args.agent == "*":
+        raise SyncError("Install requires one explicit agent; '*' is not allowed")
+
+    if args.scope == "project":
+        if not args.project_root:
+            raise SyncError("Project installation requires --project-root")
+        project_root = Path(args.project_root).expanduser().resolve()
+        scope_arguments: list[str] = []
+        lock_path = (
+            Path(args.lock).expanduser().resolve()
+            if args.lock
+            else project_root / "skills-lock.json"
+        )
+        expected_skill = project_root / ".agents" / "skills" / skill_name
+    else:
+        global_skills_root = _shared_global_skills_root()
+        project_root = (
+            Path(args.project_root).expanduser().resolve()
+            if args.project_root
+            else global_skills_root
+        )
+        scope_arguments = ["--global"]
+        lock_path = (
+            Path(args.lock).expanduser().resolve()
+            if args.lock
+            else global_skills_root.parent / ".skill-lock.json"
+        )
+        expected_skill = global_skills_root / skill_name
+
+    if installed_skill != expected_skill.resolve():
+        raise SyncError(
+            f"Expected {args.scope} installation at {expected_skill.resolve()}, "
+            f"not {installed_skill}"
+        )
+
+    command = [
+        pnpm,
+        "dlx",
+        "skills",
+        "add",
+        args.source,
+        "--skill",
+        skill_name,
+        "--agent",
+        args.agent,
+        *scope_arguments,
+        "--yes",
+    ]
+    _run_installer_with_retry(
+        command,
+        cwd=project_root,
+        attempts=args.attempts,
+        retry_delay=args.retry_delay,
+        action=f"Installed {skill_name} for agent {args.agent}",
+    )
+    _verify_installed_skill(source_skill, installed_skill, lock_path)
 
 
 def refresh_skill(args: argparse.Namespace) -> None:
@@ -554,50 +709,14 @@ def refresh_skill(args: argparse.Namespace) -> None:
         lock_path = Path(args.lock).expanduser().resolve() if args.lock else None
 
     command = [pnpm, "dlx", "skills", "update", skill_name, scope_flag, "-y"]
-    failures: list[str] = []
-    for attempt in range(1, args.attempts + 1):
-        result = subprocess.run(
-            command,
-            cwd=project_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        output = "\n".join(
-            part.strip() for part in (result.stdout, result.stderr) if part.strip()
-        )
-        if result.returncode == 0:
-            if output:
-                print(output)
-            print(
-                f"Refreshed {skill_name} with scoped command on attempt "
-                f"{attempt}/{args.attempts}."
-            )
-            break
-        failures.append(
-            f"attempt {attempt}/{args.attempts}, exit {result.returncode}:\n"
-            f"{output or '<no installer output>'}"
-        )
-        if attempt < args.attempts and args.retry_delay:
-            time.sleep(args.retry_delay)
-    else:
-        rendered = "\n\n".join(failures)
-        raise SyncError(
-            "Scoped skill refresh failed after "
-            f"{args.attempts} attempts. Command: {' '.join(command)}\n{rendered}"
-        )
-
-    changes = installed_content_changes(source_skill, installed_skill)
-    if changes:
-        detail = ", ".join(f"{action} {path}" for action, path in changes)
-        raise SyncError(
-            f"Refresh succeeded but installed {skill_name} differs from source: "
-            f"{detail}"
-        )
-    print(f"Verified installed skill matches source: {source_skill}")
-    if lock_path is not None:
-        computed_hash = _verified_lock_hash(lock_path, skill_name)
-        print(f"Verified lock hash: {computed_hash} ({lock_path})")
+    _run_installer_with_retry(
+        command,
+        cwd=project_root,
+        attempts=args.attempts,
+        retry_delay=args.retry_delay,
+        action=f"Refreshed {skill_name} with scoped command",
+    )
+    _verify_installed_skill(source_skill, installed_skill, lock_path)
 
 
 def sync_skill(args: argparse.Namespace) -> None:
@@ -751,6 +870,23 @@ def build_parser() -> argparse.ArgumentParser:
     refresh.add_argument("--lock")
     refresh.add_argument("--attempts", type=_positive_int, default=3)
     refresh.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
+
+    install = subparsers.add_parser(
+        "install", help="install and verify one skill for one explicit agent"
+    )
+    install.add_argument("source", help="Skills CLI repository source")
+    install.add_argument("skill_dir", help="expected installed skill directory")
+    install.add_argument(
+        "--source-skill-dir",
+        required=True,
+        help="pushed source skill directory used for exact comparison",
+    )
+    install.add_argument("--scope", choices=("project", "global"), required=True)
+    install.add_argument("--agent", default="codex")
+    install.add_argument("--project-root")
+    install.add_argument("--lock")
+    install.add_argument("--attempts", type=_positive_int, default=3)
+    install.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
     return parser
 
 
@@ -767,8 +903,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(entry, ensure_ascii=False, indent=2))
         elif args.command == "sync":
             sync_skill(args)
-        else:
+        elif args.command == "refresh":
             refresh_skill(args)
+        else:
+            install_skill(args)
     except SyncError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
