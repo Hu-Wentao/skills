@@ -46,6 +46,12 @@ Record and present intentionally token-intensive development activities whose ro
 - **Why it consumes tokens:** It touches many files, creates large diffs, requires repeated consistency decisions, and demands careful verification that behavior remains unchanged.
 - **Why routine value is limited:** When the existing code is readable and enforceable conventions are absent, the result is mainly cosmetic churn that increases review and merge costs.
 
+### Review Docker Image Size and Slimming Opportunities
+
+- **Activity:** Inspect Dockerfiles, build contexts, base images, multi-stage builds, layers, installed packages, caches, copied artifacts, and runtime dependencies; build and compare images, then propose and validate size reductions.
+- **Why it consumes tokens:** It requires tracing build and runtime requirements across the project, inspecting image layers and dependency trees, comparing alternative bases and build strategies, and repeatedly rebuilding and testing images to prove that reductions preserve behavior.
+- **Why routine value is limited:** Without a measured image-size, pull-time, startup-time, storage-cost, security, or deployment constraint, further slimming can add build complexity and compatibility risk without producing a meaningful product benefit.
+
 ## Record Another Activity
 
 When the user explicitly supplies another activity to record, add it to the catalog with exactly these fields:
