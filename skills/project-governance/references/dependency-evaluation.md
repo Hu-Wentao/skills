@@ -5,6 +5,15 @@
 Evaluate current or proposed third-party libraries, frameworks, services, and
 runtimes without making adoption implicit.
 
+Treat a request to evaluate a technology for an active writable project as
+authorization to create or revise only its smallest governed evaluation record,
+unless the user explicitly requests a chat-only/read-only result or forbids
+local writes. Complete that record before the final response. Upstream
+inspection remains read-only, and this default does not authorize changes to a
+Plan, Baseline, manifest, lockfile, code, infrastructure, release, or
+deployment. If no active writable project exists, return the evaluation without
+inventing a documentation destination.
+
 - Treat manifests, lockfiles, deployment configuration, code, and runtime
   inspection as authority for what the project currently depends on.
 - Treat requirements, baselines, and accepted plans as authority for intended

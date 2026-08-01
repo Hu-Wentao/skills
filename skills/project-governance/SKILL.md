@@ -13,7 +13,13 @@ description: "Bootstrap, review, and maintain project architecture, governed doc
 4. Preserve current terminology and authority unless the user approves a migration.
 5. Treat release, deployment, publishing, rollback, live migration, reward, and destructive authority as current-turn permissions only.
 
-For read-only review, inspect and report without editing. For changes, follow the repository's planning, dirty-worktree, approval, commit, and deployment rules.
+For read-only review, inspect and report without editing. Do not classify a
+project-scoped external dependency or technology evaluation as read-only merely
+because upstream inspection is read-only: follow
+[dependency-evaluation.md](references/dependency-evaluation.md) and persist its
+smallest governed evaluation record unless the user explicitly forbids local
+writes or no writable project context exists. For other changes, follow the
+repository's planning, dirty-worktree, approval, commit, and deployment rules.
 
 ## Use Deterministic Task Contracts
 
