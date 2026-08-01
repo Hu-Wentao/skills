@@ -1,6 +1,6 @@
 ---
 name: git-worktree
-description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
+description: Manage Git worktrees and evidence-based local development-state maintenance. Use when Codex needs to list or create worktrees; mark an owner task's exact branch HEAD complete; organize branches; audit all, recent, merged, unmerged, attached, detached, dirty, missing, or prunable work; rescue branchless commits; merge, retain, or delete classified local branches and worktrees; or safely remove stale registrations. Preserves uncommitted and unreachable work, defaults active or dirty worktrees to retain without mutation, validates exact audited HEADs, and keeps remote deletion, pushing, rebasing, squashing, stashing, and forced removal outside the workflow.
 ---
 
 # Git Worktree
@@ -48,6 +48,29 @@ The default path is a sibling of the main worktree named
 `<project>-T-<branch>`, with `/` converted to `-`. Initialize dependencies only
 when appropriate and follow the repository's package-manager instructions.
 
+## Mark Owner Completion
+
+Before the owner task ends, commit its intended work, run every required
+validation, confirm the worktree is clean, and mark that exact HEAD complete:
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <worktree-path> \
+  mark-complete --expected-head <exact-head>
+```
+
+This creates the local custom ref `refs/agents/completed/<branch>` at the exact
+branch commit. It is neither a normal tag nor a remote ref. Only the task that
+owns the branch may create or refresh this handoff. Do not mark incomplete,
+blocked, dirty, uncommitted, or unvalidated work complete.
+
+A completion ref is current only while it equals the branch HEAD and every
+attached worktree is clean. A matching ref becomes blocked while an attached
+worktree is dirty, locked, missing, uninspectable, prunable, or has an active
+Git operation; cleaning that state makes it current again. A later commit makes
+the ref stale automatically. During maintenance, treat only a current
+completion ref as the owner's explicit handoff; an absent, blocked, or stale
+ref does not prove that the task is active or finished.
+
 ## Maintain Branches and Worktrees
 
 Treat “整理分支” without a narrower scope as an audit of all local branches and
@@ -68,6 +91,7 @@ its completed clean worktree is removed. It reports:
 - dirty and untracked files;
 - detached, missing, locked, and prunable state;
 - merge, rebase, cherry-pick, revert, or bisect state;
+- owner completion ref status and whether it matches the exact branch HEAD;
 - protected branch status and decision-specific requirements.
 
 For every selected candidate, inspect its commits, diff, current target code,
@@ -98,6 +122,11 @@ the new edits. Re-audit it, classify it as retain, and leave it for the owning
 thread. Dirty, active-operation, locked, missing, or uninspectable evidence is
 a mutation blocker, not a prompt to repair the worktree from the maintenance
 thread.
+
+When a branch was previously identified as owned by another active task, a
+later current `refs/agents/completed/<branch>` ref supersedes that earlier
+observation if the audited HEAD still matches and the worktree remains clean.
+The maintenance task must never create this ref on the owner's behalf.
 
 Run maintenance as a fixed-point workflow. Preservation steps such as rescue
 or pruning are not candidate decisions. Keep every rescued branch in the
@@ -246,6 +275,8 @@ rebase, or squash without authorization for that exact operation.
 Report:
 
 - every branch and worktree decision with evidence and exact commit;
+- every observed completion ref as current, blocked, stale, absent, or not
+  applicable;
 - a separate **retained active/dirty work** list containing worktree path,
   branch or detached state, observed HEAD, dirty/untracked paths, active Git
   operations, retention reason, and the mutations intentionally skipped;

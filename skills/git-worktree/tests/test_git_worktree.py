@@ -129,6 +129,131 @@ class GitWorktreeCliTests(unittest.TestCase):
             run(["git", "branch", "--show-current"], self.repo).stdout.strip(), "main"
         )
 
+    def test_mark_complete_requires_exact_clean_branch_head(self) -> None:
+        worktree = self.create("feat/completion-handoff")
+        self.commit_file(worktree, "complete.txt", "complete\n")
+        head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        stale = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                "0" * 40,
+            ],
+            worktree,
+            check=False,
+        )
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("HEAD changed since audit", stale.stderr)
+
+        (worktree / "draft.txt").write_text("draft\n")
+        dirty = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                head,
+            ],
+            worktree,
+            check=False,
+        )
+        self.assertEqual(dirty.returncode, 2)
+        self.assertIn("is dirty", dirty.stderr)
+        (worktree / "draft.txt").unlink()
+
+        marked = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "mark-complete",
+                    "--expected-head",
+                    head,
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(marked["branch"], "feat/completion-handoff")
+        self.assertEqual(marked["head"], head)
+        self.assertEqual(
+            marked["completion_ref"],
+            "refs/agents/completed/feat/completion-handoff",
+        )
+        self.assertEqual(
+            run(
+                ["git", "rev-parse", marked["completion_ref"]], self.repo
+            ).stdout.strip(),
+            head,
+        )
+        self.assertEqual(run(["git", "tag", "--list"], self.repo).stdout, "")
+
+    def test_maintenance_audit_reports_current_and_stale_completion(self) -> None:
+        worktree = self.create("feat/completed-owner-task")
+        self.commit_file(worktree, "first.txt", "first\n")
+        completed_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                completed_head,
+            ],
+            worktree,
+        )
+
+        current = json.loads(self.cli("maintenance-audit", "--all").stdout)
+        candidate = next(
+            item
+            for item in current["candidates"]
+            if item["candidate_id"] == "branch:feat/completed-owner-task"
+        )
+        self.assertEqual(candidate["completion"]["status"], "current")
+        self.assertTrue(candidate["completion"]["matches_head"])
+        self.assertTrue(
+            candidate["decision_evidence"]["owner_handoff_completed"]
+        )
+
+        (worktree / "draft.txt").write_text("draft\n")
+        blocked = json.loads(self.cli("maintenance-audit", "--all").stdout)
+        candidate = next(
+            item
+            for item in blocked["candidates"]
+            if item["candidate_id"] == "branch:feat/completed-owner-task"
+        )
+        self.assertEqual(candidate["completion"]["status"], "blocked")
+        self.assertTrue(candidate["completion"]["matches_head"])
+        self.assertFalse(candidate["completion"]["worktrees_clean"])
+        self.assertFalse(
+            candidate["decision_evidence"]["owner_handoff_completed"]
+        )
+        (worktree / "draft.txt").unlink()
+
+        self.commit_file(worktree, "second.txt", "second\n")
+        stale = json.loads(self.cli("maintenance-audit", "--all").stdout)
+        candidate = next(
+            item
+            for item in stale["candidates"]
+            if item["candidate_id"] == "branch:feat/completed-owner-task"
+        )
+        self.assertEqual(candidate["completion"]["status"], "stale")
+        self.assertFalse(candidate["completion"]["matches_head"])
+        self.assertTrue(candidate["completion"]["worktrees_clean"])
+        self.assertFalse(
+            candidate["decision_evidence"]["owner_handoff_completed"]
+        )
+
     def test_merge_conflict_is_left_for_resolution(self) -> None:
         worktree = self.create("conflict")
         (worktree / "base.txt").write_text("source\n")
@@ -319,6 +444,19 @@ class GitWorktreeCliTests(unittest.TestCase):
     def test_branch_delete_removes_merged_branch_and_clean_worktree(self) -> None:
         worktree = self.create("merged-cleanup")
         self.commit_file(worktree, "merged.txt", "merged\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                source_head,
+            ],
+            worktree,
+        )
         self.cli("merge", "--source", "merged-cleanup")
 
         deleted = json.loads(
@@ -332,6 +470,21 @@ class GitWorktreeCliTests(unittest.TestCase):
             ).stdout
         )
         self.assertTrue(deleted["merged_into_target"])
+        self.assertTrue(deleted["completion_ref_removed"])
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/agents/completed/merged-cleanup",
+                ],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
         self.assertFalse(worktree.exists())
 
     def test_remove_requires_merged_branch_when_requested(self) -> None:

@@ -55,6 +55,8 @@ OPERATION_MARKERS = {
     "bisect": ("BISECT_LOG",),
 }
 
+COMPLETION_REF_PREFIX = "refs/agents/completed/"
+
 
 def run_git(
     cwd: Path,
@@ -113,6 +115,66 @@ def local_branch_heads(repo: Path) -> dict[str, str]:
         "refs/heads",
     ).stdout
     return dict(line.split("\0", 1) for line in output.splitlines() if line)
+
+
+def completion_ref_name(branch: str) -> str:
+    return f"{COMPLETION_REF_PREFIX}{branch}"
+
+
+def ref_object_id(repo: Path, ref: str) -> str | None:
+    result = run_git(repo, "rev-parse", "--verify", "--quiet", ref, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def completion_evidence(
+    repo: Path,
+    branch: str | None,
+    head: str,
+    worktrees: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    if branch is None:
+        return {
+            "ref": None,
+            "head": None,
+            "matches_head": False,
+            "worktrees_clean": False,
+            "status": "not_applicable",
+        }
+    ref = completion_ref_name(branch)
+    completed_head = ref_object_id(repo, ref)
+    matches_head = completed_head == head
+    worktrees_clean = all(
+        bool(item["exists"])
+        and bool(item["inspectable"])
+        and not bool(item["dirty"])
+        and not item.get("operations")
+        and not bool(item["locked"])
+        and not bool(item["prunable"])
+        for item in worktrees
+    )
+    return {
+        "ref": ref,
+        "head": completed_head,
+        "matches_head": matches_head,
+        "worktrees_clean": worktrees_clean,
+        "status": (
+            "current"
+            if matches_head and worktrees_clean
+            else "blocked"
+            if matches_head
+            else "stale"
+            if completed_head is not None
+            else "absent"
+        ),
+    }
+
+
+def clear_completion_ref(repo: Path, branch: str) -> bool:
+    ref = completion_ref_name(branch)
+    object_id = ref_object_id(repo, ref)
+    if object_id is None:
+        return False
+    return run_git(repo, "update-ref", "-d", ref, object_id, check=False).returncode == 0
 
 
 def parse_worktrees(repo: Path) -> list[Worktree]:
@@ -401,6 +463,7 @@ def decision_evidence(
     relation: dict[str, object],
     worktrees: Sequence[dict[str, object]],
     protected: bool,
+    completion: dict[str, object],
 ) -> dict[str, object]:
     dirty = any(bool(item["dirty"]) for item in worktrees)
     operations = sorted(
@@ -490,6 +553,7 @@ def decision_evidence(
         "mutation_blocked": mutation_blocked,
         "default_decision": "retain" if mutation_blocked else None,
         "retention_reasons": retention_reasons,
+        "owner_handoff_completed": completion["status"] == "current",
     }
 
 
@@ -516,6 +580,7 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
             worktree_snapshot(worktree) for worktree in by_branch.get(branch, [])
         ]
         protected = protected_branch(branch)
+        completion = completion_evidence(repo, branch, head, snapshots)
         items.append(
             {
                 "candidate_id": f"branch:{branch}",
@@ -526,8 +591,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 **metadata,
                 "relation": relation,
                 "worktrees": snapshots,
+                "completion": completion,
                 "decision_evidence": decision_evidence(
-                    "branch", relation, snapshots, protected
+                    "branch", relation, snapshots, protected, completion
                 ),
             }
         )
@@ -541,6 +607,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
         relation = target_relation(repo, target, worktree.head)
         snapshots = [worktree_snapshot(worktree)]
         protected = bool(worktree.branch and protected_branch(worktree.branch))
+        completion = completion_evidence(
+            repo, worktree.branch, worktree.head, snapshots
+        )
         items.append(
             {
                 "candidate_id": f"worktree:{worktree.path}",
@@ -552,8 +621,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 **metadata,
                 "relation": relation,
                 "worktrees": snapshots,
+                "completion": completion,
                 "decision_evidence": decision_evidence(
-                    "worktree", relation, snapshots, protected
+                    "worktree", relation, snapshots, protected, completion
                 ),
             }
         )
@@ -612,6 +682,37 @@ def command_list(repo: Path, _args: argparse.Namespace) -> None:
     emit({"worktrees": [asdict(worktree) for worktree in parse_worktrees(repo)]})
 
 
+def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
+    requested = Path(args.repo).expanduser().resolve()
+    branch = args.branch or current_branch(requested)
+    if not local_branch_exists(repo, branch):
+        raise WorkflowError(f"Local branch does not exist: {branch}")
+    worktrees = affected_worktrees(repo, branch)
+    if len(worktrees) != 1:
+        raise WorkflowError(
+            f"Branch '{branch}' must be checked out in exactly one registered worktree."
+        )
+    if worktrees[0].main:
+        raise WorkflowError("The main worktree branch cannot be marked as task-complete.")
+    ensure_affected_worktrees_clean(repo, branch)
+    head = run_git(repo, "rev-parse", f"{branch}^{{commit}}").stdout.strip()
+    verify_expected_head(head, args.expected_head, f"Branch '{branch}'")
+    ref = completion_ref_name(branch)
+    previous = ref_object_id(repo, ref)
+    null_object_id = "0" * len(head)
+    run_git(repo, "update-ref", ref, head, previous or null_object_id)
+    emit(
+        {
+            "action": "branch_marked_complete",
+            "branch": branch,
+            "completion_ref": ref,
+            "head": head,
+            "previous_completion_head": previous,
+            "remote_refs_untouched": True,
+        }
+    )
+
+
 def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
     target = args.target or current_branch(repo)
     items = maintenance_candidates(repo, target)
@@ -654,6 +755,7 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
                 "locked": worktree["locked"],
                 "exists": worktree["exists"],
                 "inspectable": worktree["inspectable"],
+                "completion": candidate["completion"],
                 "retention_reasons": evidence["retention_reasons"],
                 "mutations_skipped": [
                     "modify",
@@ -1085,11 +1187,13 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> None:
         removed_worktrees.append(str(requested))
 
     run_git(repo, "branch", "-d" if merged else "-D", "--", branch)
+    completion_ref_removed = clear_completion_ref(repo, branch)
     emit(
         {
             "action": "branch_deleted",
             "branch": branch,
             "commit": commit,
+            "completion_ref_removed": completion_ref_removed,
             "merged_into_target": merged,
             "reason": args.reason,
             "remote_branch_untouched": True,
@@ -1109,6 +1213,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_parser = commands.add_parser("list", help="List registered worktrees")
     list_parser.set_defaults(handler=command_list)
+
+    mark_complete = commands.add_parser(
+        "mark-complete", help="Mark one clean task branch's exact HEAD as completed"
+    )
+    mark_complete.add_argument("--branch")
+    mark_complete.add_argument("--expected-head", required=True)
+    mark_complete.set_defaults(handler=command_mark_complete)
 
     maintenance_audit = commands.add_parser(
         "maintenance-audit",
