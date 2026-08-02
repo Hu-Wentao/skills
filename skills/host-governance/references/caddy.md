@@ -28,14 +28,24 @@ admin API changes.
 
 ## Apply
 
-1. Render and review the complete candidate configuration.
-2. Run `caddy adapt --validate` or `caddy validate` with the same adapter,
+1. Acquire the host-owned transaction lock and re-read the authoritative
+   declarations, effective source configuration, and live generation. Never
+   reuse the complete candidate produced by an earlier unlocked plan.
+2. Update only the selected owner's independently identified fragment or
+   declaration, then render and review the complete candidate configuration.
+3. Run `caddy adapt --validate` or `caddy validate` with the same adapter,
    environment-file contract, modules, paths, and runtime identity as the real
    service. Successful adaptation alone is insufficient.
-3. Apply through the established zero-downtime reload or admin API workflow.
+4. Apply through the established zero-downtime reload or admin API workflow.
    Do not stop and restart Caddy merely to load configuration.
-4. If the reload fails, preserve the active prior configuration and diagnose
-   before another mutation.
+5. If the reload fails, restore the transaction's prior source generation,
+   preserve the active prior configuration, record the failed phase, and
+   diagnose before another mutation.
+
+The application deployer must not write or restore the shared root file, reload
+Caddy directly, or hold a historical monolithic Caddyfile as its rollback
+artifact. Rollback submits the prior project declaration through a new
+host-owned transaction that recomposes every current owner.
 
 ## Verify
 

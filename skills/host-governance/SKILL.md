@@ -12,17 +12,32 @@ ingress, DNS, and host ownership in the host infrastructure repository.
 ## Resolve Project Behavior
 
 Before inspecting or changing infrastructure, resolve the `control` task from
-the current Git repository:
+the consuming Git repository. Prefer the JSON operation contract when the
+repository uses `host-governance.config.v2`:
 
 ```bash
-uv run python <skill-root>/scripts/resolve.py --cwd <project-root> --task control
+uv run python <skill-root>/scripts/resolve.py \
+  --cwd <project-root> --task control --operation <operation> --format json
 ```
 
-Read the returned `instructions.path` whenever `instructions_id` changes. A
-repository may specialize the workflow through
-`.agents/skills-config/host-governance/config.yaml`; without it, use the
-generic control workflow. Resolution writes only derived instructions below
-`.agents/.cache/host-governance/` and never executes declared commands.
+Execute a configured operation only through the validated runner:
+
+```bash
+uv run python <skill-root>/scripts/host-governance.py \
+  --cwd <project-root> control <operation> [contracted arguments]
+```
+
+Use `--authorized` only after the current user authorizes a non-read-only
+operation. The flag is a mechanical gate, not proof of authorization. Never
+bypass a v2 contract with its underlying command. The resolver validates argv,
+mutability, authorization, parameters, output schema, exit states, and allowed
+next states without executing project code.
+
+Legacy `host-governance.config.v1` profiles and the generic fallback remain
+readable composed instructions. Read the returned `instructions.path` whenever
+`instructions_id` changes, but do not execute legacy declared command strings
+as a substitute for a v2 contract. Without a configured transaction contract,
+leave shared host infrastructure unchanged.
 
 Read [project_config.md](references/project_config.md) before creating or
 changing a project profile.
@@ -50,6 +65,12 @@ changing a project profile.
   environment dumps, or secret-bearing request bodies.
 - Snapshot the exact current resource and keep a tested recovery path before a
   shared configuration change.
+- Require one host-owned serialized transaction for each shared-resource
+  mutation. Record its stable transaction ID, owner, target, base and result
+  generation, desired resource digest, composed candidate digest, phase, and
+  verification state without copying secrets or complete private configuration.
+- Re-read authoritative and live state under the executor lock before apply.
+  Treat an earlier plan as advisory; never install a stale rendered candidate.
 - Detect overlapping hostnames, listeners, routes, selectors, resource IDs,
   and ownership before editing. Stop on an unresolved collision.
 - Generate the complete combined plan before the first mutation. Do not let a
@@ -76,11 +97,22 @@ changing a project profile.
      [tailscale.md](references/tailscale.md).
    - Cloudflare resources or DNS: read
      [cloudflare.md](references/cloudflare.md).
-6. Validate each component immediately after its change. Stop the forward
-   sequence on failure and preserve evidence.
-7. Run end-to-end and negative-path checks after all components pass.
-8. Report repository changes, live changes, credentials/configuration needed,
+6. Apply through the host-owned lock and transaction journal. Compose from the
+   latest accepted per-owner declarations, validate the complete candidate,
+   atomically install, and preserve a recoverable prior generation.
+7. Validate each component immediately after its change. Stop the forward
+   sequence on failure and preserve evidence. A retry must resume or safely
+   supersede according to the authoritative transaction, not start a blind write.
+8. Run end-to-end and negative-path checks after all components pass.
+9. Report repository changes, live changes, transaction identity and
+   generation, credentials/configuration needed,
    compatibility, rollback state, and every item still unverified.
+
+`inspect`, `plan`, and `verify` are read-only. `apply` and `reconcile` require
+current write authority for the exact target. `rollback` requires separate
+current authority and must restore only the selected owner's declaration by
+recomposing the latest complete host state; it must never restore a historical
+monolithic shared configuration.
 
 ## Ownership Boundaries
 

@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-
 
 SKILL_NAME = "host-governance"
 SOURCE_SKILL = Path(__file__).resolve().parents[2]
@@ -50,6 +50,82 @@ tasks:
     commands:
       validate: uv run python -m unittest
 """,
+            encoding="utf-8",
+        )
+        return config_root
+
+    def write_v2_config(self, *, mutability: str = "host_write") -> Path:
+        config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
+        config_root.mkdir(parents=True, exist_ok=True)
+        (self.root / "host_control.py").write_text(
+            "import json, sys\nprint(json.dumps({'schema': 'test.host-control.v1', 'argv': sys.argv[1:]}))\n",
+            encoding="utf-8",
+        )
+        (config_root / "config.yaml").write_text(
+            f"""schema: {SKILL_NAME}.config.v2
+profile: test-project
+tasks:
+  control:
+    base: references/control.md
+    profile: project.md
+    contract: control.contract.json
+""",
+            encoding="utf-8",
+        )
+        (config_root / "project.md").write_text(
+            "# Project Host Policy\n", encoding="utf-8"
+        )
+        (config_root / "control.contract.json").write_text(
+            json.dumps(
+                {
+                    "schema": "host-governance.task-contract.v1",
+                    "id": "test.control.v1",
+                    "task": "control",
+                    "operations": {
+                        "inspect": {
+                            "description": "Inspect host state.",
+                            "command": [sys.executable, "host_control.py", "inspect"],
+                            "mutability": "read_only",
+                            "authorization": "none",
+                            "parameters": {
+                                "target": {
+                                    "flag": "--target",
+                                    "type": "string",
+                                    "required": True,
+                                    "pattern": "^[a-z][a-z0-9-]*$",
+                                }
+                            },
+                            "output_schema": "test.host-control.v1",
+                            "exit_codes": {"0": "host_inspected"},
+                            "next_states": ["host_plan"],
+                        },
+                        "apply": {
+                            "description": "Apply one serialized host transaction.",
+                            "command": [sys.executable, "host_control.py", "apply"],
+                            "mutability": mutability,
+                            "authorization": (
+                                "none" if mutability == "read_only" else "current_user"
+                            ),
+                            "parameters": {
+                                "target": {
+                                    "flag": "--target",
+                                    "type": "string",
+                                    "required": True,
+                                },
+                                "dry_run": {
+                                    "flag": "--dry-run",
+                                    "type": "boolean",
+                                    "required": False,
+                                },
+                            },
+                            "output_schema": "test.host-control.v1",
+                            "exit_codes": {"0": "host_applied", "1": "host_apply_failed"},
+                            "next_states": ["host_verify", "host_reconcile"],
+                        },
+                    },
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
         return config_root
@@ -104,6 +180,71 @@ tasks:
         self.assertIn("## Project Instructions", result.stdout)
         self.assertIn("Use the project validator.", result.stdout)
         self.assertIn("uv run python -m unittest", result.stdout)
+
+    def test_v2_returns_selected_validated_contract_without_cache(self) -> None:
+        self.write_v2_config()
+        result = self.run_resolver(
+            "--task", "control", "--operation", "apply", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        resolved = json.loads(result.stdout)
+        self.assertEqual(resolved["state"], "resolved")
+        self.assertEqual(resolved["selected_operation"], "apply")
+        self.assertEqual(list(resolved["contract"]["operations"]), ["apply"])
+        self.assertEqual(
+            resolved["contract"]["operations"]["apply"]["mutability"],
+            "host_write",
+        )
+        self.assertEqual(resolved["entry_command"][-2:], ["--operation", "apply"])
+        self.assertFalse(
+            (self.root / ".agents" / ".cache" / SKILL_NAME / "control").exists()
+        )
+        inspected = self.run_resolver(
+            "--task", "control", "--operation", "inspect", "--format", "json"
+        )
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        self.assertEqual(
+            json.loads(inspected.stdout)["instructions_id"],
+            resolved["instructions_id"],
+        )
+
+    def test_v2_rejects_write_without_current_user_authorization(self) -> None:
+        config_root = self.write_v2_config()
+        contract_path = config_root / "control.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["operations"]["apply"]["authorization"] = "none"
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        result = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must require current_user authorization", result.stderr)
+
+    def test_v2_rejects_contract_path_escape(self) -> None:
+        config_root = self.write_v2_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "control.contract.json", "../../outside.json"
+            ),
+            encoding="utf-8",
+        )
+        (self.root / ".agents" / "outside.json").write_text("{}", encoding="utf-8")
+        result = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("escapes its allowed root", result.stderr)
+
+    def test_v2_rejects_legacy_commands(self) -> None:
+        config_root = self.write_v2_config()
+        config_path = config_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                "    contract: control.contract.json",
+                "    contract: control.contract.json\n    commands:\n      apply: unsafe",
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("uses contract instead of commands", result.stderr)
 
     def test_same_skill_has_different_behavior_in_two_projects(self) -> None:
         project_a, resolver_a = self.create_configured_project(
