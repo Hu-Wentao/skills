@@ -213,6 +213,32 @@ def ref_object_id(repo: Path, ref: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def exact_local_preservation_refs(repo: Path, head: str) -> list[str]:
+    """Return ordinary local branches and tags anchored at an exact commit."""
+    fields = (
+        "%(refname)%00%(objecttype)%00%(objectname)%00"
+        "%(*objecttype)%00%(*objectname)"
+    )
+    output = run_git(
+        repo,
+        "for-each-ref",
+        f"--format={fields}",
+        "refs/heads",
+        "refs/tags",
+    ).stdout
+    refs: list[str] = []
+    for line in output.splitlines():
+        ref, object_type, object_id, peeled_type, peeled_id = line.split("\0")
+        commit = (
+            peeled_id
+            if peeled_type == "commit"
+            else object_id if object_type == "commit" else None
+        )
+        if commit == head:
+            refs.append(ref)
+    return sorted(refs)
+
+
 def completion_evidence(
     repo: Path,
     branch: str | None,
@@ -610,6 +636,7 @@ def decision_evidence(
     worktrees: Sequence[dict[str, object]],
     protected: bool,
     completion: dict[str, object],
+    preservation_refs: Sequence[str] = (),
 ) -> dict[str, object]:
     dirty = any(bool(item["dirty"]) for item in worktrees)
     operations = sorted(
@@ -624,6 +651,12 @@ def decision_evidence(
     uninspectable = any(not bool(item["inspectable"]) for item in worktrees)
     contained = bool(relation["contained_in_target"])
     patch_equivalent = bool(relation["patch_equivalent_to_target"])
+    detached_uncontained = bool(
+        kind == "worktree"
+        and worktrees[0].get("detached", False)
+        and not contained
+    )
+    rescue_required = bool(detached_uncontained and not preservation_refs)
     retention_reasons: list[str] = []
     if dirty:
         retention_reasons.append("dirty_worktree_presumed_active")
@@ -671,16 +704,17 @@ def decision_evidence(
         requirements.append("prune only the missing registration; preserve branch refs")
     if uninspectable:
         requirements.append("repair or independently inspect the worktree before mutation")
-    if (
-        kind == "worktree"
-        and worktrees[0].get("detached", False)
-        and not contained
-        and not mutation_blocked
-    ):
-        requirements.append(
-            "create a rescue branch at the exact HEAD before preserving changes, "
-            "merge, or uncontained deletion"
-        )
+    if rescue_required:
+        if mutation_blocked:
+            requirements.append(
+                "stop maintenance and obtain a separate exact request before "
+                "rescuing this active or unsafe detached worktree"
+            )
+        else:
+            requirements.append(
+                "create a rescue branch at the exact HEAD before any terminal "
+                "maintenance decision"
+            )
     if protected and kind == "branch":
         requirements.append("protected branch deletion requires separate authorization")
         possible = [item for item in possible if item != "delete"]
@@ -700,6 +734,8 @@ def decision_evidence(
         "default_decision": "retain" if mutation_blocked else None,
         "retention_reasons": retention_reasons,
         "owner_handoff_completed": completion["status"] == "current",
+        "preservation_refs": list(preservation_refs),
+        "rescue_required": rescue_required,
     }
 
 
@@ -753,6 +789,11 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
         relation = target_relation(repo, target, worktree.head)
         snapshots = [worktree_snapshot(worktree)]
         protected = bool(worktree.branch and protected_branch(worktree.branch))
+        preservation_refs = (
+            exact_local_preservation_refs(repo, worktree.head)
+            if worktree.detached and not relation["contained_in_target"]
+            else []
+        )
         completion = completion_evidence(
             repo, worktree.branch, worktree.head, snapshots
         )
@@ -769,7 +810,12 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 "worktrees": snapshots,
                 "completion": completion,
                 "decision_evidence": decision_evidence(
-                    "worktree", relation, snapshots, protected, completion
+                    "worktree",
+                    relation,
+                    snapshots,
+                    protected,
+                    completion,
+                    preservation_refs,
                 ),
             }
         )
@@ -826,6 +872,8 @@ def candidate_stability_evidence(candidate: dict[str, object]) -> dict[str, obje
         "head": candidate["head"],
         "worktrees": candidate["worktrees"],
         "completion": candidate["completion"],
+        "preservation_refs": candidate["decision_evidence"]["preservation_refs"],
+        "rescue_required": candidate["decision_evidence"]["rescue_required"],
     }
 
 
@@ -992,6 +1040,21 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
         }
 
     retained_worktrees: dict[str, dict[str, object]] = {}
+    rescue_required_worktrees = [
+        {
+            "candidate_id": candidate["candidate_id"],
+            "head": candidate["head"],
+            "path": candidate["worktrees"][0]["path"],
+            "dirty": candidate["decision_evidence"]["dirty"],
+            "operations": candidate["decision_evidence"]["operations"],
+            "preservation_refs": candidate["decision_evidence"][
+                "preservation_refs"
+            ],
+            "requirements": candidate["decision_evidence"]["requirements"],
+        }
+        for candidate in selected
+        if candidate["decision_evidence"]["rescue_required"]
+    ]
     for candidate in selected:
         evidence = candidate["decision_evidence"]
         if evidence["default_decision"] != "retain":
@@ -1028,7 +1091,9 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
             "plan_schema_version": MAINTENANCE_PLAN_SCHEMA_VERSION,
             "snapshot_id": snapshot["snapshot_id"],
             "snapshot_scope": "all_candidates",
-            "maintenance_run_eligible": bool(args.all),
+            "maintenance_run_eligible": bool(
+                args.all and not rescue_required_worktrees
+            ),
             "target": snapshot["target"],
             "selection": selection,
             "total_candidates": len(items),
@@ -1046,6 +1111,7 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
                 and candidate["completion"]["status"] != "current"
             ],
             "orphan_completion_refs": snapshot["orphan_completion_refs"],
+            "rescue_required_worktrees": rescue_required_worktrees,
             "retained_active_or_dirty_worktrees": sorted(
                 retained_worktrees.values(), key=lambda item: str(item["path"])
             ),
@@ -1102,6 +1168,19 @@ def validate_maintenance_plan(
         str(candidate["candidate_id"]): candidate
         for candidate in snapshot["candidates"]
     }
+    rescue_required = sorted(
+        candidate_id
+        for candidate_id, candidate in candidates.items()
+        if candidate["decision_evidence"]["rescue_required"]
+    )
+    if rescue_required:
+        raise WorkflowError(
+            "Maintenance plan is blocked by unrescued detached worktree(s): "
+            + ", ".join(rescue_required)
+            + ". Run rescue-detached for each exact candidate, re-audit, then "
+            "build a terminal decision plan. A retain decision or internal "
+            "snapshot ref does not satisfy rescue."
+        )
     decisions: dict[str, dict[str, object]] = {}
     for raw in raw_decisions:
         if not isinstance(raw, dict):

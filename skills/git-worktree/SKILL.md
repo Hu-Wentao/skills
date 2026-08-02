@@ -113,7 +113,18 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> \
 The audit emits a stable `snapshot_id` over the target HEAD, every candidate,
 all attached worktree state, and completion evidence. Any relevant state change
 invalidates that snapshot. Only an `--all` audit is eligible as input to
-`maintenance-run`; bounded audits remain inspection-only.
+`maintenance-run`; bounded audits remain inspection-only. An all-candidate
+audit with a non-empty `rescue_required_worktrees` list is not run-eligible.
+Resolve every preservation blocker and re-audit before building a terminal
+decision plan.
+
+Treat a clean detached worktree whose HEAD is outside the target and lacks an
+exact ordinary local `refs/heads/*` or `refs/tags/*` anchor as requiring rescue.
+Internal snapshot, reflog, remote-tracking, and completion refs do not satisfy
+this requirement. Rescue these candidates immediately after the audit, before
+semantic classification or any other maintenance mutation. Multiple detached
+worktrees at the same exact HEAD need no additional rescue when that HEAD is
+already anchored by an ordinary local branch or tag.
 
 Use `--recent-count <N>` or `--recent-days <N>` instead of `--all` when the user
 supplies a bounded window. The audit emits separate candidates for branch
@@ -152,9 +163,13 @@ acting on it requires a separate exact request that names the candidate and
 authorizes the needed mutation.
 
 If a candidate's HEAD, branch, or status changes after its audit, do not chase
-the new edits. Re-audit it, classify it as retain, and leave it for the owning
-thread. Dirty, active-operation, locked, missing, or uninspectable evidence is
-a mutation blocker, not a prompt to repair the worktree from the maintenance
+new edits. Re-audit it, classify it as retain, and leave it for the owning
+thread. If a rescue-required worktree disappears, stop the maintenance batch
+and report its audited exact HEAD and remaining refs. Do not call an internal
+snapshot or reflog entry a completed rescue; request authorization to create a
+normal branch at that exact commit when the worktree can no longer be attached.
+Dirty, active-operation, locked, missing, or uninspectable evidence is a
+mutation blocker, not a prompt to repair the worktree from the maintenance
 thread.
 
 When a branch was previously identified as owned by another active task, a
@@ -223,6 +238,9 @@ The plan must classify every candidate from the `--all` audit as `merge`,
   conflict or safety check stops execution; and
 - never pushes, deletes remote refs, or changes normal tags.
 
+The runner rejects the entire plan before its first mutation when any candidate
+still has `rescue_required: true`. A `retain` decision cannot bypass this gate.
+
 Do not plan deletion of a source worktree in the same run that merges its
 branch. Retain it, validate the merged target, audit again, then submit cleanup
 as a second exact plan. Set `allow_protected: true` only when deletion of the
@@ -237,8 +255,9 @@ Never remove a detached worktree merely because it is clean.
 - If its HEAD is contained in the target and it is clean, remove it with both
   `--require-contained-in` and the audited `--expected-head`.
 - If it has unique commits, attach an exact rescue branch before merge or
-  evidence-based deletion. Rescue is a preservation transition, never an
-  implicit retain decision:
+  any terminal retain/merge/delete decision unless its exact HEAD already has
+  an ordinary local branch or tag. Rescue is a preservation transition, never
+  an implicit retain decision:
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> \
@@ -250,7 +269,8 @@ The result includes the rescued branch's fresh maintenance `candidate`, marks
 its `classification_status` as `pending`, and names the required next action.
 Immediately inspect that candidate and continue with merge, evidence-based
 delete, or an explicit retain reason. Do not end “整理分支” merely because every
-detached HEAD now has a name.
+detached HEAD now has a name. Conversely, do not end or start mutation while an
+audited rescue-required HEAD still lacks a normal branch or tag.
 
 - If it is dirty, retain it without changing its detached state. “整理分支”
   alone authorizes neither rescue nor commit. Rescue or “commit and merge” only

@@ -409,6 +409,58 @@ class GitWorktreeCliTests(unittest.TestCase):
             "retained_without_mutation",
         )
 
+    def test_maintenance_run_blocks_all_mutation_until_detached_head_is_rescued(
+        self,
+    ) -> None:
+        merged = self.create("feat/already-merged")
+        self.commit_file(merged, "merged.txt", "merged\n")
+        self.cli("merge", "--source", "feat/already-merged")
+
+        detached = self.create_detached("unrescued detached")
+        self.commit_file(detached, "unique.txt", "unique\n")
+        detached_head = run(
+            ["git", "rev-parse", "HEAD"], detached
+        ).stdout.strip()
+        run(
+            [
+                "git",
+                "update-ref",
+                "refs/codex/snapshots/test-unrescued",
+                detached_head,
+            ],
+            self.repo,
+        )
+
+        audit = self.maintenance_audit()
+        decisions = {
+            candidate["candidate_id"]: ("retain", "retain reviewed work")
+            for candidate in audit["candidates"]
+        }
+        decisions["branch:feat/already-merged"] = ("delete", "already merged")
+        decisions[f"worktree:{merged}"] = ("delete", "already merged")
+        plan = self.maintenance_plan(audit, decisions)
+
+        rejected = self.run_maintenance_plan(plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("blocked by unrescued detached worktree", rejected.stderr)
+        self.assertIn(str(detached), rejected.stderr)
+        self.assertIn("internal snapshot ref does not satisfy rescue", rejected.stderr)
+        self.assertTrue(merged.exists())
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/feat/already-merged",
+                ],
+                self.repo,
+                check=False,
+            ).returncode,
+            0,
+        )
+
     def test_maintenance_run_rejects_stale_snapshot(self) -> None:
         worktree = self.create("feat/stale-plan")
         self.commit_file(worktree, "first.txt", "first\n")
@@ -901,6 +953,18 @@ class GitWorktreeCliTests(unittest.TestCase):
 
         detached_unique = self.create_detached("detached unique")
         self.commit_file(detached_unique, "unique.txt", "unique\n")
+        unique_head = run(
+            ["git", "rev-parse", "HEAD"], detached_unique
+        ).stdout.strip()
+        run(
+            [
+                "git",
+                "update-ref",
+                "refs/codex/snapshots/test-unique",
+                unique_head,
+            ],
+            self.repo,
+        )
 
         detached_dirty = self.create_detached("detached dirty")
         (detached_dirty / "uncommitted.txt").write_text("uncommitted\n")
@@ -919,9 +983,13 @@ class GitWorktreeCliTests(unittest.TestCase):
 
         unique_item = candidates[f"worktree:{detached_unique.resolve()}"]
         self.assertFalse(unique_item["relation"]["contained_in_target"])
+        self.assertTrue(unique_item["decision_evidence"]["rescue_required"])
+        self.assertEqual(
+            unique_item["decision_evidence"]["preservation_refs"], []
+        )
         self.assertIn(
-            "create a rescue branch at the exact HEAD before preserving changes, "
-            "merge, or uncontained deletion",
+            "create a rescue branch at the exact HEAD before any terminal "
+            "maintenance decision",
             unique_item["decision_evidence"]["requirements"],
         )
 
@@ -956,6 +1024,38 @@ class GitWorktreeCliTests(unittest.TestCase):
         )
         self.assertIn("merge", retained[0]["mutations_skipped"])
         self.assertIn("remove", retained[0]["mutations_skipped"])
+        self.assertFalse(result["maintenance_run_eligible"])
+        rescue_candidates = {
+            item["candidate_id"] for item in result["rescue_required_worktrees"]
+        }
+        self.assertEqual(
+            rescue_candidates,
+            {f"worktree:{detached_unique.resolve()}"},
+        )
+
+    def test_maintenance_audit_accepts_exact_local_branch_and_tag_as_rescue(
+        self,
+    ) -> None:
+        detached = self.create_detached("already preserved")
+        self.commit_file(detached, "preserved.txt", "preserved\n")
+        head = run(["git", "rev-parse", "HEAD"], detached).stdout.strip()
+        run(["git", "branch", "feat/preserved-head", head], self.repo)
+        run(["git", "tag", "-a", "preserved-v1", "-m", "preserved", head], self.repo)
+
+        result = self.maintenance_audit()
+        candidate = next(
+            item
+            for item in result["candidates"]
+            if item["candidate_id"] == f"worktree:{detached.resolve()}"
+        )
+
+        self.assertFalse(candidate["decision_evidence"]["rescue_required"])
+        self.assertEqual(
+            candidate["decision_evidence"]["preservation_refs"],
+            ["refs/heads/feat/preserved-head", "refs/tags/preserved-v1"],
+        )
+        self.assertEqual(result["rescue_required_worktrees"], [])
+        self.assertTrue(result["maintenance_run_eligible"])
 
     def test_maintenance_audit_separates_protected_branch_and_worktree(self) -> None:
         worktree = self.create("release/v2.0.0")
