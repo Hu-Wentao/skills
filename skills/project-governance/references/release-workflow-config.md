@@ -123,6 +123,23 @@ branch. An existing target manifest is immutable; promotion and fixed-tag retry
 reuse it. Historical single-manifest records remain readable when their
 recorded target matches the requested target.
 
+When a target uses shared host ingress, the deploy hook must delegate that
+surface to the installed `host-governance` v2 task contract. It may render or
+submit only the project's declared ingress intent. It must not edit or restore
+the shared root configuration, invoke the shared reload directly, or duplicate
+host transaction phase rules. Run the read-only host plan before application
+mutation when useful, then invoke authorized host apply only after the
+candidate loopback origin is ready and read-only host verify before declaring
+target completion.
+
+Persist the host transaction reference in project deployment evidence with the
+stable transaction ID, base/result generation, desired declaration digest,
+composed candidate digest, phase, and verification state. Do not persist the
+complete host journal, rendered shared configuration, credentials, or another
+project's fragment. Application and host transactions remain independently
+recoverable; a host failure may leave the application deployed but
+ingress-incomplete and must not trigger an automatic application rollback.
+
 ## Optional Migration Hooks
 
 Declare migrations only when the target workflow has explicit boundaries:

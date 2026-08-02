@@ -162,3 +162,11 @@ history locations, commands, topology, and project-only policy. They cannot
 override external authority, non-configurable safety rules, resolver
 validation, or path containment. Do not store transient input, secrets,
 generated output, or runtime state in project configuration.
+
+When release or deployment uses shared host infrastructure, configure the
+separate reusable skill under `.agents/skills-config/host-governance/` using
+`host-governance.config.v2`. Project Governance owns the application release
+contract; Host Governance owns the host-control contract. Cross-reference their
+stable project, target, and resource identities, but do not embed host
+inventory, shared desired state, live generations, credentials, or host
+transaction journals in Project Governance configuration.

@@ -262,24 +262,30 @@ application deployment mutates routing:
   Each project owns only its declared fragment and desired upstreams.
 
 Application deployment authority alone does not authorize a shared-ingress
-mutation. The current task contract must name the separate host-infrastructure
-transaction and bind it to a stable project identity, declared fragment,
-hostname claims, and target. If no such contract exists, keep the current
-shared routing unchanged and report the missing capability.
+mutation. Resolve the installed `host-governance` skill's `control` operation
+from the consuming project. A configured `host-governance.config.v2` task
+contract must bind the host operation to a stable project identity, declared
+fragment, hostname claims, and target. Execute it only through the
+`host-governance` validated runner. If no such contract exists, keep the
+current shared routing unchanged and report the missing capability; never fall
+back to a command string embedded in the project release profile.
 
 A shared-ingress transaction must:
 
 1. Keep unrelated project fragments byte-for-byte unchanged and reject an
    undeclared hostname, fragment, or ownership collision.
-2. Acquire the host-wide lock and verify the expected registry or configuration
-   generation before preparing a change.
-3. Compose the complete candidate from every registered fragment while
+2. Treat an earlier `control plan` as advisory. During authorized `control
+   apply`, acquire the host-wide lock, re-read authoritative and live state,
+   and verify the expected owner-specific or complete configuration generation.
+3. Compose the complete candidate from every currently registered fragment while
    substituting only the requesting project's candidate fragment.
 4. Validate that complete candidate through the host-owned privileged wrapper.
    Keep credentials inside the wrapper and out of commands, logs, generated
    fragments, and transaction evidence.
 5. Replace only the owned fragment atomically, reload through the host
-   controller, and persist the resulting generation and safe evidence.
+   controller, and persist the stable host transaction ID, base/result
+   generation, desired declaration digest, composed candidate digest, phase,
+   and safe evidence.
 6. Verify the shared process, the changed project routes, and every registered
    project's declared lightweight health check. A process-level success alone
    is insufficient because a shared reload has cross-project blast radius.
@@ -296,7 +302,23 @@ release does not need to mutate ingress. When routing must change for cutover,
 bring the candidate origin to readiness first, then run the shared-ingress
 transaction while the prior origin remains available until routing acceptance
 passes. Persist application deployment and host-ingress transactions as
-separate identities; success or authority for one does not imply the other.
+separate monotonic identities; success or authority for one does not imply the
+other. The project transaction stores only a reference to safe host evidence,
+not a copy of the host journal or complete configuration.
+
+Run read-only `control verify` after apply. A successful deployment target that
+depends on changed shared ingress requires the returned host evidence to match
+the exact project, target, release identity, desired declaration digest, and
+verified result generation. If the application is healthy but the host
+transaction is failed or incomplete, report `deployed but ingress-incomplete`,
+do not create the successful deployment tag, and resume only the same
+authorized host transaction or its declared reconciliation operation.
+
+An application rollback never restores a captured shared root configuration.
+After separate current rollback authority, request the prior project
+declaration through `host-governance control rollback`; the host controller
+must recompose the latest declarations for every owner and verify the resulting
+generation.
 
 If scoped fragment ownership, complete-candidate validation, serialized reload,
 credential isolation, and cross-project recovery cannot all be guaranteed, do

@@ -105,6 +105,12 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
   host-owned serialized transaction that validates the complete composed
   candidate and preserves every other project. Without that contract, leave
   shared ingress unchanged.
+- When a release or deployment needs shared host infrastructure, use the
+  installed `host-governance` skill as the separate transaction owner. Resolve
+  its configured `control` operation from the consuming project, execute only
+  through its validated runner, and preserve the returned host transaction ID,
+  generations, safe digests, phase, and verification state as referenced
+  deployment evidence. Do not copy its state machine into a release hook.
 - When the highest stable tag is already reachable from the committed
   integration ref, freeze that ref into an isolated retained release lineage
   without inspecting control-worktree cleanliness. Release and deployment
@@ -190,6 +196,17 @@ any later synchronization back to the integration branch as a separate
 post-release integration operation. Report its status separately; a dirty or
 moving control worktree may block that integration operation but must not
 reopen, invalidate, or be described as blocking the frozen release.
+
+When target completion depends on shared ingress, keep the project deployment
+transaction and host transaction as separate monotonic identities. The project
+executor may request `host-governance control plan` before application
+mutation and the authorized `apply` plus read-only `verify` after the candidate
+origin is ready. Deployment completion requires verified host evidence that
+matches the exact project, target, release identity, and desired declaration
+digest. A failed or incomplete host transaction leaves the application target
+deployed but ingress-incomplete; it never authorizes direct reload, monolithic
+configuration restoration, application rollback, or a successful deployment
+tag.
 
 For the managed contract, keep Git locking, version reservation,
 `release/v<version>` and `repair/v<version>` worktrees, annotated stable tags,
