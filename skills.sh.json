@@ -38,6 +38,7 @@
       "title": "Infrastructure & Security",
       "description": "Skills for provisioning and hardening infrastructure services.",
       "skills": [
+        "host-governance",
         "install-xray-reality"
       ]
     },

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Host Governance"
+  short_description: "Govern shared host infrastructure safely"
+  default_prompt: "Use $host-governance to plan and coordinate the host infrastructure changes required by this project deployment."

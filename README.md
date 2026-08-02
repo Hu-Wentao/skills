@@ -27,6 +27,7 @@
 
 ### 基础设施与安全
 
+- [`host-governance`](skills/host-governance)：治理跨项目共享的主机基础设施，以及 Caddy、Tailscale、Cloudflare 和服务暴露变更。
 - [`install-xray-reality`](skills/install-xray-reality)：安装、配置并加固 Xray REALITY 服务。
 
 ### Python UI

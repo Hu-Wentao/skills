@@ -1,0 +1,96 @@
+---
+name: host-governance
+description: Govern shared host infrastructure inspection, planning, writes, verification, and rollback across projects. Use when a project deployment needs Caddy routes or TLS, Tailscale grants, tags or node settings, Cloudflare zones or DNS, host ingress, service exposure, or another change owned by the authoritative host infrastructure repository.
+---
+
+# Host Governance
+
+Use one control workflow for infrastructure shared by multiple projects. Keep
+application deployment ownership in the consuming project and shared network,
+ingress, DNS, and host ownership in the host infrastructure repository.
+
+## Resolve Project Behavior
+
+Before inspecting or changing infrastructure, resolve the `control` task from
+the current Git repository:
+
+```bash
+uv run python <skill-root>/scripts/resolve.py --cwd <project-root> --task control
+```
+
+Read the returned `instructions.path` whenever `instructions_id` changes. A
+repository may specialize the workflow through
+`.agents/skills-config/host-governance/config.yaml`; without it, use the
+generic control workflow. Resolution writes only derived instructions below
+`.agents/.cache/host-governance/` and never executes declared commands.
+
+Read [project_config.md](references/project_config.md) before creating or
+changing a project profile.
+
+## Establish Authority
+
+1. Identify the consuming project and its deployment intent.
+2. Locate the host infrastructure repository using an explicit user path,
+   `HOST_INFRA_ROOT`, or the runtime locator described in the resolved
+   instructions. Do not guess a path or copy infrastructure facts locally.
+3. Read the infrastructure repository's root scope, module boundaries, storage
+   rules, operations policy, and target device or provider resource.
+4. Inspect the current live state of every affected system before proposing a
+   write. Repository intent and live state are separate evidence.
+5. Classify each requested change by owner and executor. A consuming project
+   may request infrastructure but does not acquire authority to rewrite shared
+   configuration.
+
+## Preserve Safety Invariants
+
+- Treat `inspect` and `plan` as read-only. Require current-turn authorization
+  for each remote write, reload, policy save, DNS mutation, migration, or
+  rollback target.
+- Never expose or persist API tokens, auth keys, private keys, session data,
+  environment dumps, or secret-bearing request bodies.
+- Snapshot the exact current resource and keep a tested recovery path before a
+  shared configuration change.
+- Detect overlapping hostnames, listeners, routes, selectors, resource IDs,
+  and ownership before editing. Stop on an unresolved collision.
+- Generate the complete combined plan before the first mutation. Do not let a
+  successful application deployment imply that Caddy, Tailscale, DNS, or TLS
+  is correct.
+- Prefer product-specific skills when available. This skill remains the
+  transaction owner and must reconcile their results into one final report.
+- Do not broaden network access to make verification pass. Verify required
+  flows positively and forbidden flows negatively.
+- Keep billable, destructive, or identity-changing actions separate from
+  ordinary deployment authorization.
+
+## Control Workflow
+
+1. Resolve the project profile and authoritative host infrastructure root.
+2. Build a change matrix: owner, target, current state, desired state,
+   executor, validation, rollback, and authorization state.
+3. Inspect all involved products and compute one ordered plan without writes.
+4. Present material exposure, deletion, billing, downtime, and recovery
+   effects before requesting any missing authority.
+5. Apply only authorized steps, using the relevant product reference:
+   - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
+   - Tailscale policy or node settings: read
+     [tailscale.md](references/tailscale.md).
+   - Cloudflare resources or DNS: read
+     [cloudflare.md](references/cloudflare.md).
+6. Validate each component immediately after its change. Stop the forward
+   sequence on failure and preserve evidence.
+7. Run end-to-end and negative-path checks after all components pass.
+8. Report repository changes, live changes, credentials/configuration needed,
+   compatibility, rollback state, and every item still unverified.
+
+## Ownership Boundaries
+
+| Surface | Primary authority | Runtime authority |
+| --- | --- | --- |
+| Application port and health contract | Consuming project | Deployed application |
+| Target host and service exposure | Host infrastructure repository | Target host and network |
+| Caddy host mapping and shared ingress | Host infrastructure repository | Running Caddy instance |
+| Tailnet access intent | Host infrastructure repository | Saved Tailscale policy and nodes |
+| Cloudflare desired resources | Host infrastructure repository | Cloudflare API and IaC state |
+
+Generated Caddy fragments, plans, caches, and inventories are derived artifacts,
+not additional authorities.
