@@ -249,6 +249,60 @@ Keep explicit contracted parameters as per-run overrides. A default-mode change
 does not authorize a release, deployment, retry, promotion, or a change to a
 frozen tag.
 
+## Govern Shared Host Ingress
+
+Classify ingress, reverse-proxy, load-balancer, and tunnel ownership before an
+application deployment mutates routing:
+
+- A dedicated ingress instance may be owned by one project when the project
+  contract explicitly declares its configuration, reload, and recovery hooks.
+- A shared ingress instance is host-scoped infrastructure. The host controller
+  owns the root configuration, reload capability, protected credentials,
+  project registry, hostname claims, transaction journal, and host-wide lock.
+  Each project owns only its declared fragment and desired upstreams.
+
+Application deployment authority alone does not authorize a shared-ingress
+mutation. The current task contract must name the separate host-infrastructure
+transaction and bind it to a stable project identity, declared fragment,
+hostname claims, and target. If no such contract exists, keep the current
+shared routing unchanged and report the missing capability.
+
+A shared-ingress transaction must:
+
+1. Keep unrelated project fragments byte-for-byte unchanged and reject an
+   undeclared hostname, fragment, or ownership collision.
+2. Acquire the host-wide lock and verify the expected registry or configuration
+   generation before preparing a change.
+3. Compose the complete candidate from every registered fragment while
+   substituting only the requesting project's candidate fragment.
+4. Validate that complete candidate through the host-owned privileged wrapper.
+   Keep credentials inside the wrapper and out of commands, logs, generated
+   fragments, and transaction evidence.
+5. Replace only the owned fragment atomically, reload through the host
+   controller, and persist the resulting generation and safe evidence.
+6. Verify the shared process, the changed project routes, and every registered
+   project's declared lightweight health check. A process-level success alone
+   is insufficient because a shared reload has cross-project blast radius.
+7. If commit or verification fails, use the controller's declared transaction
+   compensation to restore only the requesting project's previous fragment,
+   recompose the prior complete configuration, reload, and reverify all
+   registered checks. This is completion of the ingress transaction, not
+   authority to roll back application code, restore data, or overwrite another
+   project's fragment. Preserve a failed transaction for reconciliation when
+   compensation cannot be verified.
+
+Prefer stable project-owned loopback upstreams so an ordinary application
+release does not need to mutate ingress. When routing must change for cutover,
+bring the candidate origin to readiness first, then run the shared-ingress
+transaction while the prior origin remains available until routing acceptance
+passes. Persist application deployment and host-ingress transactions as
+separate identities; success or authority for one does not imply the other.
+
+If scoped fragment ownership, complete-candidate validation, serialized reload,
+credential isolation, and cross-project recovery cannot all be guaranteed, do
+not automate a shared-ingress mutation from an application release. Use a
+dedicated ingress instance or obtain a separately governed host operation.
+
 ## Classify a Failure Before the Next Mutation
 
 Record the failed phase, fixed identity, target, and whether source bytes must

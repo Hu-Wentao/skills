@@ -98,6 +98,13 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
 - Do not expose credentials, authorization headers, request bodies, captures, or provider secrets.
 - Do not mutate a published release tag or re-resolve a moving deployment ref.
 - Keep release/retry identity fixed to the recorded full commit and immutable tag.
+- Treat host-shared ingress, reverse proxies, load balancers, and tunnels as
+  separately owned infrastructure. An application executor must not edit or
+  restore a monolithic shared configuration or reload the shared process
+  directly. It may submit only its declared project fragment through a
+  host-owned serialized transaction that validates the complete composed
+  candidate and preserves every other project. Without that contract, leave
+  shared ingress unchanged.
 - When the highest stable tag is already reachable from the committed
   integration ref, freeze that ref into an isolated retained release lineage
   without inspecting control-worktree cleanliness. Release and deployment
