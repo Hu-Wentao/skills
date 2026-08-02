@@ -24,9 +24,9 @@ Do not stash, reset, restore, clean, amend, rebase, or force-update refs unless 
 
 Use this ordering unless a project has an explicitly documented stronger policy:
 
-1. Resolve and record `SOURCE_COMMIT` from the committed `main` ref. Inspect the
-   control worktree but do not require it to be clean; staged, unstaged, and
-   untracked bytes are excluded from `SOURCE_COMMIT`.
+1. Resolve and record `SOURCE_COMMIT` from the committed `main` ref without
+   inspecting control-worktree cleanliness. Staged, unstaged, and untracked
+   bytes are excluded by resolving the ref itself.
 2. Determine the release version without mutating `main`.
 3. Create an isolated worktree on retained `release/v<version>` at
    `SOURCE_COMMIT`.

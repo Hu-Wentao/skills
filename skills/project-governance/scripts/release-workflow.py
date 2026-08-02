@@ -484,7 +484,6 @@ def release_inspect(root: Path, target: str | None) -> int:
         "release_inspected",
         status="ready" if status["complete"] else "bootstrap_required",
         source={"branch": branch, "commit": source},
-        controlWorktree=control_worktree(root),
         previousStableTag=previous,
         previousTagReachable=(is_ancestor(root, previous, source_ref) if previous and source else None),
         target=target,
@@ -637,7 +636,6 @@ def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None 
         "sourceCommit": source_commit,
         "worktree": str(branch_path(root, branch)),
         "baseTag": base_tag,
-        "controlWorktree": control_worktree(root),
         "releaseBoundary": release_boundary(),
     }
 
@@ -671,14 +669,14 @@ def prepare(root: Path, *, version: str, target: str, base_tag: str | None, dry_
         candidate = full_commit(worktree, "HEAD")
         state = {
             "schema": "project-governance.release-state.v1",
-            **{key: value for key, value in plan.items() if key != "controlWorktree"},
+            **plan,
             "candidateCommit": candidate,
             "status": "prepared",
             "phase": "version_reserved",
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
         atomic_json(state_path(root, version), state)
-        emit("repair_prepared" if base_tag else "release_prepared", **state, controlWorktreeAfter=control_worktree(root))
+        emit("repair_prepared" if base_tag else "release_prepared", **state)
     return 0
 
 

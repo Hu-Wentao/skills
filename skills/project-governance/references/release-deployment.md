@@ -78,9 +78,8 @@ If the release is blocked before its source is frozen:
 2. Perform only the smallest already-authorized action needed to clear it.
 3. Return immediately to the next incomplete release stage after it clears.
 4. Freeze the source as soon as the authorized changes are committed and the
-   committed integration ref satisfies the project rules. Unrelated tracked,
-   staged, or untracked control-worktree changes are not a source-freeze
-   blocker unless the next required operation must mutate that worktree.
+   committed integration ref satisfies the project rules. Do not inspect
+   control-worktree cleanliness as part of release or deployment preflight.
 
 Classify a discovery as a hard blocker only when it prevents producing the
 explicitly requested committed source, leaves the source or target identity
@@ -99,30 +98,28 @@ currently authorized release is waiting to advance.
 
 ## Freeze the Release Identity
 
-1. Read repository instructions and inspect the control worktree without
-   modifying it.
+1. Read repository instructions and resolve the committed integration ref
+   without inspecting control-worktree cleanliness.
 2. Resolve the intended committed integration ref once to a full commit id and
    record it.
 3. Require committed source identity. Never synthesize a release from staged,
-   unstaged, or untracked files; those bytes remain excluded even when the
-   control worktree is dirty.
-4. When the highest stable tag is already reachable from the committed
-   integration ref, create the retained release branch and worktree from that
-   commit without requiring the control worktree to be clean.
-5. Require a clean checked-out integration worktree only when the next required
-   step must mutate that branch, such as synchronizing an unreachable previous
-   stable tag. Do not commit, stash, reset, clean, or delete unrelated changes
-   merely to satisfy release preparation.
+   unstaged, or untracked files; resolving the branch ref excludes those bytes
+   without a control-worktree status check.
+4. Create the retained release branch and worktree from the resolved committed
+   source without running `git status` against the control worktree.
+5. Treat synchronization of an integration branch as a separate operation
+   with its own prerequisites. Never import its checkout-cleanliness gate into
+   release or deployment planning, preparation, execution, or reporting.
 6. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
    frozen.
 7. Keep the release tag, full commit id, and deployment target together in
    every plan, command boundary, retry, and report.
 
 For a normal full release, the retained release lineage becomes the release
-identity authority at source freeze. Later control-worktree dirtiness or branch
-movement can block only a separately required integration mutation; it cannot
-reopen or invalidate that frozen release. For a repair release, freeze the
-failed release tag and its peeled commit as the base identity, then follow the
+identity authority at source freeze. Later branch movement can block only a
+separately required integration mutation; it cannot reopen or invalidate that
+frozen release. For a repair release, freeze the failed release tag and its
+peeled commit as the base identity, then follow the
 isolated repair rules below. For deploy-only work, use the exact
 user-authorized commit or immutable tag and do not mutate the control worktree.
 
@@ -409,8 +406,8 @@ terminal emits only explicit phase events and failures.
   identity, log path, and at most a bounded sanitized summary. Keep the full
   diagnostic output in the detailed log.
 - Emit release/deployment state and post-release integration state as separate
-  scopes. After source freeze, an integration conflict, dirty control worktree,
-  or later branch movement must not emit or be summarized as a release failure.
+  scopes. After source freeze, an integration conflict or later branch movement
+  must not emit or be summarized as a release failure.
 - Continue draining every child stream even when its lines are not forwarded
   to the terminal. Output suppression must never allow a pipe buffer to block
   the child process.

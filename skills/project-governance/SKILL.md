@@ -99,8 +99,9 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
 - Do not mutate a published release tag or re-resolve a moving deployment ref.
 - Keep release/retry identity fixed to the recorded full commit and immutable tag.
 - When the highest stable tag is already reachable from the committed
-  integration ref, do not let staged, unstaged, or untracked control-worktree
-  changes block freezing that ref into an isolated retained release lineage.
+  integration ref, freeze that ref into an isolated retained release lineage
+  without inspecting control-worktree cleanliness. Release and deployment
+  preflight must not run `git status` against the control worktree.
 - After source freeze, do not make release or deployment status depend on the
   moving integration branch. Treat synchronization back to it as a separately
   authorized and separately reported operation.
@@ -166,17 +167,14 @@ Use `git snapshot`, `release inspect`, and the applicable normal, promotion, or 
 
 Treat a request for a full release or release-and-deploy as authority over an
 already committed source identity, not as authority to commit the control
-worktree. Never make the control worktree clean by committing, stashing,
-resetting, cleaning, or deleting its changes. Freeze the committed integration
-ref and use `release prepare` to create or resume the retained release worktree.
-When the highest stable tag is already reachable from that ref, tracked,
-staged, or untracked control-worktree changes do not block preparation and are
-excluded from the candidate. Require a clean checked-out integration worktree
-only for an operation that must actually mutate that branch, such as
-`release sync-main`; never require cleanliness merely to read and freeze its
-committed tip. If the user intends uncommitted bytes to enter the candidate,
-obtain separate scope for finishing and committing those bytes before release
-preparation.
+worktree. Resolve the committed integration ref directly and use `release
+prepare` to create or resume the retained release worktree. Do not inspect or
+report control-worktree cleanliness during release inspection, planning,
+preparation, execution, deployment, promotion, or retry. The isolated release,
+repair, or detached worktree is the only checkout whose cleanliness is a
+release/deployment precondition. If the user intends uncommitted bytes to enter
+the candidate, obtain separate scope for finishing and committing those bytes
+before release preparation.
 
 After preparation freezes the source commit, determine release, retry, and
 deployment status only from the retained release or repair lineage, immutable

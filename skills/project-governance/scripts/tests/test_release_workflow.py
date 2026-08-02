@@ -102,7 +102,7 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
     def events(self, result: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
         return [json.loads(line) for line in result.stdout.splitlines() if line.strip().startswith("{")]
 
-    def test_dirty_control_worktree_is_preserved_during_prepare(self) -> None:
+    def test_prepare_does_not_report_control_worktree_status(self) -> None:
         (self.root / "package.json").write_text(
             json.dumps({"name": "release-test", "version": "9.9.9"}, indent=2) + "\n",
             encoding="utf-8",
@@ -132,7 +132,8 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         event = self.events(prepared)[-1]
         self.assertEqual(event["event"], "release_prepared")
         self.assertEqual(event["sourceCommit"], self.main_commit)
-        self.assertTrue(event["controlWorktreeAfter"]["dirty"])
+        self.assertNotIn("controlWorktree", event)
+        self.assertNotIn("controlWorktreeAfter", event)
         self.assertEqual(
             event["releaseBoundary"],
             {

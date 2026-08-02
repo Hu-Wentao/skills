@@ -144,9 +144,9 @@ migration remain separate current-user authority.
 
 ## Universal Behavior
 
-- Inspecting a dirty control worktree is allowed and reported; the workflow
-  never commits or cleans it. When the highest stable tag is already reachable
-  from the committed integration ref, dirtiness does not block preparation.
+- Release inspection, planning, preparation, execution, deployment, promotion,
+  and retry do not inspect or report control-worktree cleanliness. They resolve
+  a committed ref and operate only in a new or retained isolated worktree.
 - Normal preparation freezes the committed integration ref, excludes every
   staged, unstaged, and untracked control-worktree byte, reserves
   `release/v<version>`, and creates a retained sibling worktree.
@@ -167,8 +167,8 @@ migration remain separate current-user authority.
   target artifact manifest.
 - After preparation, release and deployment status come only from the retained
   lineage and frozen evidence. Synchronization back to the integration branch
-  is a separately reported post-release operation; its dirty-worktree blocker
-  cannot downgrade the release state.
+  is a separately reported post-release operation and cannot downgrade the
+  release state.
 
 Project-owned v3 contracts remain supported for workflows that already own the
 same invariants. Do not mix one lineage between managed and project-owned
