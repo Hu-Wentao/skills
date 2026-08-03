@@ -151,6 +151,34 @@ available. Assign exactly one decision within its reported `decision_scope`:
 - **delete**: committed behavior is contained, patch-equivalent, demonstrably
   superseded, or has no remaining value. Record the evidence and exact commit.
 
+### Reconcile published release lineages
+
+Do not treat retaining or removing a `release/*`, `repair/*`, or `hotfix/*`
+worktree as proof that its published fixes are present in the target. Before
+classifying any protected branch, inspect its matching stable tag, the exact
+peeled tag commit, and whether that commit is reachable from the target.
+
+When the repository configures release governance, resolve
+`project-governance` for `release-deployment` and use its read-only
+`sync-main-plan` or equivalent operation as the authority for release-lineage
+integration. If an explicit branch-maintenance request authorizes the required
+local target merge, execute only the contracted `sync-main` operation. Do not
+replace it with a generic merge of the protected branch: the branch may have
+advanced beyond the immutable published tag. Re-audit all candidates after a
+successful synchronization because the target HEAD and snapshot have changed.
+
+If a published stable tag is not reachable from the target and governed
+synchronization cannot complete, retain the branch and report the exact
+tag/commit and blocker. Do not report branch maintenance as fully reconciled.
+Merge conflicts, missing contracts, or unavailable authority are preservation
+outcomes, not evidence that the published repair is obsolete.
+
+Treat an untagged protected branch as an active or unresolved release lineage.
+Retain its branch ref; a clean worktree may still be removed under the ordinary
+worktree-only rules. Do not merge the candidate into the target, delete its
+branch, or infer that its commits are published without a separate exact
+release-resolution decision.
+
 Treat a dirty worktree as presumptively active and default it to **retain**.
 This includes tracked modifications, staged changes, and untracked files. If
 the user identifies a branch/worktree as owned by another active thread, retain
