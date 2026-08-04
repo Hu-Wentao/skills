@@ -1,4 +1,4 @@
 interface:
   display_name: "Host Governance"
-  short_description: "Query and govern shared host infrastructure"
-  default_prompt: "Use $host-governance to query the authoritative shared host context or coordinate the infrastructure changes required by this project."
+  short_description: "Govern shared hosts, tunnels, DNS, and access"
+  default_prompt: "Use $host-governance to query authoritative shared-host context or coordinate governed host, Cloudflare Tunnel, DNS, and Access changes for this project."

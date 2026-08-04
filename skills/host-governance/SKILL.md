@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including Cloudflare Tunnel, DNS, and Access publication. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
 ---
 
 # Host Governance
@@ -109,6 +109,10 @@ changing a project profile.
 - Generate the complete combined plan before the first mutation. Do not let a
   successful application deployment imply that Caddy, Tailscale, DNS, or TLS
   is correct.
+- Treat a Cloudflare public application as one coupled transaction spanning
+  the origin, connector, tunnel ingress, proxied DNS, Access application, and
+  Access policy. Never report a partially configured path as published or
+  protected.
 - Prefer product-specific skills when available. This skill remains the
   transaction owner and must reconcile their results into one final report.
 - Do not broaden network access to make verification pass. Verify required
@@ -128,8 +132,10 @@ changing a project profile.
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
    - Tailscale policy or node settings: read
      [tailscale.md](references/tailscale.md).
-   - Cloudflare resources or DNS: read
+   - Cloudflare accounts, zones, DNS, or Terraform state: read
      [cloudflare.md](references/cloudflare.md).
+   - Cloudflare Tunnel public hostnames and Access protection: read
+     [cloudflare-tunnel.md](references/cloudflare-tunnel.md).
 6. Apply through the host-owned lock and transaction journal. Compose from the
    latest accepted per-owner declarations, validate the complete candidate,
    atomically install, and preserve a recoverable prior generation.
@@ -156,6 +162,8 @@ monolithic shared configuration.
 | Caddy host mapping and shared ingress | Host infrastructure repository | Running Caddy instance |
 | Tailnet access intent | Host infrastructure repository | Saved Tailscale policy and nodes |
 | Cloudflare desired resources | Host infrastructure repository | Cloudflare API and IaC state |
+| Cloudflare connector placement and runtime | Host infrastructure repository | Target host and Cloudflare edge |
+| Cloudflare Access application and policy | Host infrastructure repository | Cloudflare Access API |
 
 Generated Caddy fragments, plans, caches, and inventories are derived artifacts,
 not additional authorities.

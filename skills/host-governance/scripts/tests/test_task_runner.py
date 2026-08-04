@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -77,6 +78,19 @@ tasks:
                     "authorization": "current_user",
                     **common,
                 },
+                "cloudflare-apply": {
+                    "description": "Apply a host and Cloudflare transaction.",
+                    "command": [sys.executable, "executor.py", "cloudflare-apply"],
+                    "mutability": "composite_write",
+                    "authorization": "current_user",
+                    "environment": {
+                        "CLOUDFLARE_API_TOKEN": {
+                            "required": True,
+                            "sensitive": True,
+                        }
+                    },
+                    **common,
+                },
             },
         }
         (config_root / "control.contract.json").write_text(
@@ -120,6 +134,36 @@ tasks:
             "execute", "--task", "control", "--operation", "inspect", "--target", "dev"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_composite_write_requires_secret_environment_without_exposing_value(self) -> None:
+        missing = self.invoke(
+            "--authorized", "control", "cloudflare-apply", "--target", "prod"
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("CLOUDFLARE_API_TOKEN", missing.stderr)
+
+        environment = os.environ.copy()
+        environment["CLOUDFLARE_API_TOKEN"] = "not-printed-test-token"
+        allowed = subprocess.run(
+            [
+                sys.executable,
+                str(self.runner),
+                "--cwd",
+                str(self.root),
+                "--authorized",
+                "control",
+                "cloudflare-apply",
+                "--target",
+                "prod",
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertNotIn("not-printed-test-token", allowed.stdout + allowed.stderr)
 
     def test_rejects_missing_unknown_and_invalid_arguments(self) -> None:
         missing = self.invoke("control", "inspect")

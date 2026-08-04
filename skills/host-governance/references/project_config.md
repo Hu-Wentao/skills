@@ -31,10 +31,12 @@ uv run python <skill-root>/scripts/resolve.py \
 ```
 
 The contract schema is `host-governance.task-contract.v1`. Each operation must
-declare an argv-array command, mutability, authorization, parameters, output
-schema, exit-code states, and allowed next states. Write operations must require
-`current_user` authorization. Supported mutability values are `read_only`,
-`repository_write`, `host_write`, `external_write`, and `destructive`.
+declare an argv-array command, mutability, authorization, parameters, optional
+environment requirements, output schema, exit-code states, and allowed next
+states. Write operations must require `current_user` authorization. Supported
+mutability values are `read_only`, `repository_write`, `host_write`,
+`external_write`, `composite_write`, and `destructive`. Use `composite_write`
+only when one serialized controller changes both host and provider state.
 
 ```json
 {
@@ -48,6 +50,7 @@ schema, exit-code states, and allowed next states. Write operations must require
       "mutability": "read_only",
       "authorization": "none",
       "parameters": {},
+      "environment": {},
       "output_schema": "example.host-control-event.v1",
       "exit_codes": {"0": "host_inspected", "1": "host_inspection_failed"},
       "next_states": ["host_plan"]
@@ -55,6 +58,22 @@ schema, exit-code states, and allowed next states. Write operations must require
   }
 }
 ```
+
+An operation may declare environment requirements without values:
+
+```json
+"environment": {
+  "CLOUDFLARE_API_TOKEN": {
+    "required": true,
+    "sensitive": true
+  }
+}
+```
+
+Environment names must be uppercase shell identifiers. The runner checks only
+whether required variables are non-empty and never writes their values to the
+resolved contract, cache, argv, or output. Do not model credentials as operation
+parameters.
 
 The project profile may declare:
 

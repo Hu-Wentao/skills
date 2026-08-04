@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -74,6 +75,12 @@ def build_operation_argv(
         else:
             command.extend([parameter["flag"], str(value)])
     return command
+
+
+def validate_environment(operation: dict[str, Any]) -> None:
+    for name, requirement in operation.get("environment", {}).items():
+        if requirement["required"] and not os.environ.get(name):
+            raise TaskError(f"required operation environment is missing: {name}")
 
 
 def resolve_operation(cwd: Path, task: str, operation: str) -> dict[str, Any]:
@@ -150,6 +157,7 @@ def main() -> int:
             raise TaskError(
                 f"{task} {operation_name} requires --authorized after current user approval"
             )
+        validate_environment(operation)
         command = build_operation_argv(operation, remaining)
         result = subprocess.run(
             command,

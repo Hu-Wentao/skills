@@ -118,6 +118,12 @@ tasks:
                                     "required": False,
                                 },
                             },
+                            "environment": {
+                                "CLOUDFLARE_API_TOKEN": {
+                                    "required": True,
+                                    "sensitive": True,
+                                }
+                            },
                             "output_schema": "test.host-control.v1",
                             "exit_codes": {"0": "host_applied", "1": "host_apply_failed"},
                             "next_states": ["host_verify", "host_reconcile"],
@@ -224,6 +230,31 @@ tasks:
         result = self.run_resolver("--task", "control", "--format", "json")
         self.assertEqual(result.returncode, 2)
         self.assertIn("must require current_user authorization", result.stderr)
+
+    def test_v2_accepts_composite_write_and_secret_environment_declaration(self) -> None:
+        self.write_v2_config(mutability="composite_write")
+        result = self.run_resolver(
+            "--task", "control", "--operation", "apply", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operation = json.loads(result.stdout)["contract"]["operations"]["apply"]
+        self.assertEqual(operation["mutability"], "composite_write")
+        self.assertEqual(
+            operation["environment"]["CLOUDFLARE_API_TOKEN"],
+            {"required": True, "sensitive": True},
+        )
+
+    def test_v2_rejects_invalid_environment_name(self) -> None:
+        config_root = self.write_v2_config()
+        contract_path = config_root / "control.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["operations"]["apply"]["environment"] = {
+            "cloudflare-token": {"required": True, "sensitive": True}
+        }
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        result = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("uppercase environment name", result.stderr)
 
     def test_v2_rejects_contract_path_escape(self) -> None:
         config_root = self.write_v2_config()

@@ -3,6 +3,9 @@
 Use this reference for Cloudflare accounts, zones, DNS, Terraform-managed
 resources, tunnels, security settings, and other provider resources.
 
+For a public hostname backed by Cloudflare Tunnel and protected by Access,
+also read [cloudflare-tunnel.md](cloudflare-tunnel.md) from the skill root.
+
 ## Authority and authentication
 
 - Keep desired managed resources in the host infrastructure repository.

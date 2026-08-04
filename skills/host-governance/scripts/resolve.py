@@ -246,6 +246,27 @@ def normalize_parameter(value: Any, field: str) -> dict[str, Any]:
     return normalized
 
 
+def normalize_environment(value: Any, field: str) -> dict[str, dict[str, bool]]:
+    environment = require_mapping(value, field)
+    normalized: dict[str, dict[str, bool]] = {}
+    for raw_name, raw_requirement in environment.items():
+        name = require_string(raw_name, f"{field} key")
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
+            raise ResolveError(f"{field} key must be an uppercase environment name")
+        requirement_field = f"{field}.{name}"
+        requirement = require_mapping(raw_requirement, requirement_field)
+        require_exact_keys(requirement, {"required", "sensitive"}, requirement_field)
+        normalized[name] = {
+            "required": require_boolean(
+                requirement.get("required", False), f"{requirement_field}.required"
+            ),
+            "sensitive": require_boolean(
+                requirement.get("sensitive", False), f"{requirement_field}.sensitive"
+            ),
+        }
+    return normalized
+
+
 def normalize_contract(
     value: dict[str, Any],
     *,
@@ -281,6 +302,7 @@ def normalize_contract(
                 "mutability",
                 "authorization",
                 "parameters",
+                "environment",
                 "output_schema",
                 "exit_codes",
                 "next_states",
@@ -298,6 +320,7 @@ def normalize_contract(
             "repository_write",
             "host_write",
             "external_write",
+            "composite_write",
             "destructive",
         }:
             raise ResolveError(f"{operation_field}.mutability is unsupported")
@@ -350,6 +373,9 @@ def normalize_contract(
             "mutability": mutability,
             "authorization": authorization,
             "parameters": parameters,
+            "environment": normalize_environment(
+                operation.get("environment", {}), f"{operation_field}.environment"
+            ),
             "output_schema": require_string(
                 operation.get("output_schema"), f"{operation_field}.output_schema"
             ),
