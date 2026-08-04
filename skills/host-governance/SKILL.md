@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including Cloudflare Tunnel, DNS, and Access publication. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including Tailscale installation and update readiness, Cloudflare Tunnel, DNS, and Access publication. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
 ---
 
 # Host Governance
@@ -109,6 +109,9 @@ changing a project profile.
 - Generate the complete combined plan before the first mutation. Do not let a
   successful application deployment imply that Caddy, Tailscale, DNS, or TLS
   is correct.
+- Do not report a Tailscale installation as complete until its effective update
+  channel, automatic-update behavior, package reachability, and recovery path
+  have been inspected and either verified or reported as an explicit gap.
 - Treat a Cloudflare public application as one coupled transaction spanning
   the origin, connector, tunnel ingress, proxied DNS, Access application, and
   Access policy. Never report a partially configured path as published or
@@ -130,7 +133,7 @@ changing a project profile.
    effects before requesting any missing authority.
 5. Apply only authorized steps, using the relevant product reference:
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
-   - Tailscale policy or node settings: read
+   - Tailscale installation, update readiness, policy, or node settings: read
      [tailscale.md](references/tailscale.md).
    - Cloudflare accounts, zones, DNS, or Terraform state: read
      [cloudflare.md](references/cloudflare.md).

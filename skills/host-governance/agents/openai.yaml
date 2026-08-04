@@ -1,4 +1,4 @@
 interface:
   display_name: "Host Governance"
-  short_description: "Govern shared hosts, tunnels, DNS, and access"
-  default_prompt: "Use $host-governance to query authoritative shared-host context or coordinate governed host, Cloudflare Tunnel, DNS, and Access changes for this project."
+  short_description: "Govern shared hosts, Tailscale, tunnels, DNS, and access"
+  default_prompt: "Use $host-governance to query authoritative shared-host context or coordinate governed host, Tailscale installation and updates, Cloudflare Tunnel, DNS, and Access changes for this project."
