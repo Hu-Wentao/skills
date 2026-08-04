@@ -1,0 +1,4 @@
+interface:
+  display_name: "项目周报"
+  short_description: "Summarize Git work for any author and date range"
+  default_prompt: "Use $project-weekly-report to summarize my Git work from the last seven days as a Chinese weekly report."
