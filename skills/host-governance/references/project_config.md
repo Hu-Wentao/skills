@@ -1,14 +1,14 @@
 # Project Configuration
 
 The global skill works without repository configuration for read-only generic
-reasoning. A consuming project may add reviewed deployment-specific
-instructions and a deterministic task contract:
+reasoning. A repository may add reviewed task-specific instructions and a
+deterministic task contract:
 
 ```text
 .agents/skills-config/host-governance/
 ├── config.yaml
 ├── <profile>.md
-└── control.contract.json
+└── <task>.contract.json
 ```
 
 Minimum configuration:
@@ -64,14 +64,25 @@ The project profile may declare:
 - project-specific rollback entry points;
 - references to host infrastructure resource identities.
 
+An authoritative host repository may additionally declare a `context` task
+whose profile and contract expose bounded, read-only repository queries. Resolve
+that task with `--cwd` set to the host repository. Keep its real repository
+path, device identities, hostnames, addresses, aliases, ports, endpoints, and
+topology in project-owned documents or skill configuration; never add those
+facts to the globally shared skill. A consuming project should use the locator
+workflow and query the authority at read time instead of defining its own
+`context` inventory.
+
 The authoritative host repository owns deterministic mutation behavior,
 serialization, full-candidate validation, journal persistence, readback, and
 recovery. A consuming profile may reference that controller but must not copy
 its inventory or shared desired state.
 
-Do not put device inventories, shared Caddy mappings, tailnet policy, Cloudflare
-desired state, transient observations, or secrets in a consuming project
-profile. Those remain in their primary authority systems.
+Do not put copied device inventories, shared Caddy mappings, tailnet policy,
+Cloudflare desired state, transient observations, or secrets in a consuming
+project profile. Those remain in their primary authority systems. Project-owned
+context output must distinguish repository declarations from live state and
+include freshness/provenance when available.
 
 `base` is relative to the installed skill root. `profile` and `contract` are
 relative to the repository's configuration directory. Absolute paths and path

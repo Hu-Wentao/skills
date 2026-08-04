@@ -169,6 +169,13 @@ tasks:
         )
         self.assertEqual(first_id, second_id)
 
+    def test_generic_context_fallback_is_available_without_project_facts(self) -> None:
+        result = self.run_resolver("--task", "context", "--emit", "instructions")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("# Generic Shared Host Context", result.stdout)
+        self.assertIn("repository_root", result.stdout)
+        self.assertIn("local-working-tree", result.stdout)
+
     def test_project_profile_is_composed(self) -> None:
         config_root = self.write_config()
         (config_root / "project.md").write_text(

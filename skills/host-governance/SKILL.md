@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Govern shared host infrastructure inspection, planning, writes, verification, and rollback across projects. Use when a project deployment needs Caddy routes or TLS, Tailscale grants, tags or node settings, Cloudflare zones or DNS, host ingress, service exposure, or another change owned by the authoritative host infrastructure repository.
+description: Query and govern shared host infrastructure across projects. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
 ---
 
 # Host Governance
@@ -8,6 +8,39 @@ description: Govern shared host infrastructure inspection, planning, writes, ver
 Use one control workflow for infrastructure shared by multiple projects. Keep
 application deployment ownership in the consuming project and shared network,
 ingress, DNS, and host ownership in the host infrastructure repository.
+
+## Query Shared Context
+
+When another project needs shared host facts, locate the authoritative host
+repository instead of copying an inventory into the consuming project or this
+skill. Use the first unambiguous source in this order:
+
+1. an exact repository path supplied by the current user;
+2. a repository already established as authoritative in the current task;
+3. the `HOST_INFRA_ROOT` environment variable;
+4. the runtime locator documented in [context.md](references/context.md).
+
+Resolve the `context` task against the authoritative host repository, not the
+consuming repository. Read every returned policy reference before execution:
+
+```bash
+uv run python <skill-root>/scripts/resolve.py \
+  --cwd <host-root> --task context --operation <operation> --format json
+uv run python <skill-root>/scripts/host-governance.py \
+  --cwd <host-root> execute --task context --operation <operation> \
+  [contracted arguments]
+```
+
+Use `catalog` when identities are unknown, `search` to get candidate metadata,
+and `get` with one exact kind and ID to retrieve authoritative content. Use
+`current-device` only when the project contract provides it; stop rather than
+guess when no device or multiple devices match.
+
+Context results are repository declarations with their stated provenance and
+freshness. They are not live observations. Do not fetch or pull implicitly,
+probe networks, call provider APIs, or convert repository-declared values into
+runtime claims. Do not persist a derived inventory or return secret-bearing
+fields. Resolve `control` separately for live inspection or mutation.
 
 ## Resolve Project Behavior
 
