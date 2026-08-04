@@ -46,7 +46,23 @@ not invent work items.
 ## Draft the report
 
 Read the collector's JSON and write the report in Chinese unless the user asks
-for another language. Use this compact structure:
+for another language. Resolve the optional rendering parameters before
+drafting:
+
+- `include_stats`: boolean, default `false`. Set to `true` only when the user
+  explicitly requests the `变更统计` section or passes
+  `include_stats=true`.
+- `include_risks`: boolean, default `false`. Set to `true` only when the user
+  explicitly requests the `风险与待确认` section or passes
+  `include_risks=true`.
+
+Treat an omitted parameter as `false`; do not infer either option from the
+amount or type of Git changes. When an option is `false`, omit its heading and
+all of its data from the final report. The collector JSON may still contain the
+aggregate evidence needed to render an explicitly requested section.
+
+Use this compact structure, including the two conditional sections only when
+their corresponding parameter is `true`:
 
 ```markdown
 # 项目周报（<since> — <until>）
@@ -57,11 +73,13 @@ for another language. Use this compact structure:
 ## 完成事项
 - <group related commits into outcome-oriented work items>
 
+<!-- include only when include_stats=true -->
 ## 变更统计
 - 提交：<count>
 - 涉及文件：<count>
 - 代码变更：+<insertions> / -<deletions>
 
+<!-- include only when include_risks=true -->
 ## 风险与待确认
 - <only evidence-backed risks, gaps, or “无明确风险记录”>
 ```
