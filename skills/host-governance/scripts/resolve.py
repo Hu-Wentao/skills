@@ -363,7 +363,7 @@ def normalize_contract(
         next_states_raw = operation.get("next_states", [])
         if not isinstance(next_states_raw, list):
             raise ResolveError(f"{operation_field}.next_states must be a list")
-        normalized_operations[name] = {
+        normalized_operation = {
             "description": require_string(
                 operation.get("description"), f"{operation_field}.description"
             ),
@@ -373,9 +373,6 @@ def normalize_contract(
             "mutability": mutability,
             "authorization": authorization,
             "parameters": parameters,
-            "environment": normalize_environment(
-                operation.get("environment", {}), f"{operation_field}.environment"
-            ),
             "output_schema": require_string(
                 operation.get("output_schema"), f"{operation_field}.output_schema"
             ),
@@ -385,6 +382,11 @@ def normalize_contract(
                 for item in next_states_raw
             ],
         }
+        if "environment" in operation:
+            normalized_operation["environment"] = normalize_environment(
+                operation["environment"], f"{operation_field}.environment"
+            )
+        normalized_operations[name] = normalized_operation
     return {
         "schema": "host-governance.task-contract.v1",
         "id": require_string(value.get("id"), f"{field}.id"),

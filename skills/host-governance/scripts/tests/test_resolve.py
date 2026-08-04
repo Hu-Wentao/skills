@@ -216,6 +216,10 @@ tasks:
             "--task", "control", "--operation", "inspect", "--format", "json"
         )
         self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        self.assertNotIn(
+            "environment",
+            json.loads(inspected.stdout)["contract"]["operations"]["inspect"],
+        )
         self.assertEqual(
             json.loads(inspected.stdout)["instructions_id"],
             resolved["instructions_id"],

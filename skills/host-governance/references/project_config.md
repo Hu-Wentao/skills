@@ -50,7 +50,6 @@ only when one serialized controller changes both host and provider state.
       "mutability": "read_only",
       "authorization": "none",
       "parameters": {},
-      "environment": {},
       "output_schema": "example.host-control-event.v1",
       "exit_codes": {"0": "host_inspected", "1": "host_inspection_failed"},
       "next_states": ["host_plan"]
