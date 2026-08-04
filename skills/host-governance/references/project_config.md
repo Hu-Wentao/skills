@@ -74,6 +74,34 @@ whether required variables are non-empty and never writes their values to the
 resolved contract, cache, argv, or output. Do not model credentials as operation
 parameters.
 
+When a project already owns a credential in an approved secret store, declare
+an ordered `sources` list on the sensitive environment requirement instead of
+asking an operator to copy it into a command or browser session:
+
+```json
+"environment": {
+  "CLOUDFLARE_API_TOKEN": {
+    "required": true,
+    "sensitive": true,
+    "sources": [
+      {"kind": "environment", "name": "CLOUDFLARE_API_TOKEN"},
+      {
+        "kind": "macos_keychain",
+        "service": "project-cloudflare-token",
+        "account": "project-id"
+      }
+    ]
+  }
+}
+```
+
+The runner uses the first non-empty source, injects it only into the selected
+operation's child environment, and never emits the value. Keychain service and
+account names are non-secret project configuration; values stay in Keychain.
+Do not declare shell commands, file reads, or other arbitrary credential
+resolvers. An operation must still validate the credential with the target API
+and distinguish invalid authentication from insufficient permission.
+
 The project profile may declare:
 
 - authoritative deployment manifest paths;

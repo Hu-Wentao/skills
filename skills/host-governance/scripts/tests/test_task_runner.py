@@ -28,7 +28,9 @@ class TaskRunnerTest(unittest.TestCase):
         config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
         config_root.mkdir(parents=True)
         (self.root / "executor.py").write_text(
-            "import json, sys\nprint(json.dumps({'schema':'test.host.v1','argv':sys.argv[1:]}))\n",
+            "import json, os, sys\n"
+            "print(json.dumps({'schema':'test.host.v1','argv':sys.argv[1:],"
+            "'token_present':bool(os.environ.get('CLOUDFLARE_API_TOKEN'))}))\n",
             encoding="utf-8",
         )
         (config_root / "config.yaml").write_text(
@@ -87,6 +89,30 @@ tasks:
                         "CLOUDFLARE_API_TOKEN": {
                             "required": True,
                             "sensitive": True,
+                        }
+                    },
+                    **common,
+                },
+                "keychain-apply": {
+                    "description": "Resolve a credential from a configured Keychain item.",
+                    "command": [sys.executable, "executor.py", "keychain-apply"],
+                    "mutability": "external_write",
+                    "authorization": "current_user",
+                    "environment": {
+                        "CLOUDFLARE_API_TOKEN": {
+                            "required": True,
+                            "sensitive": True,
+                            "sources": [
+                                {
+                                    "kind": "environment",
+                                    "name": "CLOUDFLARE_API_TOKEN",
+                                },
+                                {
+                                    "kind": "macos_keychain",
+                                    "service": "host-governance-test-token",
+                                    "account": "runner-test",
+                                },
+                            ],
                         }
                     },
                     **common,
@@ -164,6 +190,68 @@ tasks:
         )
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertNotIn("not-printed-test-token", allowed.stdout + allowed.stderr)
+
+    def test_resolves_keychain_source_into_child_environment_without_exposure(self) -> None:
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        security = bin_dir / "security"
+        security.write_text(
+            "#!/bin/sh\n"
+            "test \"$1\" = find-generic-password || exit 2\n"
+            "printf '%s\\n' resolved-keychain-token\n",
+            encoding="utf-8",
+        )
+        security.chmod(0o755)
+        environment = os.environ.copy()
+        environment.pop("CLOUDFLARE_API_TOKEN", None)
+        environment["PATH"] = str(bin_dir) + os.pathsep + environment.get("PATH", "")
+        resolved = subprocess.run(
+            [
+                sys.executable,
+                str(self.runner),
+                "--cwd",
+                str(self.root),
+                "--authorized",
+                "control",
+                "keychain-apply",
+                "--target",
+                "prod",
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        payload = json.loads(resolved.stdout)
+        self.assertTrue(payload["token_present"])
+        self.assertNotIn("resolved-keychain-token", resolved.stdout + resolved.stderr)
+
+    def test_prefers_existing_environment_over_keychain_source(self) -> None:
+        environment = os.environ.copy()
+        environment["CLOUDFLARE_API_TOKEN"] = "existing-environment-token"
+        environment["PATH"] = ""
+        resolved = subprocess.run(
+            [
+                sys.executable,
+                str(self.runner),
+                "--cwd",
+                str(self.root),
+                "--authorized",
+                "control",
+                "keychain-apply",
+                "--target",
+                "prod",
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertNotIn("existing-environment-token", resolved.stdout + resolved.stderr)
 
     def test_rejects_missing_unknown_and_invalid_arguments(self) -> None:
         missing = self.invoke("control", "inspect")

@@ -30,10 +30,18 @@ Cloudflare-only operation as `external_write`, a connector-host operation as
 `composite_write`. Every write requires current-user authorization.
 
 Declare required credential variable names in the operation's `environment`
-mapping. Mark tokens and secrets as sensitive. The runner checks only presence;
-it never resolves, caches, journals, or prints values. Controllers must read
-credentials from the inherited environment or an approved secret store, never
-from argv, repository files, plan files, or generated instructions.
+mapping. Mark tokens and secrets as sensitive. The runner may resolve only the
+ordered environment or macOS Keychain sources declared by the project; it
+never caches, journals, or prints values. Controllers must read credentials
+from the inherited child environment, never from argv, repository files, plan
+files, or generated instructions.
+
+Declare approved environment or macOS Keychain lookups as ordered credential
+sources in the project contract. Before suggesting Dashboard or browser
+control, exhaust those sources and classify each candidate as absent, invalid,
+valid-but-insufficient, or sufficient for the exact Tunnel, DNS, and Access
+operations. Do not infer write capability from a successful Zone or Tunnel
+read, and do not treat a credential's label as proof of validity.
 
 Send a connector token directly to a target-host secret file or secret store
 with restrictive permissions. Redact it from API responses, logs, diffs,

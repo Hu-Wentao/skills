@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -77,10 +78,53 @@ def build_operation_argv(
     return command
 
 
-def validate_environment(operation: dict[str, Any]) -> None:
+def read_credential_source(
+    source: dict[str, str], environment: dict[str, str]
+) -> str | None:
+    if source["kind"] == "environment":
+        return environment.get(source["name"]) or None
+    if source["kind"] == "macos_keychain":
+        executable = shutil.which("security", path=environment.get("PATH"))
+        if executable is None:
+            return None
+        command = [
+            executable,
+            "find-generic-password",
+            "-w",
+            "-s",
+            source["service"],
+        ]
+        if source.get("account"):
+            command.extend(["-a", source["account"]])
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            env=environment,
+        )
+        if completed.returncode != 0:
+            return None
+        value = completed.stdout.decode("utf-8", errors="strict").rstrip("\r\n")
+        return value or None
+    raise TaskError(f"unsupported credential source kind: {source['kind']}")
+
+
+def resolve_environment(operation: dict[str, Any]) -> dict[str, str]:
+    environment = os.environ.copy()
     for name, requirement in operation.get("environment", {}).items():
-        if requirement["required"] and not os.environ.get(name):
-            raise TaskError(f"required operation environment is missing: {name}")
+        if environment.get(name):
+            continue
+        for source in requirement.get("sources", []):
+            value = read_credential_source(source, environment)
+            if value:
+                environment[name] = value
+                break
+        if requirement["required"] and not environment.get(name):
+            raise TaskError(
+                f"required operation environment is missing after configured "
+                f"secret-source resolution: {name}"
+            )
+    return environment
 
 
 def resolve_operation(cwd: Path, task: str, operation: str) -> dict[str, Any]:
@@ -157,11 +201,12 @@ def main() -> int:
             raise TaskError(
                 f"{task} {operation_name} requires --authorized after current user approval"
             )
-        validate_environment(operation)
+        environment = resolve_environment(operation)
         command = build_operation_argv(operation, remaining)
         result = subprocess.run(
             command,
             cwd=resolved["project_root"],
+            env=environment,
             check=False,
         )
         return result.returncode

@@ -129,6 +129,8 @@ changing a project profile.
 2. Build a change matrix: owner, target, current state, desired state,
    executor, validation, rollback, and authorization state.
 3. Inspect all involved products and compute one ordered plan without writes.
+   Resolve contracted credential sources and verify exact API capability before
+   proposing interactive browser or Dashboard authentication.
 4. Present material exposure, deletion, billing, downtime, and recovery
    effects before requesting any missing authority.
 5. Apply only authorized steps, using the relevant product reference:

@@ -248,6 +248,62 @@ tasks:
             {"required": True, "sensitive": True},
         )
 
+    def test_v2_accepts_ordered_environment_and_keychain_sources(self) -> None:
+        config_root = self.write_v2_config(mutability="external_write")
+        contract_path = config_root / "control.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["operations"]["apply"]["environment"]["CLOUDFLARE_API_TOKEN"][
+            "sources"
+        ] = [
+            {"kind": "environment", "name": "CLOUDFLARE_API_TOKEN"},
+            {
+                "kind": "macos_keychain",
+                "service": "cloudflare-api-token",
+                "account": "test-project",
+            },
+        ]
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        result = self.run_resolver(
+            "--task", "control", "--operation", "apply", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        requirement = json.loads(result.stdout)["contract"]["operations"]["apply"][
+            "environment"
+        ]["CLOUDFLARE_API_TOKEN"]
+        self.assertEqual(
+            requirement["sources"],
+            [
+                {"kind": "environment", "name": "CLOUDFLARE_API_TOKEN"},
+                {
+                    "kind": "macos_keychain",
+                    "service": "cloudflare-api-token",
+                    "account": "test-project",
+                },
+            ],
+        )
+
+    def test_v2_rejects_unsupported_or_nonsensitive_credential_source(self) -> None:
+        config_root = self.write_v2_config()
+        contract_path = config_root / "control.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        requirement = contract["operations"]["apply"]["environment"][
+            "CLOUDFLARE_API_TOKEN"
+        ]
+        requirement["sources"] = [{"kind": "shell", "command": "unsafe"}]
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        unsupported = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(unsupported.returncode, 2)
+        self.assertIn("kind is unsupported", unsupported.stderr)
+
+        requirement["sources"] = [
+            {"kind": "environment", "name": "CLOUDFLARE_API_TOKEN"}
+        ]
+        requirement["sensitive"] = False
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        nonsensitive = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(nonsensitive.returncode, 2)
+        self.assertIn("with credential sources must be sensitive", nonsensitive.stderr)
+
     def test_v2_rejects_invalid_environment_name(self) -> None:
         config_root = self.write_v2_config()
         contract_path = config_root / "control.contract.json"

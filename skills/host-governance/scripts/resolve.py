@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 SKILL_NAME = "host-governance"
-RESOLVER_VERSION = "2"
+RESOLVER_VERSION = "3"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -246,17 +246,40 @@ def normalize_parameter(value: Any, field: str) -> dict[str, Any]:
     return normalized
 
 
-def normalize_environment(value: Any, field: str) -> dict[str, dict[str, bool]]:
+def normalize_credential_source(value: Any, field: str) -> dict[str, str]:
+    source = require_mapping(value, field)
+    kind = require_string(source.get("kind"), f"{field}.kind")
+    if kind == "environment":
+        require_exact_keys(source, {"kind", "name"}, field)
+        name = require_string(source.get("name"), f"{field}.name")
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
+            raise ResolveError(f"{field}.name must be an uppercase environment name")
+        return {"kind": kind, "name": name}
+    if kind == "macos_keychain":
+        require_exact_keys(source, {"kind", "service", "account"}, field)
+        service = require_string(source.get("service"), f"{field}.service")
+        normalized = {"kind": kind, "service": service}
+        if "account" in source:
+            normalized["account"] = require_string(
+                source["account"], f"{field}.account"
+            )
+        return normalized
+    raise ResolveError(f"{field}.kind is unsupported: {kind}")
+
+
+def normalize_environment(value: Any, field: str) -> dict[str, dict[str, Any]]:
     environment = require_mapping(value, field)
-    normalized: dict[str, dict[str, bool]] = {}
+    normalized: dict[str, dict[str, Any]] = {}
     for raw_name, raw_requirement in environment.items():
         name = require_string(raw_name, f"{field} key")
         if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
             raise ResolveError(f"{field} key must be an uppercase environment name")
         requirement_field = f"{field}.{name}"
         requirement = require_mapping(raw_requirement, requirement_field)
-        require_exact_keys(requirement, {"required", "sensitive"}, requirement_field)
-        normalized[name] = {
+        require_exact_keys(
+            requirement, {"required", "sensitive", "sources"}, requirement_field
+        )
+        normalized_requirement: dict[str, Any] = {
             "required": require_boolean(
                 requirement.get("required", False), f"{requirement_field}.required"
             ),
@@ -264,6 +287,19 @@ def normalize_environment(value: Any, field: str) -> dict[str, dict[str, bool]]:
                 requirement.get("sensitive", False), f"{requirement_field}.sensitive"
             ),
         }
+        if "sources" in requirement:
+            sources = requirement["sources"]
+            if not isinstance(sources, list) or not sources:
+                raise ResolveError(f"{requirement_field}.sources must be a non-empty list")
+            if not normalized_requirement["sensitive"]:
+                raise ResolveError(
+                    f"{requirement_field} with credential sources must be sensitive"
+                )
+            normalized_requirement["sources"] = [
+                normalize_credential_source(source, f"{requirement_field}.sources[{index}]")
+                for index, source in enumerate(sources)
+            ]
+        normalized[name] = normalized_requirement
     return normalized
 
 

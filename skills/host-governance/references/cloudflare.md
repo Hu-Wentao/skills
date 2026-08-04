@@ -12,6 +12,10 @@ also read [cloudflare-tunnel.md](cloudflare-tunnel.md) from the skill root.
 - Treat Cloudflare API responses and infrastructure state as runtime evidence.
 - Prefer scoped API Tokens over a Global API Key. Separate read-only discovery,
   ordinary resource writes, and registrar/billing permissions.
+- Resolve every project-declared environment and secret-store source before
+  proposing interactive Dashboard or browser authentication. Verify the
+  selected token against Cloudflare and probe the exact required read surfaces;
+  report invalid authentication separately from missing product permission.
 - Never commit token values, R2 backend credentials, Terraform state, request
   bodies containing secrets, or provider environment files.
 
