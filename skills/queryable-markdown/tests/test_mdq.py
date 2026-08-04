@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -30,7 +31,7 @@ mdq:
 {nested_fields}
   tolerance:
     incomplete: true
-{('  ' + index_line) if index_line else ''}---
+{("  " + index_line) if index_line else ""}---
 """
 
 
@@ -376,9 +377,11 @@ mdq:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             legacy = profile().removeprefix("---\nmdq:\n").removesuffix("---\n")
-            legacy = "<!-- mdq\n" + "\n".join(
-                line.removeprefix("  ") for line in legacy.splitlines()
-            ) + "\n-->\n"
+            legacy = (
+                "<!-- mdq\n"
+                + "\n".join(line.removeprefix("  ") for line in legacy.splitlines())
+                + "\n-->\n"
+            )
             path = self.document(root, legacy + "\n## REQ-1: A\n")
             result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
@@ -426,9 +429,7 @@ mdq:
             path = self.document(
                 root, json_frontmatter + "\n\n## REQ-1: JSON frontmatter\n"
             )
-            result = self.run_cli(
-                root, "query", str(path), "--id", "REQ-1", expected=3
-            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
             self.assertIn(
                 "profile_unsupported",
@@ -440,11 +441,9 @@ mdq:
             root = Path(temp)
             path = self.document(
                 root,
-                "+++\ntitle = \"Requirements\"\n[mdq]\nversion = 1\n+++\n\n## REQ-1: TOML frontmatter\n",
+                '+++\ntitle = "Requirements"\n[mdq]\nversion = 1\n+++\n\n## REQ-1: TOML frontmatter\n',
             )
-            result = self.run_cli(
-                root, "query", str(path), "--id", "REQ-1", expected=3
-            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
             self.assertIn(
                 "profile_unsupported",
@@ -746,10 +745,7 @@ No reference here.
             self.assertEqual(result["candidates"][0]["confidence"], 0.4)
             self.assertIn(
                 "body_identity_candidate",
-                {
-                    item["code"]
-                    for item in result["candidates"][0]["diagnostics"]
-                },
+                {item["code"] for item in result["candidates"][0]["diagnostics"]},
             )
 
     def test_profileless_invalid_explicit_pattern_does_not_fall_back(self) -> None:
@@ -800,9 +796,7 @@ No reference here.
                 root,
                 "---\nmdq:\n  records: [broken\n---\n\n## REQ-1: Login\n",
             )
-            result = self.run_cli(
-                root, "query", str(path), "--id", "REQ-1", expected=3
-            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
             self.assertIn(
                 "profile_invalid",
@@ -850,9 +844,7 @@ No reference here.
                 root,
                 '{"title": "Requirements", "mdq": [broken}\n\n## REQ-1: Login\n',
             )
-            result = self.run_cli(
-                root, "query", str(path), "--id", "REQ-1", expected=3
-            )
+            result = self.run_cli(root, "query", str(path), "--id", "REQ-1", expected=3)
             self.assertEqual(result["status"], "invalid")
             self.assertIn(
                 "profile_invalid",
@@ -983,9 +975,7 @@ Partial refunds are supported.
                 "## REQ-3: Third\n\n- Status: accepted",
             )
             content = content.replace("## REQ-2: Second", "## REQ-20: Second")
-            content = content.replace(
-                "\n## REQ-1: First\n\n- Status: planned\n", "", 1
-            )
+            content = content.replace("\n## REQ-1: First\n\n- Status: planned\n", "", 1)
             path.write_text(content, encoding="utf-8")
 
             deleted = self.run_cli(root, "query", str(path), "--id", "REQ-1")
@@ -996,9 +986,7 @@ Partial refunds are supported.
             self.assertEqual(old_key["status"], "not_found")
             self.assertEqual(renamed["status"], "matched")
             self.assertEqual(unaffected["status"], "matched")
-            self.assertEqual(
-                unaffected["records"][0]["fields"]["status"], "accepted"
-            )
+            self.assertEqual(unaffected["records"][0]["fields"]["status"], "accepted")
 
             self.run_cli(root, "validate", str(path))
             self.run_cli(root, "diagnose", str(path))
@@ -1079,9 +1067,7 @@ Partial refunds are supported.
             (docs / "contracted.md").write_text(
                 profile() + "\n## REQ-1: Contracted\n", encoding="utf-8"
             )
-            (docs / "ordinary.md").write_text(
-                "## REQ-2: Ordinary\n", encoding="utf-8"
-            )
+            (docs / "ordinary.md").write_text("## REQ-2: Ordinary\n", encoding="utf-8")
 
             result = self.run_cli(
                 root,
@@ -1275,9 +1261,7 @@ Partial refunds are supported.
                 profile(fields=fields) + "\n## REQ-1: Valid\n\n- Foo: true\n",
                 encoding="utf-8",
             )
-            ordinary.write_text(
-                "## REQ-2: Ordinary\n\n- Foo: true\n", encoding="utf-8"
-            )
+            ordinary.write_text("## REQ-2: Ordinary\n\n- Foo: true\n", encoding="utf-8")
             before = valid.read_bytes()
 
             result = self.run_cli(
@@ -1399,8 +1383,341 @@ Partial refunds are supported.
             )
 
             self.assertEqual(result["status"], "updated")
+            self.assertIn("| Foo | false   | keep |", path.read_text(encoding="utf-8"))
+
+    def test_v2_table_rows_support_exact_named_queries_and_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  version: 2
+  dialect: gfm
+  actors: {read: mixed, write: machine}
+  records:
+    boundary:
+      source: table-row
+      under_heading: Coverage
+      columns: [Requirement, Coverage, Notes]
+    key:
+      source: column
+      column: Requirement
+      pattern: '^(?P<id>REQ-[A-Z]+-[0-9]+)(?:\\s+.*)?$'
+      group: id
+  fields:
+    title:
+      source: column
+      column: Requirement
+      pattern: '^REQ-[A-Z]+-[0-9]+\\s+(?P<title>.*)$'
+      group: title
+    coverage: {source: column, column: Coverage}
+    notes: {source: column, column: Notes}
+  queries:
+    by_id:
+      when: {pattern: '^REQ-[A-Z]+-[0-9]+$'}
+      match: {source: key, operator: eq}
+      select: [title, coverage]
+      expect:
+        max_matches: 1
+        max_record_lines: 1
+        max_record_bytes: 1024
+        structured: true
+  maintenance:
+    query_contract:
+      mode: propose
+      allow: [queries, fields, records]
+      max_changes_per_run: 1
+---
+# Coverage
+
+| Requirement | Coverage | Notes |
+| --- | --- | --- |
+| REQ-GA-001 Teams | partial | mentions REQ-GA-002 |
+| REQ-GA-002 Roles | gap | — |
+""",
+            )
+
+            exact = self.run_cli(root, "query", str(path), "--id", "REQ-GA-001")
+            self.assertEqual(exact["status"], "matched")
+            self.assertEqual(
+                exact["records"][0]["line_start"], exact["records"][0]["line_end"]
+            )
+            self.assertEqual(exact["records"][0]["fields"]["coverage"], "partial")
+            self.assertEqual(exact["records"][0]["fields"]["title"], "Teams")
+
+            named = self.run_cli(
+                root,
+                "run",
+                str(path),
+                "--query",
+                "by_id",
+                "--value",
+                "REQ-GA-001",
+            )
+            self.assertEqual(named["quality"]["status"], "passed")
+            self.assertEqual(set(named["records"][0]["fields"]), {"title", "coverage"})
+            verified = self.run_cli(root, "verify", str(path))
+            self.assertTrue(verified["valid"])
+
+    def test_inspect_and_optimize_refine_a_giant_record_to_table_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+title: Coverage source
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary: {source: heading, levels: [1]}
+    key: {source: marker}
+  fields:
+    raw: {source: body}
+  tolerance: {incomplete: true}
+---
+<!-- mdq:record id="COVERAGE-DOCUMENT" -->
+# Coverage
+
+| Requirement | Coverage |
+| --- | --- |
+| REQ-GA-001 Teams | partial |
+| REQ-GA-002 Roles | gap |
+""",
+            )
+            before = path.read_bytes()
+            inspected = self.run_cli(root, "inspect", str(path))
+            self.assertEqual(
+                inspected["tables"][0]["candidate_keys"][0]["column"], "Requirement"
+            )
             self.assertIn(
-                "| Foo | false   | keep |", path.read_text(encoding="utf-8")
+                "record_granularity_mismatch",
+                {item["code"] for item in inspected["diagnostics"]},
+            )
+            missed = self.run_cli(root, "query", str(path), "--id", "REQ-GA-001")
+            self.assertEqual(missed["count"], 0)
+            self.assertIn(
+                "table_identity_candidate",
+                {item["code"] for item in missed["candidates"][0]["diagnostics"]},
+            )
+
+            preview = self.run_cli(root, "optimize", str(path), "--id", "REQ-GA-001")
+            self.assertEqual(preview["status"], "planned")
+            self.assertEqual(path.read_bytes(), before)
+            applied = self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--id",
+                "REQ-GA-001",
+                "--apply",
+            )
+            self.assertEqual(applied["status"], "updated")
+            self.assertIn("title: Coverage source", path.read_text(encoding="utf-8"))
+            exact = self.run_cli(root, "query", str(path), "--id", "REQ-GA-001")
+            self.assertEqual(exact["count"], 1)
+            self.assertEqual(
+                exact["records"][0]["line_start"], exact["records"][0]["line_end"]
+            )
+            preserved = self.run_cli(
+                root, "query", str(path), "--id", "COVERAGE-DOCUMENT"
+            )
+            self.assertEqual(preserved["count"], 1)
+            self.assertTrue(self.run_cli(root, "verify", str(path))["valid"])
+
+    def test_optimize_respects_locked_query_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            content = """---
+mdq:
+  version: 2
+  dialect: gfm
+  records:
+    boundary: {source: heading, levels: [1]}
+    key: {source: marker}
+  fields: {raw: {source: body}}
+  maintenance:
+    query_contract: {mode: locked}
+  tolerance: {incomplete: true}
+---
+<!-- mdq:record id="DOC-1" -->
+# Coverage
+| Requirement | Coverage |
+| --- | --- |
+| REQ-GA-001 Teams | partial |
+| REQ-GA-002 Roles | gap |
+"""
+            path = self.document(root, content)
+            before = path.read_bytes()
+            result = self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--id",
+                "REQ-GA-001",
+                "--apply",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertEqual(path.read_bytes(), before)
+            self.assertIn(
+                "query_contract_locked",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_optimize_refines_an_overbroad_named_query_to_one_field(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  version: 2
+  records:
+    boundary: {source: heading, levels: [2]}
+    key:
+      source: heading
+      pattern: '^(?P<id>REQ-[0-9]+)$'
+      group: id
+  fields:
+    status: {source: label, labels: [Status]}
+    raw: {source: body}
+  queries:
+    by_status:
+      match: {source: field, field: raw, operator: contains}
+      select: [status]
+      expect: {max_matches: 1, structured: true}
+  maintenance:
+    query_contract: {mode: auto, allow: [queries], max_changes_per_run: 1}
+---
+## REQ-1
+Status: draft
+Note: ready for review
+
+## REQ-2
+Status: active
+Note: mentions the draft process
+""",
+            )
+            broad = self.run_cli(
+                root,
+                "run",
+                str(path),
+                "--query",
+                "by_status",
+                "--value",
+                "draft",
+            )
+            self.assertEqual(broad["count"], 2)
+            self.assertEqual(broad["quality"]["status"], "failed")
+
+            preview = self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--query",
+                "by_status",
+                "--value",
+                "draft",
+            )
+            self.assertEqual(preview["status"], "planned")
+            self.assertEqual(preview["scopes"], ["queries"])
+            self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--query",
+                "by_status",
+                "--value",
+                "draft",
+                "--apply",
+            )
+            precise = self.run_cli(
+                root,
+                "run",
+                str(path),
+                "--query",
+                "by_status",
+                "--value",
+                "draft",
+            )
+            self.assertEqual(precise["count"], 1)
+            self.assertEqual(precise["records"][0]["key"], "REQ-1")
+            self.assertEqual(precise["quality"]["status"], "passed")
+
+    def test_optimize_rebuilds_an_existing_declared_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary: {source: heading, levels: [1]}
+    key: {source: marker}
+  fields: {raw: {source: body}}
+  tolerance: {incomplete: true}
+  index: .mdq/index.json
+---
+<!-- mdq:record id="COVERAGE-DOCUMENT" -->
+# Coverage
+
+| Requirement | Coverage |
+| --- | --- |
+| REQ-GA-001 Teams | partial |
+| REQ-GA-002 Roles | gap |
+""",
+            )
+            self.run_cli(root, "index", str(path))
+            before = json.loads((root / ".mdq/index.json").read_text())
+            self.assertEqual(before["protocol_version"], 1)
+
+            result = self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--id",
+                "REQ-GA-001",
+                "--apply",
+            )
+
+            self.assertTrue(result["index_rebuilt"])
+            rebuilt = json.loads((root / ".mdq/index.json").read_text())
+            self.assertEqual(rebuilt["protocol_version"], 2)
+            self.assertEqual(
+                rebuilt["source_sha256"], hashlib.sha256(path.read_bytes()).hexdigest()
+            )
+            exact = self.run_cli(root, "query", str(path), "--id", "REQ-GA-001")
+            self.assertEqual(exact["count"], 1)
+            self.assertIn(
+                "index_verified", {item["code"] for item in exact["diagnostics"]}
+            )
+
+    def test_auto_maintenance_requires_an_explicit_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  version: 2
+  records:
+    boundary: {source: heading, levels: [2]}
+    key: {source: heading, pattern: '^(?P<id>REQ-[0-9]+)$', group: id}
+  fields: {raw: {source: body}}
+  maintenance:
+    query_contract: {mode: auto}
+---
+## REQ-1
+""",
+            )
+            result = self.run_cli(root, "validate", str(path), expected=3)
+            self.assertIn(
+                "maintenance.query_contract.allow is required in auto mode",
+                {item["message"] for item in result["diagnostics"]},
             )
 
 

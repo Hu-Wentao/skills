@@ -31,7 +31,7 @@ import yaml
 from markdown_it import MarkdownIt
 
 
-ENGINE = "mdq.py/2"
+ENGINE = "mdq.py/3"
 INDEX_SCHEMA = 1
 MAX_PROFILE_BYTES = 64 * 1024
 MAX_PATTERN_LENGTH = 512
@@ -46,10 +46,11 @@ MARKER_RE = re.compile(
 )
 ATX_HEADING_RE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 SETEXT_RE = re.compile(r"^[ \t]{0,3}(=+|-+)[ \t]*$")
-GENERIC_ID_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.]*-[0-9]+)\b")
+GENERIC_ID_PATTERN = r"[A-Za-z][A-Za-z0-9_.]*(?:-[A-Za-z0-9_.]+)*-[0-9]+"
+GENERIC_ID_RE = re.compile(rf"\b({GENERIC_ID_PATTERN})\b")
 TEMPORARY_PROFILE_PREFIX = "temporary-"
 TEMPORARY_GENERIC_KEY_PATTERN = (
-    r"^[ \t]*(?P<id>[A-Za-z][A-Za-z0-9_.]*-[0-9]+)"
+    rf"^[ \t]*(?P<id>{GENERIC_ID_PATTERN})"
     r"(?=$|[ \t:：—–-])"
 )
 YAML_MDQ_DECLARATION_RE = re.compile(r"(?m)^mdq[ \t]*:")
@@ -250,6 +251,11 @@ def normalize_label(value: str) -> str:
     return re.sub(r"\s+", "", value).casefold()
 
 
+def field_name_from_header(value: str, position: int) -> str:
+    name = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").lower()
+    return name or f"column_{position + 1}"
+
+
 def safe_compile(
     pattern: str, where: str, diagnostics: list[dict[str, Any]]
 ) -> profile_regex.Pattern[str] | None:
@@ -370,12 +376,31 @@ class Marker:
 
 
 @dataclass
+class TableRow:
+    start: int
+    end: int
+    values: list[str]
+    cells: dict[str, str]
+
+
+@dataclass
+class MarkdownTable:
+    start: int
+    end: int
+    header_line: int
+    headers: list[str]
+    rows: list[TableRow]
+    under_heading: str | None
+
+
+@dataclass
 class Record:
     key: str | None
     start: int
     end: int
     heading: Heading | None
     marker: Marker | None
+    table_row: TableRow | None
     fields: dict[str, Any]
     confidence: float
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
@@ -461,9 +486,7 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                             line=1,
                         )
                     )
-                    if YAML_MDQ_DECLARATION_RE.search(
-                        "".join(lines[1:closing])
-                    ):
+                    if YAML_MDQ_DECLARATION_RE.search("".join(lines[1:closing])):
                         diagnostics.append(
                             diagnostic(
                                 "profile_invalid",
@@ -512,9 +535,7 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                         line=1,
                     )
                 )
-                if top_level_json_key_present(
-                    stripped[:MAX_PROFILE_BYTES], "mdq"
-                ):
+                if top_level_json_key_present(stripped[:MAX_PROFILE_BYTES], "mdq"):
                     diagnostics.append(
                         diagnostic(
                             "profile_invalid",
@@ -605,6 +626,164 @@ def _string_list(
     return value
 
 
+def _positive_int(value: Any, where: str, diagnostics: list[dict[str, Any]]) -> None:
+    if type(value) is not int or value < 1:
+        diagnostics.append(
+            diagnostic(
+                "profile_invalid", "error", f"{where} must be a positive integer"
+            )
+        )
+
+
+def _validate_queries(
+    queries: Any,
+    fields: dict[str, Any],
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    if not isinstance(queries, dict) or not queries:
+        diagnostics.append(
+            diagnostic(
+                "profile_invalid", "error", "queries must be a non-empty mapping"
+            )
+        )
+        return
+    for name, spec in queries.items():
+        where = f"mdq.queries.{name}"
+        if not isinstance(name, str) or not name or not isinstance(spec, dict):
+            diagnostics.append(
+                diagnostic(
+                    "profile_invalid", "error", f"{where} must be a named mapping"
+                )
+            )
+            continue
+        _unknown_keys(spec, {"when", "match", "select", "expect"}, where, diagnostics)
+        when = spec.get("when")
+        if when is not None:
+            if not isinstance(when, dict):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid", "error", f"{where}.when must be a mapping"
+                    )
+                )
+            else:
+                _unknown_keys(when, {"pattern"}, f"{where}.when", diagnostics)
+                if "pattern" not in when:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            f"{where}.when.pattern is required",
+                        )
+                    )
+                else:
+                    safe_compile(when["pattern"], f"{where}.when.pattern", diagnostics)
+        match = spec.get("match")
+        if not isinstance(match, dict):
+            diagnostics.append(
+                diagnostic(
+                    "profile_invalid", "error", f"{where}.match must be a mapping"
+                )
+            )
+        else:
+            _unknown_keys(
+                match, {"source", "field", "operator"}, f"{where}.match", diagnostics
+            )
+            source = match.get("source")
+            operator = match.get("operator", "eq")
+            if source not in {"key", "field"}:
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"{where}.match.source must be key or field",
+                    )
+                )
+            if operator not in {"eq", "contains"}:
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"{where}.match.operator must be eq or contains",
+                    )
+                )
+            if source == "field":
+                field_name = match.get("field")
+                if not isinstance(field_name, str) or field_name not in fields:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            f"{where}.match.field must name a declared field",
+                        )
+                    )
+            elif "field" in match:
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"{where}.match.field is only valid for field queries",
+                    )
+                )
+        if "select" in spec:
+            selected = _string_list(spec["select"], f"{where}.select", diagnostics)
+            if selected:
+                unknown = [item for item in selected if item not in fields]
+                if unknown:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            f"{where}.select references undeclared fields",
+                            details={"fields": unknown},
+                        )
+                    )
+        expect = spec.get("expect", {})
+        if not isinstance(expect, dict):
+            diagnostics.append(
+                diagnostic(
+                    "profile_invalid", "error", f"{where}.expect must be a mapping"
+                )
+            )
+        else:
+            allowed = {
+                "max_matches",
+                "max_record_lines",
+                "max_record_bytes",
+                "max_total_bytes",
+                "structured",
+                "min_confidence",
+            }
+            _unknown_keys(expect, allowed, f"{where}.expect", diagnostics)
+            for key in allowed & {
+                "max_matches",
+                "max_record_lines",
+                "max_record_bytes",
+                "max_total_bytes",
+            }:
+                if key in expect:
+                    _positive_int(expect[key], f"{where}.expect.{key}", diagnostics)
+            if "structured" in expect and not isinstance(expect["structured"], bool):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"{where}.expect.structured must be boolean",
+                    )
+                )
+            if "min_confidence" in expect and (
+                not isinstance(expect["min_confidence"], (int, float))
+                or isinstance(expect["min_confidence"], bool)
+                or not 0 <= float(expect["min_confidence"]) <= 1
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"{where}.expect.min_confidence must be between 0 and 1",
+                    )
+                )
+
+
 def validate_profile(
     profile: dict[str, Any], diagnostics: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -634,16 +813,17 @@ def validate_profile(
             )
         )
         return None
-    _unknown_keys(
-        profile,
-        {"version", "dialect", "records", "fields", "tolerance", "index"},
-        "mdq",
-        diagnostics,
-    )
-    if type(profile.get("version")) is not int or profile.get("version") != 1:
+    version = profile.get("version")
+    allowed_top = {"version", "dialect", "records", "fields", "tolerance", "index"}
+    if version == 2:
+        allowed_top |= {"actors", "queries", "maintenance"}
+    _unknown_keys(profile, allowed_top, "mdq", diagnostics)
+    if type(version) is not int or version not in {1, 2}:
         diagnostics.append(
             diagnostic(
-                "profile_unsupported", "error", "only mdq version 1 is supported"
+                "profile_unsupported",
+                "error",
+                "only mdq versions 1 and 2 are supported",
             )
         )
 
@@ -654,6 +834,7 @@ def validate_profile(
         )
 
     key_pattern_compiled: profile_regex.Pattern[str] | None = None
+    boundary_source: str | None = None
     records = profile.get("records")
     if not isinstance(records, dict):
         diagnostics.append(
@@ -669,44 +850,93 @@ def validate_profile(
                 )
             )
         else:
-            _unknown_keys(
-                boundary,
-                {"source", "levels", "level_tolerance", "pattern"},
-                "mdq.records.boundary",
-                diagnostics,
-            )
-            if boundary.setdefault("source", "heading") != "heading":
+            boundary_source = boundary.setdefault("source", "heading")
+            boundary_keys = {"source", "levels", "level_tolerance", "pattern"}
+            if version == 2:
+                boundary_keys |= {"under_heading", "columns"}
+            _unknown_keys(boundary, boundary_keys, "mdq.records.boundary", diagnostics)
+            if version == 1 and boundary_source != "heading":
                 diagnostics.append(
                     diagnostic(
                         "profile_invalid", "error", "v1 boundary source must be heading"
                     )
                 )
-            levels = boundary.get("levels")
-            if (
-                not isinstance(levels, list)
-                or not levels
-                or not all(type(x) is int and 1 <= x <= 6 for x in levels)
-            ):
+            if version == 2 and boundary_source not in {"heading", "table-row"}:
                 diagnostics.append(
                     diagnostic(
                         "profile_invalid",
                         "error",
-                        "records.boundary.levels must contain heading levels 1..6",
+                        "v2 boundary source must be heading or table-row",
                     )
                 )
-            tolerance = boundary.setdefault("level_tolerance", 0)
-            if type(tolerance) is not int or not 0 <= tolerance <= 5:
-                diagnostics.append(
-                    diagnostic(
-                        "profile_invalid",
-                        "error",
-                        "records.boundary.level_tolerance must be 0..5",
+            if boundary_source == "heading":
+                levels = boundary.get("levels")
+                if (
+                    not isinstance(levels, list)
+                    or not levels
+                    or not all(type(x) is int and 1 <= x <= 6 for x in levels)
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "records.boundary.levels must contain heading levels 1..6",
+                        )
                     )
+                tolerance = boundary.setdefault("level_tolerance", 0)
+                if type(tolerance) is not int or not 0 <= tolerance <= 5:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "records.boundary.level_tolerance must be 0..5",
+                        )
+                    )
+                if "pattern" in boundary:
+                    safe_compile(
+                        boundary["pattern"], "records.boundary.pattern", diagnostics
+                    )
+            elif boundary_source == "table-row":
+                if dialect != "gfm":
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "table-row boundaries require dialect: gfm",
+                        )
+                    )
+                columns = _string_list(
+                    boundary.get("columns"), "records.boundary.columns", diagnostics
                 )
-            if "pattern" in boundary:
-                safe_compile(
-                    boundary["pattern"], "records.boundary.pattern", diagnostics
-                )
+                if columns and len(set(columns)) != len(columns):
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "records.boundary.columns must be unique",
+                        )
+                    )
+                under_heading = boundary.get("under_heading")
+                if under_heading is not None and (
+                    not isinstance(under_heading, str) or not under_heading.strip()
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "records.boundary.under_heading must be non-empty text",
+                        )
+                    )
+                for incompatible in {"levels", "level_tolerance", "pattern"} & set(
+                    boundary
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            f"records.boundary.{incompatible} is unavailable for table-row",
+                        )
+                    )
 
         key = records.get("key")
         if not isinstance(key, dict):
@@ -716,13 +946,16 @@ def validate_profile(
         else:
             _unknown_keys(
                 key,
-                {"source", "pattern", "group", "labels"},
+                {"source", "pattern", "group", "labels", "column"},
                 "mdq.records.key",
                 diagnostics,
             )
             source = key.get("source", "heading")
             key["source"] = source
-            if source not in {"heading", "label", "marker"}:
+            supported_key_sources = {"heading", "label", "marker"}
+            if version == 2:
+                supported_key_sources.add("column")
+            if source not in supported_key_sources:
                 diagnostics.append(
                     diagnostic(
                         "profile_invalid", "error", "records.key.source is unsupported"
@@ -734,6 +967,37 @@ def validate_profile(
                 )
             if source == "label":
                 _string_list(key.get("labels"), "records.key.labels", diagnostics)
+            if source == "column" and (
+                not isinstance(key.get("column"), str) or not key["column"].strip()
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        "records.key.column must be non-empty text",
+                    )
+                )
+            if source == "column" and boundary_source != "table-row":
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        "column keys require a table-row boundary",
+                    )
+                )
+            if (
+                source == "column"
+                and isinstance(records.get("boundary"), dict)
+                and isinstance(records["boundary"].get("columns"), list)
+                and key.get("column") not in records["boundary"]["columns"]
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        "records.key.column must be declared in boundary.columns",
+                    )
+                )
             if "group" in key and (
                 not isinstance(key["group"], (str, int))
                 or isinstance(key["group"], bool)
@@ -780,12 +1044,15 @@ def validate_profile(
                 continue
             _unknown_keys(
                 spec,
-                {"source", "pattern", "group", "labels", "headings"},
+                {"source", "pattern", "group", "labels", "headings", "column"},
                 f"mdq.fields.{name}",
                 diagnostics,
             )
             source = spec.get("source")
-            if source not in {"heading", "label", "section", "body", "regex"}:
+            supported_field_sources = {"heading", "label", "section", "body", "regex"}
+            if version == 2:
+                supported_field_sources.add("column")
+            if source not in supported_field_sources:
                 diagnostics.append(
                     diagnostic(
                         "profile_invalid",
@@ -811,6 +1078,38 @@ def validate_profile(
             if source == "section":
                 _string_list(
                     spec.get("headings"), f"fields.{name}.headings", diagnostics
+                )
+            if source == "column" and (
+                not isinstance(spec.get("column"), str) or not spec["column"].strip()
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"fields.{name}.column must be non-empty text",
+                    )
+                )
+            if source == "column" and boundary_source != "table-row":
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"field {name} column source requires a table-row boundary",
+                    )
+                )
+            if (
+                source == "column"
+                and isinstance(records, dict)
+                and isinstance(records.get("boundary"), dict)
+                and isinstance(records["boundary"].get("columns"), list)
+                and spec.get("column") not in records["boundary"]["columns"]
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        f"fields.{name}.column must be declared in boundary.columns",
+                    )
                 )
             if "group" in spec and (
                 not isinstance(spec["group"], (str, int))
@@ -842,6 +1141,102 @@ def validate_profile(
                         effective_pattern,
                         spec["group"],
                         f"fields.{name}.group",
+                        diagnostics,
+                    )
+
+    if version == 2 and "actors" in profile:
+        actors = profile["actors"]
+        if not isinstance(actors, dict):
+            diagnostics.append(
+                diagnostic("profile_invalid", "error", "actors must be a mapping")
+            )
+        else:
+            _unknown_keys(actors, {"read", "write"}, "mdq.actors", diagnostics)
+            for action in ("read", "write"):
+                if action in actors and actors[action] not in {
+                    "human",
+                    "machine",
+                    "mixed",
+                }:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            f"actors.{action} must be human, machine, or mixed",
+                        )
+                    )
+
+    if version == 2 and "queries" in profile:
+        _validate_queries(
+            profile["queries"], fields if isinstance(fields, dict) else {}, diagnostics
+        )
+
+    if version == 2 and "maintenance" in profile:
+        maintenance = profile["maintenance"]
+        if not isinstance(maintenance, dict):
+            diagnostics.append(
+                diagnostic("profile_invalid", "error", "maintenance must be a mapping")
+            )
+        else:
+            _unknown_keys(
+                maintenance, {"query_contract"}, "mdq.maintenance", diagnostics
+            )
+            policy = maintenance.get("query_contract")
+            if not isinstance(policy, dict):
+                diagnostics.append(
+                    diagnostic(
+                        "profile_invalid",
+                        "error",
+                        "maintenance.query_contract must be a mapping",
+                    )
+                )
+            else:
+                _unknown_keys(
+                    policy,
+                    {"mode", "allow", "max_changes_per_run"},
+                    "mdq.maintenance.query_contract",
+                    diagnostics,
+                )
+                mode = policy.get("mode", "propose")
+                if mode not in {"locked", "propose", "auto"}:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "maintenance.query_contract.mode must be locked, propose, or auto",
+                        )
+                    )
+                if mode == "auto" and "allow" not in policy:
+                    diagnostics.append(
+                        diagnostic(
+                            "profile_invalid",
+                            "error",
+                            "maintenance.query_contract.allow is required in auto mode",
+                        )
+                    )
+                if "allow" in policy:
+                    allowed = _string_list(
+                        policy["allow"], "maintenance.query_contract.allow", diagnostics
+                    )
+                    if allowed:
+                        invalid = [
+                            item
+                            for item in allowed
+                            if item not in {"queries", "fields", "records"}
+                        ]
+                        if invalid:
+                            diagnostics.append(
+                                diagnostic(
+                                    "profile_invalid",
+                                    "error",
+                                    "maintenance.query_contract.allow has unsupported scopes",
+                                    details={"scopes": invalid},
+                                )
+                            )
+                if "max_changes_per_run" in policy:
+                    _positive_int(
+                        policy["max_changes_per_run"],
+                        "maintenance.query_contract.max_changes_per_run",
                         diagnostics,
                     )
 
@@ -1251,6 +1646,216 @@ def analyze_markdown(
     return headings, code_lines, markers, diagnostics
 
 
+def analyze_tables(
+    document: SourceDocument,
+    headings: list[Heading],
+) -> tuple[list[MarkdownTable], list[dict[str, Any]]]:
+    diagnostics: list[dict[str, Any]] = []
+    tables: list[MarkdownTable] = []
+    try:
+        tokens = (
+            MarkdownIt("commonmark", {"html": False})
+            .enable("table")
+            .parse(document.masked_text)
+        )
+    except Exception as exc:
+        return [], [
+            diagnostic(
+                "parser_failed", "warning", f"Markdown table parsing failed: {exc}"
+            )
+        ]
+
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.type != "table_open" or not token.map:
+            index += 1
+            continue
+        table_start, table_end = token.map
+        cursor = index + 1
+        headers: list[str] = []
+        raw_rows: list[tuple[int, int, list[str]]] = []
+        while cursor < len(tokens) and tokens[cursor].type != "table_close":
+            row_token = tokens[cursor]
+            if row_token.type != "tr_open" or not row_token.map:
+                cursor += 1
+                continue
+            row_start, row_end = row_token.map
+            cells: list[str] = []
+            header_row = False
+            cursor += 1
+            while cursor < len(tokens) and tokens[cursor].type != "tr_close":
+                current = tokens[cursor]
+                if current.type == "th_open":
+                    header_row = True
+                if current.type == "inline":
+                    cells.append(current.content.strip())
+                cursor += 1
+            if header_row:
+                headers = cells
+            else:
+                raw_rows.append((row_start, row_end, cells))
+            cursor += 1
+
+        if not headers:
+            diagnostics.append(
+                diagnostic(
+                    "table_header_missing",
+                    "warning",
+                    "a GFM table has no recoverable header",
+                    line=table_start + 1,
+                )
+            )
+            index = cursor + 1
+            continue
+        if len(set(headers)) != len(headers):
+            diagnostics.append(
+                diagnostic(
+                    "table_header_duplicate",
+                    "warning",
+                    "a GFM table has duplicate column names",
+                    line=table_start + 1,
+                    details={"columns": headers},
+                )
+            )
+        rows: list[TableRow] = []
+        for row_start, row_end, values in raw_rows:
+            if row_end - row_start != 1:
+                diagnostics.append(
+                    diagnostic(
+                        "table_row_multiline",
+                        "warning",
+                        "a table row spans multiple physical lines and is not a stable record",
+                        line=row_start + 1,
+                    )
+                )
+                continue
+            if len(values) != len(headers):
+                diagnostics.append(
+                    diagnostic(
+                        "table_row_width_mismatch",
+                        "warning",
+                        "a table row does not match the declared header width",
+                        line=row_start + 1,
+                        details={"expected": len(headers), "actual": len(values)},
+                    )
+                )
+                continue
+            rows.append(
+                TableRow(
+                    start=row_start,
+                    end=row_end,
+                    values=values,
+                    cells=dict(zip(headers, values, strict=True)),
+                )
+            )
+        preceding = [heading for heading in headings if heading.start < table_start]
+        tables.append(
+            MarkdownTable(
+                start=table_start,
+                end=table_end,
+                header_line=table_start,
+                headers=headers,
+                rows=rows,
+                under_heading=preceding[-1].text if preceding else None,
+            )
+        )
+        index = cursor + 1
+    return tables, diagnostics
+
+
+def table_key_candidates(table: MarkdownTable) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for position, header in enumerate(table.headers):
+        ids: list[str] = []
+        for row in table.rows:
+            value = row.values[position].strip()
+            match = re.match(rf"^(?P<id>{GENERIC_ID_PATTERN})(?:\s+.*)?$", value)
+            if match is not None:
+                ids.append(match.group("id"))
+        if len(ids) >= 2 and len(ids) == len(table.rows) and len(set(ids)) == len(ids):
+            candidates.append(
+                {
+                    "column": header,
+                    "pattern": rf"^(?P<id>{GENERIC_ID_PATTERN})(?:\s+.*)?$",
+                    "group": "id",
+                    "count": len(ids),
+                    "unique": True,
+                    "samples": ids[:3],
+                }
+            )
+    return candidates
+
+
+def table_profile(
+    table: MarkdownTable, key_candidate: dict[str, Any]
+) -> dict[str, Any]:
+    key_column = key_candidate["column"]
+    fields: dict[str, Any] = {}
+    used: set[str] = set()
+    for position, header in enumerate(table.headers):
+        if header == key_column:
+            name = "title"
+            spec: dict[str, Any] = {
+                "source": "column",
+                "column": header,
+                "pattern": rf"^(?:{GENERIC_ID_PATTERN})(?:\s+(?P<title>.*))?$",
+                "group": "title",
+            }
+        else:
+            name = field_name_from_header(header, position)
+            base = name
+            suffix = 2
+            while name in used or name == "title":
+                name = f"{base}_{suffix}"
+                suffix += 1
+            spec = {"source": "column", "column": header}
+        used.add(name)
+        fields[name] = spec
+    selected = list(fields)[: min(6, len(fields))]
+    boundary: dict[str, Any] = {
+        "source": "table-row",
+        "columns": table.headers,
+    }
+    if table.under_heading:
+        boundary["under_heading"] = table.under_heading
+    return {
+        "version": 2,
+        "dialect": "gfm",
+        "records": {
+            "boundary": boundary,
+            "key": {
+                "source": "column",
+                "column": key_column,
+                "pattern": key_candidate["pattern"],
+                "group": key_candidate["group"],
+            },
+        },
+        "fields": fields,
+        "queries": {
+            "by_id": {
+                "when": {"pattern": rf"^{GENERIC_ID_PATTERN}$"},
+                "match": {"source": "key", "operator": "eq"},
+                "select": selected,
+                "expect": {
+                    "max_matches": 1,
+                    "max_record_lines": 1,
+                    "max_record_bytes": 16384,
+                    "structured": True,
+                },
+            }
+        },
+        "maintenance": {
+            "query_contract": {
+                "mode": "propose",
+                "allow": ["queries", "fields", "records"],
+                "max_changes_per_run": 1,
+            }
+        },
+        "tolerance": {"incomplete": True},
+    }
+
+
 def regex_value(pattern: str | None, text: str, group: str | int | None) -> str | None:
     if pattern is None:
         return text.strip()
@@ -1382,6 +1987,8 @@ class BoundaryCandidate:
     marker: Marker | None
     confidence: float
     diagnostics: list[dict[str, Any]]
+    table_row: TableRow | None = None
+    fixed_end: int | None = None
 
 
 def collect_boundaries(
@@ -1390,60 +1997,89 @@ def collect_boundaries(
     headings: list[Heading],
     code_lines: set[int],
     markers: list[Marker],
+    tables: list[MarkdownTable],
 ) -> list[BoundaryCandidate]:
     boundary_spec = profile["records"]["boundary"]
     key_spec = profile["records"]["key"]
     candidates: list[BoundaryCandidate] = []
     used_markers: set[int] = set()
 
-    for heading in headings:
-        marker = nearest_marker(markers, heading)
-        accepted, confidence = heading_is_boundary(
-            heading, boundary_spec, marker is not None
-        )
-        if not accepted:
-            continue
-        if heading.level not in boundary_spec["levels"] and marker is None:
-            # Heading drift needs identity evidence, not level proximity alone.
-            evidence: str | None = None
-            if key_spec.get("source") == "heading":
-                evidence = key_from_heading(heading, key_spec)
-            elif key_spec.get("source") == "label":
-                provisional_end = len(document.lines)
-                for later in headings:
-                    if later.start > heading.start and later.level <= heading.level:
-                        provisional_end = later.start
-                        break
-                values = label_occurrences(
-                    document,
-                    heading.end,
-                    provisional_end,
-                    key_spec["labels"],
-                    code_lines,
+    if boundary_spec.get("source") == "table-row":
+        declared_columns = boundary_spec["columns"]
+        wanted_heading = boundary_spec.get("under_heading")
+        matching_tables = [
+            table
+            for table in tables
+            if table.headers == declared_columns
+            and (wanted_heading is None or table.under_heading == wanted_heading)
+            and len(set(table.headers)) == len(table.headers)
+        ]
+        if len(matching_tables) > 1:
+            return []
+        if matching_tables:
+            for row in matching_tables[0].rows:
+                candidates.append(
+                    BoundaryCandidate(
+                        start=row.start,
+                        heading=None,
+                        marker=None,
+                        confidence=1.0,
+                        diagnostics=[],
+                        table_row=row,
+                        fixed_end=row.end - 1,
+                    )
                 )
-                values = apply_value_pattern(values, key_spec)
-                distinct = {
-                    str(item["value"]).strip() for item in values if item.get("value")
-                }
-                evidence = next(iter(distinct)) if len(distinct) == 1 else None
-            if evidence is None:
-                continue
-        item_diagnostics: list[dict[str, Any]] = []
-        if heading.level not in boundary_spec["levels"]:
-            item_diagnostics.append(
-                diagnostic(
-                    "heading_level_drift",
-                    "warning",
-                    f"record heading level {heading.level} differs from declared levels",
-                    line=heading.start + 1,
-                )
+    else:
+        for heading in headings:
+            marker = nearest_marker(markers, heading)
+            accepted, confidence = heading_is_boundary(
+                heading, boundary_spec, marker is not None
             )
-        start = marker.line if marker is not None else heading.start
-        if marker is not None:
-            used_markers.add(marker.line)
-        candidates.append(
-            BoundaryCandidate(start, heading, marker, confidence, item_diagnostics)
-        )
+            if not accepted:
+                continue
+            if heading.level not in boundary_spec["levels"] and marker is None:
+                # Heading drift needs identity evidence, not level proximity alone.
+                evidence: str | None = None
+                if key_spec.get("source") == "heading":
+                    evidence = key_from_heading(heading, key_spec)
+                elif key_spec.get("source") == "label":
+                    provisional_end = len(document.lines)
+                    for later in headings:
+                        if later.start > heading.start and later.level <= heading.level:
+                            provisional_end = later.start
+                            break
+                    values = label_occurrences(
+                        document,
+                        heading.end,
+                        provisional_end,
+                        key_spec["labels"],
+                        code_lines,
+                    )
+                    values = apply_value_pattern(values, key_spec)
+                    distinct = {
+                        str(item["value"]).strip()
+                        for item in values
+                        if item.get("value")
+                    }
+                    evidence = next(iter(distinct)) if len(distinct) == 1 else None
+                if evidence is None:
+                    continue
+            item_diagnostics: list[dict[str, Any]] = []
+            if heading.level not in boundary_spec["levels"]:
+                item_diagnostics.append(
+                    diagnostic(
+                        "heading_level_drift",
+                        "warning",
+                        f"record heading level {heading.level} differs from declared levels",
+                        line=heading.start + 1,
+                    )
+                )
+            start = marker.line if marker is not None else heading.start
+            if marker is not None:
+                used_markers.add(marker.line)
+            candidates.append(
+                BoundaryCandidate(start, heading, marker, confidence, item_diagnostics)
+            )
 
     for marker in markers:
         if marker.line in used_markers:
@@ -1583,6 +2219,14 @@ def extract_fields(
             values = regex_field_values(
                 document, body_start, record.end + 1, spec, code_lines
             )
+        elif source == "column" and record.table_row is not None:
+            value = record.table_row.cells.get(spec["column"])
+            if value is not None:
+                extracted = regex_value(spec.get("pattern"), value, spec.get("group"))
+                if extracted is not None:
+                    values.append(
+                        {"value": extracted, "line": record.table_row.start + 1}
+                    )
         record.fields[name] = resolve_scalar(name, values, record.diagnostics)
 
 
@@ -1593,6 +2237,7 @@ def declared_key(
     end: int,
     heading: Heading | None,
     marker: Marker | None,
+    table_row: TableRow | None,
     code_lines: set[int],
 ) -> tuple[str | None, dict[str, Any] | None]:
     spec = profile["records"]["key"]
@@ -1609,6 +2254,23 @@ def declared_key(
         return value, (
             {"source": "marker", "value": value, "line": marker.line + 1}
             if value
+            else None
+        )
+    if source == "column":
+        raw = table_row.cells.get(spec["column"]) if table_row is not None else None
+        value = (
+            regex_value(spec.get("pattern"), raw, spec.get("group"))
+            if raw is not None
+            else None
+        )
+        return value, (
+            {
+                "source": "column",
+                "column": spec["column"],
+                "value": value,
+                "line": table_row.start + 1,
+            }
+            if value is not None and table_row is not None
             else None
         )
     occurrences = label_occurrences(
@@ -1637,9 +2299,12 @@ def build_records(
     headings: list[Heading],
     code_lines: set[int],
     markers: list[Marker],
+    tables: list[MarkdownTable],
 ) -> tuple[list[Record], list[dict[str, Any]]]:
     diagnostics: list[dict[str, Any]] = []
-    boundaries = collect_boundaries(document, profile, headings, code_lines, markers)
+    boundaries = collect_boundaries(
+        document, profile, headings, code_lines, markers, tables
+    )
     records: list[Record] = []
     allow_incomplete = profile.get("tolerance", {}).get("incomplete", False)
 
@@ -1653,11 +2318,13 @@ def build_records(
         )
 
     for position, boundary in enumerate(boundaries):
-        end = (
-            boundaries[position + 1].start - 1
-            if position + 1 < len(boundaries)
-            else len(document.lines) - 1
-        )
+        end = boundary.fixed_end
+        if end is None:
+            end = (
+                boundaries[position + 1].start - 1
+                if position + 1 < len(boundaries)
+                else len(document.lines) - 1
+            )
         item_diagnostics = list(boundary.diagnostics)
         value, evidence = declared_key(
             document,
@@ -1666,6 +2333,7 @@ def build_records(
             end,
             boundary.heading,
             boundary.marker,
+            boundary.table_row,
             code_lines,
         )
         identity_evidence: list[dict[str, Any]] = []
@@ -1739,7 +2407,12 @@ def build_records(
                     line=boundary.start + 1,
                 )
             )
-        if not allow_incomplete and value is not None and boundary.heading is None:
+        if (
+            not allow_incomplete
+            and value is not None
+            and boundary.heading is None
+            and boundary.table_row is None
+        ):
             item_diagnostics.append(
                 diagnostic(
                     "incomplete_record",
@@ -1756,6 +2429,7 @@ def build_records(
             end=max(boundary.start, end),
             heading=boundary.heading,
             marker=boundary.marker,
+            table_row=boundary.table_row,
             fields={},
             confidence=confidence,
             diagnostics=item_diagnostics,
@@ -1817,13 +2491,14 @@ def extract_current(
     headings, code_lines, markers, parse_diagnostics = analyze_markdown(
         document, document.profile.get("dialect", "commonmark")
     )
+    tables, table_diagnostics = analyze_tables(document, headings)
     records, record_diagnostics = build_records(
-        document, document.profile, headings, code_lines, markers
+        document, document.profile, headings, code_lines, markers, tables
     )
     serialized = [serialize_record(document, record) for record in records]
     return serialized, list(
         document.diagnostics
-    ) + parse_diagnostics + record_diagnostics
+    ) + parse_diagnostics + table_diagnostics + record_diagnostics
 
 
 def index_path(document: SourceDocument) -> tuple[Path | None, dict[str, Any] | None]:
@@ -1929,13 +2604,9 @@ def records_for_query(
         return [], list(document.diagnostics)
     if (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX):
         records, diagnostics = extract_current(document)
-        confidence_cap = (
-            0.9 if document.profile_source.endswith("explicit") else 0.8
-        )
+        confidence_cap = 0.9 if document.profile_source.endswith("explicit") else 0.8
         for item in records:
-            item["confidence"] = min(
-                confidence_cap, float(item.get("confidence", 0.0))
-            )
+            item["confidence"] = min(confidence_cap, float(item.get("confidence", 0.0)))
         return records, diagnostics
     cached, index_diagnostics = load_valid_index(document)
     records, diagnostics = extract_current(document)
@@ -1993,9 +2664,7 @@ def visible_label_items(
         if stripped.startswith("|") and stripped.count("|") >= 2:
             cells = [cell.strip() for cell in stripped.strip("|").split("|")]
             if len(cells) >= 2 and cells[0]:
-                items.append(
-                    {"label": cells[0], "value": cells[1], "line": index}
-                )
+                items.append({"label": cells[0], "value": cells[1], "line": index})
             continue
         match = re.match(
             r"^(?P<label>(?:\*\*|__|`)?[^:：|]+?(?:\*\*|__|`)?)"
@@ -2177,9 +2846,7 @@ def prepare_temporary_profile(
                     level
                     for item in labels
                     if normalize_label(item["label"]) in wanted
-                    and (
-                        level := nearest_heading_level(headings, item["line"])
-                    )
+                    and (level := nearest_heading_level(headings, item["line"]))
                     is not None
                 }
             )
@@ -2228,7 +2895,9 @@ def prepare_temporary_profile(
     )
     document.diagnostics.append(
         diagnostic(
-            "temporary_selectors_applied" if explicit else "temporary_selectors_inferred",
+            "temporary_selectors_applied"
+            if explicit
+            else "temporary_selectors_inferred",
             "info",
             "an in-memory query profile was applied and was not written to the Markdown file",
             details={
@@ -2266,9 +2935,7 @@ def visible_record_text(
         elif (
             cursor + 1 < end
             and document.masked_lines[cursor].strip()
-            and SETEXT_RE.match(
-                document.masked_lines[cursor + 1].rstrip("\r\n")
-            )
+            and SETEXT_RE.match(document.masked_lines[cursor + 1].rstrip("\r\n"))
         ):
             start = cursor + 2
     return "".join(
@@ -2303,7 +2970,9 @@ def line_local_record(
         "line_start": line + 1,
         "line_end": line + 1,
         "byte_start": document.byte_offsets[line],
-        "byte_end": document.byte_offsets[min(line + 1, len(document.byte_offsets) - 1)],
+        "byte_end": document.byte_offsets[
+            min(line + 1, len(document.byte_offsets) - 1)
+        ],
         "confidence": confidence,
         "diagnostics": item_diagnostics,
         "identity_evidence": [
@@ -2444,6 +3113,7 @@ def command_inspect(args: argparse.Namespace) -> int:
     headings, code_lines, markers, parse_diagnostics = analyze_markdown(
         document, dialect
     )
+    tables, table_diagnostics = analyze_tables(document, headings)
     level_counts = Counter(str(item.level) for item in headings)
     label_counts: Counter[str] = Counter()
     for index, line in enumerate(document.masked_lines):
@@ -2468,8 +3138,27 @@ def command_inspect(args: argparse.Namespace) -> int:
                 }
             )
 
+    table_summaries: list[dict[str, Any]] = []
+    suggested_table: tuple[MarkdownTable, dict[str, Any]] | None = None
+    for table in tables:
+        key_candidates = table_key_candidates(table)
+        table_summaries.append(
+            {
+                "line_start": table.start + 1,
+                "line_end": table.end,
+                "under_heading": table.under_heading,
+                "columns": table.headers,
+                "row_count": len(table.rows),
+                "candidate_keys": key_candidates,
+            }
+        )
+        if suggested_table is None and len(key_candidates) == 1:
+            suggested_table = (table, key_candidates[0])
+
     suggestion: dict[str, Any] | None = None
-    if id_headings:
+    if suggested_table is not None:
+        suggestion = table_profile(*suggested_table)
+    elif id_headings:
         preferred_level = Counter(entry["level"] for entry in id_headings).most_common(
             1
         )[0][0]
@@ -2491,7 +3180,34 @@ def command_inspect(args: argparse.Namespace) -> int:
             "fields": {"title": {"source": "heading", "group": "title"}},
             "tolerance": {"incomplete": True},
         }
-    diagnostics = list(document.diagnostics) + parse_diagnostics
+    diagnostics = list(document.diagnostics) + parse_diagnostics + table_diagnostics
+    if document.profile is not None and tables:
+        records, existing_diagnostics = records_for_query(document)
+        structured_count = len(
+            [
+                item
+                for item in records
+                if item.get("key") is not None and item.get("confidence", 0) >= 0.6
+            ]
+        )
+        table_identity_count = sum(
+            candidate["count"]
+            for summary in table_summaries
+            for candidate in summary["candidate_keys"]
+        )
+        if table_identity_count >= max(2, structured_count * 2):
+            diagnostics.append(
+                diagnostic(
+                    "record_granularity_mismatch",
+                    "warning",
+                    "the current contract exposes far fewer records than stable table-row identities",
+                    details={
+                        "structured_records": structured_count,
+                        "table_row_identities": table_identity_count,
+                    },
+                )
+            )
+        diagnostics.extend(existing_diagnostics)
     emit(
         {
             "status": "invalid" if error_diagnostics(diagnostics) else "inspected",
@@ -2506,6 +3222,7 @@ def command_inspect(args: argparse.Namespace) -> int:
                 {"label": key, "count": value}
                 for key, value in label_counts.most_common(30)
             ],
+            "tables": table_summaries,
             "markers": [{"key": item.key, "line": item.line + 1} for item in markers],
             "suggested_profile": suggestion,
             "diagnostics": diagnostics,
@@ -2583,9 +3300,7 @@ def command_query(args: argparse.Namespace) -> int:
         structured = [item for item in local if item.get("key") is not None]
         candidates = [item for item in local if item.get("key") is None]
         diagnostics = (
-            list(document.diagnostics)
-            + preparation_diagnostics
-            + parse_diagnostics
+            list(document.diagnostics) + preparation_diagnostics + parse_diagnostics
         )
         if len(structured) > 1:
             diagnostics.append(
@@ -2625,9 +3340,7 @@ def command_query(args: argparse.Namespace) -> int:
             }
         )
         return 3
-    temporary = (document.profile_source or "").startswith(
-        TEMPORARY_PROFILE_PREFIX
-    )
+    temporary = (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX)
     structured = [
         item
         for item in records
@@ -2661,9 +3374,7 @@ def command_query(args: argparse.Namespace) -> int:
         ):
             candidate = dict(item)
             candidate["candidate"] = True
-            candidate["confidence"] = min(
-                0.4, float(candidate.get("confidence", 0.0))
-            )
+            candidate["confidence"] = min(0.4, float(candidate.get("confidence", 0.0)))
             candidate["identity_evidence"] = list(
                 candidate.get("identity_evidence", [])
             )
@@ -2679,6 +3390,58 @@ def command_query(args: argparse.Namespace) -> int:
                 )
             )
             candidates.append(candidate)
+    if not structured and not temporary:
+        headings, _code_lines, _markers, table_parse_diagnostics = analyze_markdown(
+            document, "gfm"
+        )
+        tables, table_diagnostics = analyze_tables(document, headings)
+        diagnostics.extend(table_parse_diagnostics + table_diagnostics)
+        for table in tables:
+            for key_candidate in table_key_candidates(table):
+                column = key_candidate["column"]
+                for row in table.rows:
+                    value = regex_value(
+                        key_candidate["pattern"],
+                        row.cells[column],
+                        key_candidate["group"],
+                    )
+                    if value == requested:
+                        candidates.append(
+                            {
+                                "key": None,
+                                "fields": {column: row.cells[column]},
+                                "line_start": row.start + 1,
+                                "line_end": row.end,
+                                "byte_start": document.byte_offsets[row.start],
+                                "byte_end": document.byte_offsets[row.end],
+                                "confidence": 0.5,
+                                "candidate": True,
+                                "identity_evidence": [
+                                    {
+                                        "source": "table-column",
+                                        "column": column,
+                                        "value": requested,
+                                        "line": row.start + 1,
+                                    }
+                                ],
+                                "diagnostics": [
+                                    diagnostic(
+                                        "table_identity_candidate",
+                                        "warning",
+                                        "the requested ID is a unique table-row candidate but the contract does not declare table rows",
+                                        line=row.start + 1,
+                                    )
+                                ],
+                            }
+                        )
+        if candidates:
+            diagnostics.append(
+                diagnostic(
+                    "record_granularity_mismatch",
+                    "warning",
+                    "the requested identity is nested inside a table covered by a broader record boundary",
+                )
+            )
     if len(structured) > 1:
         diagnostics.append(
             diagnostic(
@@ -2714,11 +3477,745 @@ def searchable_values(record: dict[str, Any], field_name: str | None) -> list[st
     return [str(value) for value in values if value is not None]
 
 
+def query_matches(
+    records: list[dict[str, Any]], spec: dict[str, Any], value: str
+) -> list[dict[str, Any]]:
+    match = spec["match"]
+    field_name = "key" if match["source"] == "key" else match["field"]
+    operator = match.get("operator", "eq")
+    selected: list[dict[str, Any]] = []
+    for record in records:
+        values = searchable_values(record, field_name)
+        if operator == "eq":
+            matched = any(item == value for item in values)
+        else:
+            matched = any(value.casefold() in item.casefold() for item in values)
+        if matched:
+            selected.append(record)
+    return selected
+
+
+def project_query_record(
+    record: dict[str, Any], selected: list[str] | None
+) -> dict[str, Any]:
+    projected = dict(record)
+    if selected is not None:
+        fields = record.get("fields") or {}
+        projected["fields"] = {name: fields.get(name) for name in selected}
+    return projected
+
+
+def query_quality(
+    records: list[dict[str, Any]], expect: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    line_sizes = [
+        max(0, int(item.get("line_end", 0)) - int(item.get("line_start", 0)) + 1)
+        for item in records
+    ]
+    byte_sizes = [
+        max(0, int(item.get("byte_end", 0)) - int(item.get("byte_start", 0)))
+        for item in records
+    ]
+    confidences = [float(item.get("confidence", 0)) for item in records]
+    structured = all(
+        item.get("key") is not None and float(item.get("confidence", 0)) >= 0.6
+        for item in records
+    )
+    metrics = {
+        "matches": len(records),
+        "max_record_lines": max(line_sizes, default=0),
+        "max_record_bytes": max(byte_sizes, default=0),
+        "total_bytes": sum(byte_sizes),
+        "min_confidence": min(confidences, default=1.0),
+        "structured": structured,
+    }
+    violations: list[dict[str, Any]] = []
+    comparisons = {
+        "max_matches": (metrics["matches"], "query_cardinality_exceeded"),
+        "max_record_lines": (metrics["max_record_lines"], "query_record_span_exceeded"),
+        "max_record_bytes": (
+            metrics["max_record_bytes"],
+            "query_record_payload_exceeded",
+        ),
+        "max_total_bytes": (metrics["total_bytes"], "query_total_payload_exceeded"),
+    }
+    for key, (actual, code) in comparisons.items():
+        if key in expect and actual > expect[key]:
+            violations.append(
+                diagnostic(
+                    code,
+                    "warning",
+                    f"query quality limit {key} was exceeded",
+                    details={"expected": expect[key], "actual": actual},
+                )
+            )
+    if expect.get("structured") is True and records and not structured:
+        violations.append(
+            diagnostic(
+                "query_unstructured_result",
+                "warning",
+                "query returned candidate-only evidence",
+            )
+        )
+    if (
+        "min_confidence" in expect
+        and confidences
+        and metrics["min_confidence"] < float(expect["min_confidence"])
+    ):
+        violations.append(
+            diagnostic(
+                "query_confidence_below_minimum",
+                "warning",
+                "query result confidence is below the declared minimum",
+                details={
+                    "expected": expect["min_confidence"],
+                    "actual": metrics["min_confidence"],
+                },
+            )
+        )
+    return {
+        "status": "failed" if violations else "passed",
+        "metrics": metrics,
+    }, violations
+
+
+def command_run(args: argparse.Namespace) -> int:
+    document = read_document(Path(args.document))
+    if document.profile is None or document.profile.get("version") != 2:
+        emit(
+            {
+                "schema": "mdq.query.v2",
+                "status": "invalid",
+                "count": 0,
+                "records": [],
+                "diagnostics": list(document.diagnostics)
+                + [
+                    diagnostic(
+                        "query_contract_missing",
+                        "error",
+                        "named queries require an mdq v2 contract",
+                    )
+                ],
+            }
+        )
+        return 3
+    queries = document.profile.get("queries") or {}
+    spec = queries.get(args.query)
+    if spec is None:
+        emit(
+            {
+                "schema": "mdq.query.v2",
+                "status": "invalid",
+                "count": 0,
+                "records": [],
+                "diagnostics": [
+                    diagnostic(
+                        "unknown_query",
+                        "error",
+                        f"query {args.query!r} is not declared",
+                    )
+                ],
+            }
+        )
+        return 3
+    when = spec.get("when")
+    if when and regex_value(when["pattern"], args.value, None) is None:
+        emit(
+            {
+                "schema": "mdq.query.v2",
+                "status": "invalid",
+                "count": 0,
+                "records": [],
+                "diagnostics": [
+                    diagnostic(
+                        "query_input_mismatch",
+                        "error",
+                        "query value does not satisfy the declared input pattern",
+                    )
+                ],
+            }
+        )
+        return 3
+    records, diagnostics = records_for_query(document)
+    if error_diagnostics(diagnostics):
+        emit(
+            {
+                "schema": "mdq.query.v2",
+                "status": "invalid",
+                "count": 0,
+                "records": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    matched = query_matches(records, spec, args.value)
+    quality, violations = query_quality(matched, spec.get("expect", {}))
+    diagnostics.extend(violations)
+    selected = spec.get("select")
+    emit(
+        {
+            "schema": "mdq.query.v2",
+            "status": "matched" if matched else "not_found",
+            "query": args.query,
+            "value": args.value,
+            "count": len(matched),
+            "records": [project_query_record(item, selected) for item in matched],
+            "quality": quality,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 0
+
+
+def command_verify_queries(args: argparse.Namespace) -> int:
+    document = read_document(Path(args.document))
+    if document.profile is None or document.profile.get("version") != 2:
+        diagnostics = list(document.diagnostics) + [
+            diagnostic(
+                "query_contract_missing",
+                "error",
+                "query verification requires an mdq v2 contract",
+            )
+        ]
+        emit(
+            {
+                "schema": "mdq.verify.v2",
+                "status": "invalid",
+                "valid": False,
+                "checks": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    queries = document.profile.get("queries") or {}
+    if not queries:
+        diagnostics = list(document.diagnostics) + [
+            diagnostic(
+                "query_contract_missing",
+                "error",
+                "the document declares no reusable query intents",
+            )
+        ]
+        emit(
+            {
+                "schema": "mdq.verify.v2",
+                "status": "invalid",
+                "valid": False,
+                "checks": [],
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    records, diagnostics = records_for_query(document)
+    checks: list[dict[str, Any]] = []
+    for name, spec in queries.items():
+        field_name = (
+            "key" if spec["match"]["source"] == "key" else spec["match"]["field"]
+        )
+        buckets: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            for value in searchable_values(record, field_name):
+                when = spec.get("when")
+                if when and regex_value(when["pattern"], value, None) is None:
+                    continue
+                buckets.setdefault(value, []).append(record)
+        worst_value, worst_records = max(
+            buckets.items(),
+            key=lambda item: (
+                len(item[1]),
+                max(
+                    (
+                        int(record.get("byte_end", 0))
+                        - int(record.get("byte_start", 0))
+                        for record in item[1]
+                    ),
+                    default=0,
+                ),
+            ),
+            default=(None, []),
+        )
+        quality, violations = query_quality(worst_records, spec.get("expect", {}))
+        if spec["match"].get("operator", "eq") == "contains":
+            quality["static_analysis"] = (
+                "exact-value lower bound; substring inputs are runtime-verified"
+            )
+        checks.append(
+            {
+                "query": name,
+                "distinct_values": len(buckets),
+                "worst_value": worst_value,
+                "quality": quality,
+                "diagnostics": violations,
+            }
+        )
+        diagnostics.extend(violations)
+    valid = not error_diagnostics(diagnostics) and all(
+        item["quality"]["status"] == "passed" for item in checks
+    )
+    emit(
+        {
+            "schema": "mdq.verify.v2",
+            "status": "verified" if valid else "failed",
+            "valid": valid,
+            "checks": checks,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 0 if valid else 3
+
+
+def replace_mdq_profile(raw: bytes, profile: dict[str, Any]) -> bytes:
+    text = raw.decode("utf-8")
+    newline = "\r\n" if "\r\n" in text[:4096] else "\n"
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].lstrip("\ufeff").strip() != "---":
+        raise ValueError("adaptive profile repair requires YAML frontmatter")
+    closing = next(
+        (
+            index
+            for index in range(1, len(lines))
+            if lines[index].strip() in {"---", "..."}
+        ),
+        None,
+    )
+    if closing is None:
+        raise ValueError("adaptive profile repair requires complete YAML frontmatter")
+    mdq_start = next(
+        (
+            index
+            for index in range(1, closing)
+            if re.match(r"^mdq[ \t]*:", lines[index])
+        ),
+        None,
+    )
+    if mdq_start is None:
+        raise ValueError(
+            "adaptive profile repair requires an existing top-level mdq block"
+        )
+    mdq_end = closing
+    for index in range(mdq_start + 1, closing):
+        line = lines[index]
+        if line.strip() and not line.startswith((" ", "\t", "#")):
+            mdq_end = index
+            break
+    dumped = yaml.safe_dump(
+        profile,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+        width=1000,
+    ).rstrip("\n")
+    block = (
+        "mdq:"
+        + newline
+        + newline.join(f"  {line}" for line in dumped.splitlines())
+        + newline
+    )
+    return ("".join(lines[:mdq_start]) + block + "".join(lines[mdq_end:])).encode(
+        "utf-8"
+    )
+
+
+def table_repair_candidate(
+    document: SourceDocument, requested: str, query_name: str
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    headings, _code_lines, _markers, parse_diagnostics = analyze_markdown(
+        document, "gfm"
+    )
+    tables, table_diagnostics = analyze_tables(document, headings)
+    matches: list[tuple[MarkdownTable, dict[str, Any]]] = []
+    for table in tables:
+        for candidate in table_key_candidates(table):
+            if any(
+                regex_value(
+                    candidate["pattern"],
+                    row.cells[candidate["column"]],
+                    candidate["group"],
+                )
+                == requested
+                for row in table.rows
+            ):
+                matches.append((table, candidate))
+    diagnostics = parse_diagnostics + table_diagnostics
+    if len(matches) != 1:
+        if len(matches) > 1:
+            diagnostics.append(
+                diagnostic(
+                    "query_contract_repair_ambiguous",
+                    "warning",
+                    "multiple table schemas could define the requested identity",
+                )
+            )
+        return None, diagnostics
+    candidate_profile = table_profile(*matches[0])
+    candidate_profile["queries"][query_name] = candidate_profile["queries"].pop("by_id")
+    if document.profile:
+        for key in ("actors", "maintenance", "index"):
+            if key in document.profile:
+                candidate_profile[key] = json.loads(json.dumps(document.profile[key]))
+    return candidate_profile, diagnostics
+
+
+def query_refinement_candidate(
+    profile: dict[str, Any],
+    records: list[dict[str, Any]],
+    query_name: str,
+    value: str,
+) -> dict[str, Any] | None:
+    original = profile["queries"][query_name]
+    original_matches = query_matches(records, original, value)
+    original_quality, _ = query_quality(original_matches, original.get("expect", {}))
+    if original_quality["status"] == "passed":
+        return None
+    alternatives: list[tuple[int, str]] = []
+    operator = original["match"].get("operator", "eq")
+    for field_name in profile.get("fields", {}):
+        alternative = json.loads(json.dumps(original))
+        alternative["match"] = {
+            "source": "field",
+            "field": field_name,
+            "operator": operator,
+        }
+        matched = query_matches(records, alternative, value)
+        quality, _ = query_quality(matched, alternative.get("expect", {}))
+        if (
+            matched
+            and quality["status"] == "passed"
+            and len(matched) < len(original_matches)
+        ):
+            alternatives.append((len(matched), field_name))
+    if not alternatives:
+        return None
+    best_count = min(item[0] for item in alternatives)
+    best = [field_name for count, field_name in alternatives if count == best_count]
+    if len(best) != 1:
+        return None
+    candidate = json.loads(json.dumps(profile))
+    candidate["queries"][query_name]["match"] = {
+        "source": "field",
+        "field": best[0],
+        "operator": operator,
+    }
+    return candidate
+
+
+def command_optimize(args: argparse.Namespace) -> int:
+    document = read_document(Path(args.document))
+    if document.profile is None:
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": list(document.diagnostics)
+                + [
+                    diagnostic(
+                        "persistent_contract_required",
+                        "error",
+                        "optimization requires an existing mdq contract",
+                    )
+                ],
+            }
+        )
+        return 3
+    query_name = args.query or "by_id"
+    requested = args.value if args.query else args.id
+    if args.query and requested is None:
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": [
+                    diagnostic(
+                        "query_input_missing",
+                        "error",
+                        "--value is required with --query",
+                    )
+                ],
+            }
+        )
+        return 3
+    assert requested is not None
+    records, diagnostics = records_for_query(document)
+    candidate: dict[str, Any] | None = None
+    scopes: set[str] = set()
+    if (
+        args.query
+        and document.profile.get("version") == 2
+        and query_name in (document.profile.get("queries") or {})
+    ):
+        candidate = query_refinement_candidate(
+            document.profile, records, query_name, requested
+        )
+        if candidate is not None:
+            scopes = {"queries"}
+    if candidate is None:
+        candidate, repair_diagnostics = table_repair_candidate(
+            document, requested, query_name
+        )
+        diagnostics.extend(repair_diagnostics)
+        if candidate is not None:
+            scopes = {"records", "fields", "queries"}
+    if candidate is None:
+        diagnostics.append(
+            diagnostic(
+                "query_contract_repair_unavailable",
+                "info",
+                "no unique deterministic contract refinement satisfied the failed query",
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "unchanged",
+                "applied": False,
+                "query": query_name,
+                "value": requested,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 0
+
+    candidate_diagnostics: list[dict[str, Any]] = []
+    validated = validate_profile(candidate, candidate_diagnostics)
+    if validated is None:
+        diagnostics.extend(candidate_diagnostics)
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    candidate_raw = replace_mdq_profile(document.raw, validated)
+    candidate_document = parse_document(document.path, candidate_raw)
+    candidate_records, verification_diagnostics = records_for_query(candidate_document)
+    diagnostics.extend(candidate_diagnostics + verification_diagnostics)
+    candidate_spec = candidate_document.profile["queries"][query_name]
+    candidate_matches = query_matches(candidate_records, candidate_spec, requested)
+    quality, quality_diagnostics = query_quality(
+        candidate_matches, candidate_spec.get("expect", {})
+    )
+    diagnostics.extend(quality_diagnostics)
+    old_keys = {
+        str(item["key"])
+        for item in records
+        if item.get("key") is not None and float(item.get("confidence", 0)) >= 0.6
+    }
+    new_keys = {
+        str(item["key"])
+        for item in candidate_records
+        if item.get("key") is not None and float(item.get("confidence", 0)) >= 0.6
+    }
+    missing_keys = sorted(old_keys - new_keys)
+    duplicate_keys = [
+        item for item in diagnostics if item.get("code") == "duplicate_key"
+    ]
+    if (
+        quality["status"] != "passed"
+        or len(candidate_matches) != 1
+        or missing_keys
+        or duplicate_keys
+    ):
+        if missing_keys:
+            diagnostics.append(
+                diagnostic(
+                    "query_contract_key_loss",
+                    "error",
+                    "candidate repair would remove existing record identities",
+                    details={"keys": missing_keys},
+                )
+            )
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "quality": quality,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    policy = (document.profile.get("maintenance") or {}).get("query_contract") or {}
+    if args.apply and policy.get("mode") == "locked":
+        diagnostics.append(
+            diagnostic(
+                "query_contract_locked",
+                "error",
+                "the document locks automatic query-contract changes",
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    allowed = set(policy.get("allow") or scopes)
+    if args.apply and not scopes <= allowed:
+        diagnostics.append(
+            diagnostic(
+                "query_contract_scope_denied",
+                "error",
+                "the repair requires maintenance scopes that are not allowed",
+                details={"required": sorted(scopes), "allowed": sorted(allowed)},
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    candidate_index_path, candidate_index_bytes, index_diagnostics = index_bytes(
+        candidate_document
+    )
+    diagnostics.extend(index_diagnostics)
+    if candidate_index_path is not None and candidate_index_bytes is None:
+        diagnostics.append(
+            diagnostic(
+                "index_rebuild_failed",
+                "error",
+                "the declared index could not be prepared from the repaired contract",
+            )
+        )
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": diagnostics,
+            }
+        )
+        return 3
+    if args.apply:
+        if document.path.read_bytes() != document.raw:
+            diagnostics.append(
+                diagnostic(
+                    "source_changed",
+                    "error",
+                    "source changed after optimization preflight",
+                )
+            )
+            emit(
+                {
+                    "schema": "mdq.optimize.v2",
+                    "status": "invalid",
+                    "applied": False,
+                    "diagnostics": diagnostics,
+                }
+            )
+            return 4
+        original_index_exists = bool(
+            candidate_index_path is not None and candidate_index_path.exists()
+        )
+        original_index_bytes = (
+            candidate_index_path.read_bytes()
+            if candidate_index_path is not None and original_index_exists
+            else None
+        )
+        try:
+            atomic_write_bytes(document.path, candidate_raw)
+            if candidate_index_path is not None and candidate_index_bytes is not None:
+                atomic_write_bytes(candidate_index_path, candidate_index_bytes)
+            written_document = read_document(document.path)
+            written_records, written_diagnostics = records_for_query(written_document)
+            written_spec = written_document.profile["queries"][query_name]
+            written_matches = query_matches(written_records, written_spec, requested)
+            written_quality, written_quality_diagnostics = query_quality(
+                written_matches, written_spec.get("expect", {})
+            )
+            diagnostics.extend(written_diagnostics + written_quality_diagnostics)
+            if (
+                error_diagnostics(written_diagnostics)
+                or len(written_matches) != 1
+                or written_quality["status"] != "passed"
+            ):
+                raise RuntimeError("post-write query verification failed")
+        except Exception as exc:
+            rollback_errors: list[str] = []
+            try:
+                atomic_write_bytes(document.path, document.raw)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"source: {rollback_exc}")
+            if candidate_index_path is not None:
+                try:
+                    if original_index_exists and original_index_bytes is not None:
+                        atomic_write_bytes(candidate_index_path, original_index_bytes)
+                    elif candidate_index_path.exists():
+                        candidate_index_path.unlink()
+                except Exception as rollback_exc:
+                    rollback_errors.append(f"index: {rollback_exc}")
+            diagnostics.append(
+                diagnostic(
+                    "query_contract_write_failed",
+                    "error",
+                    "the repaired contract or its declared index could not be written",
+                    details={"error": str(exc)},
+                )
+            )
+            if rollback_errors:
+                diagnostics.append(
+                    diagnostic(
+                        "query_contract_rollback_failed",
+                        "error",
+                        "one or more files could not be restored after the write failure",
+                        details={"errors": rollback_errors},
+                    )
+                )
+            emit(
+                {
+                    "schema": "mdq.optimize.v2",
+                    "status": "invalid",
+                    "applied": False,
+                    "diagnostics": diagnostics,
+                }
+            )
+            return 4
+        diagnostics.append(
+            diagnostic(
+                "query_contract_repaired",
+                "info",
+                "the mdq control block was updated after in-memory verification",
+            )
+        )
+    else:
+        diagnostics.append(
+            diagnostic(
+                "query_contract_repair_planned",
+                "info",
+                "a deterministic mdq control-block repair is available",
+            )
+        )
+    emit(
+        {
+            "schema": "mdq.optimize.v2",
+            "status": "updated" if args.apply else "planned",
+            "applied": bool(args.apply),
+            "query": query_name,
+            "value": requested,
+            "scopes": sorted(scopes),
+            "index_rebuilt": bool(args.apply and candidate_index_path is not None),
+            "quality": quality,
+            "candidate_profile": validated,
+            "diagnostics": diagnostics,
+        }
+    )
+    return 0
+
+
 def command_search(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
-    preparation_diagnostics = prepare_temporary_profile(
-        document, args, requested=None
-    )
+    preparation_diagnostics = prepare_temporary_profile(document, args, requested=None)
     if document.profile is None:
         if error_diagnostics(document.diagnostics):
             emit(
@@ -2732,13 +4229,17 @@ def command_search(args: argparse.Namespace) -> int:
             )
             return 3
         if args.field not in {None, "body", "context"}:
-            diagnostics = list(document.diagnostics) + preparation_diagnostics + [
-                diagnostic(
-                    "unknown_field",
-                    "error",
-                    f"field {args.field!r} is unavailable without a record boundary",
-                )
-            ]
+            diagnostics = (
+                list(document.diagnostics)
+                + preparation_diagnostics
+                + [
+                    diagnostic(
+                        "unknown_field",
+                        "error",
+                        f"field {args.field!r} is unavailable without a record boundary",
+                    )
+                ]
+            )
             emit(
                 {
                     "status": "invalid",
@@ -2753,9 +4254,7 @@ def command_search(args: argparse.Namespace) -> int:
             document, args.text, args.limit
         )
         diagnostics = (
-            list(document.diagnostics)
-            + preparation_diagnostics
-            + parse_diagnostics
+            list(document.diagnostics) + preparation_diagnostics + parse_diagnostics
         )
         if not local:
             diagnostics.append(
@@ -2773,9 +4272,7 @@ def command_search(args: argparse.Namespace) -> int:
             }
         )
         return 0
-    temporary = (document.profile_source or "").startswith(
-        TEMPORARY_PROFILE_PREFIX
-    )
+    temporary = (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX)
     if (
         args.field
         and args.field != "key"
@@ -2832,11 +4329,7 @@ def command_search(args: argparse.Namespace) -> int:
                 candidates.append(candidate)
         if len(matched) + len(candidates) >= args.limit:
             break
-    if (
-        temporary
-        and args.field is None
-        and len(matched) + len(candidates) < args.limit
-    ):
+    if temporary and args.field is None and len(matched) + len(candidates) < args.limit:
         local, _local_diagnostics = line_local_search_records(
             document, args.text, args.limit - len(matched) - len(candidates)
         )
@@ -2848,8 +4341,7 @@ def command_search(args: argparse.Namespace) -> int:
             item
             for item in local
             if not any(
-                start <= int(item.get("line_start", 0)) <= end
-                for start, end in covered
+                start <= int(item.get("line_start", 0)) <= end for start, end in covered
             )
         )
     if not matched and not candidates:
@@ -2979,11 +4471,7 @@ def collection_paths(
     ordered = sorted(
         (
             path,
-            (
-                path.relative_to(root).as_posix()
-                if path != root
-                else path.name
-            ),
+            (path.relative_to(root).as_posix() if path != root else path.name),
         )
         for path in candidates
     )
@@ -3044,7 +4532,11 @@ def command_scan(args: argparse.Namespace) -> int:
         try:
             document = read_document(path)
         except (OSError, UnicodeDecodeError) as exc:
-            code = "encoding_invalid" if isinstance(exc, UnicodeDecodeError) else "io_error"
+            code = (
+                "encoding_invalid"
+                if isinstance(exc, UnicodeDecodeError)
+                else "io_error"
+            )
             item = diagnostic(code, "error", str(exc))
             diagnostics.append(collection_diagnostic(item, path, relative_path))
             document_summaries.append(
@@ -3076,7 +4568,9 @@ def command_scan(args: argparse.Namespace) -> int:
             preparation_diagnostics = prepare_temporary_profile(
                 document,
                 args,
-                requested=next(iter(requested_ids)) if len(requested_ids) == 1 else None,
+                requested=next(iter(requested_ids))
+                if len(requested_ids) == 1
+                else None,
             )
             document_diagnostics = list(document.diagnostics)
 
@@ -3106,14 +4600,10 @@ def command_scan(args: argparse.Namespace) -> int:
                     )
                 ]
             all_document_diagnostics = (
-                document_diagnostics
-                + preparation_diagnostics
-                + extracted_diagnostics
+                document_diagnostics + preparation_diagnostics + extracted_diagnostics
             )
         else:
-            all_document_diagnostics = (
-                document_diagnostics + preparation_diagnostics
-            )
+            all_document_diagnostics = document_diagnostics + preparation_diagnostics
         document_invalid = error_diagnostics(all_document_diagnostics)
         if document_invalid:
             invalid_documents += 1
@@ -3157,11 +4647,7 @@ def command_scan(args: argparse.Namespace) -> int:
                 truncated = True
 
         document_status = (
-            "invalid"
-            if document_invalid
-            else "matched"
-            if structured
-            else "not_found"
+            "invalid" if document_invalid else "matched" if structured else "not_found"
         )
         document_summaries.append(
             {
@@ -3209,7 +4695,9 @@ def command_scan(args: argparse.Namespace) -> int:
     return 3 if invalid_documents else 0
 
 
-def parse_where_conditions(values: list[str]) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
+def parse_where_conditions(
+    values: list[str],
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
     conditions: list[tuple[str, str]] = []
     diagnostics: list[dict[str, Any]] = []
     for raw in values:
@@ -3276,8 +4764,12 @@ def label_field_value_span(
                 value_begin = bars[1] + 1
                 value_finish = bars[2]
                 value_text = masked[value_begin:value_finish]
-                local_start = value_begin + len(value_text) - len(value_text.lstrip(" \t"))
-                local_end = value_finish - (len(value_text) - len(value_text.rstrip(" \t")))
+                local_start = (
+                    value_begin + len(value_text) - len(value_text.lstrip(" \t"))
+                )
+                local_end = value_finish - (
+                    len(value_text) - len(value_text.rstrip(" \t"))
+                )
     else:
         match = re.match(
             r"^[ \t]*(?:(?:>[ \t]*)+)?(?:[-*+][ \t]+)?"
@@ -3306,19 +4798,21 @@ def extract_record_objects(
     headings, code_lines, markers, parse_diagnostics = analyze_markdown(
         document, document.profile.get("dialect", "commonmark")
     )
+    tables, table_diagnostics = analyze_tables(document, headings)
     records, record_diagnostics = build_records(
-        document, document.profile, headings, code_lines, markers
+        document, document.profile, headings, code_lines, markers, tables
     )
     return (
         records,
         code_lines,
-        list(document.diagnostics) + parse_diagnostics + record_diagnostics,
+        list(document.diagnostics)
+        + parse_diagnostics
+        + table_diagnostics
+        + record_diagnostics,
     )
 
 
-def apply_text_patches(
-    text: str, patches: list[tuple[int, int, str]]
-) -> str:
+def apply_text_patches(text: str, patches: list[tuple[int, int, str]]) -> str:
     result = text
     previous_start = len(text) + 1
     for start, end, replacement in sorted(patches, reverse=True):
@@ -3437,7 +4931,11 @@ def command_set(args: argparse.Namespace) -> int:
         try:
             document = read_document(path)
         except (OSError, UnicodeDecodeError) as exc:
-            code = "encoding_invalid" if isinstance(exc, UnicodeDecodeError) else "io_error"
+            code = (
+                "encoding_invalid"
+                if isinstance(exc, UnicodeDecodeError)
+                else "io_error"
+            )
             document_diagnostics.append(diagnostic(code, "error", str(exc)))
             document_summaries.append(
                 {
@@ -3455,9 +4953,9 @@ def command_set(args: argparse.Namespace) -> int:
             )
             continue
 
-        if document.profile is None or (
-            document.profile_source or ""
-        ).startswith(TEMPORARY_PROFILE_PREFIX):
+        if document.profile is None or (document.profile_source or "").startswith(
+            TEMPORARY_PROFILE_PREFIX
+        ):
             document_diagnostics.extend(document.diagnostics)
             document_diagnostics.append(
                 diagnostic(
@@ -3470,7 +4968,9 @@ def command_set(args: argparse.Namespace) -> int:
             records: list[Record] = []
             code_lines: set[int] = set()
         else:
-            records, code_lines, extracted_diagnostics = extract_record_objects(document)
+            records, code_lines, extracted_diagnostics = extract_record_objects(
+                document
+            )
             document_diagnostics.extend(extracted_diagnostics)
 
         profile_fields = (
@@ -3508,9 +5008,7 @@ def command_set(args: argparse.Namespace) -> int:
                 )
 
         structured = [
-            item
-            for item in records
-            if item.key is not None and item.confidence >= 0.6
+            item for item in records if item.key is not None and item.confidence >= 0.6
         ]
         duplicate_keys = {
             key
@@ -3536,8 +5034,7 @@ def command_set(args: argparse.Namespace) -> int:
                 if requested_ids:
                     found_ids.add(record.key)
                 if not all(
-                    record.fields.get(name) == expected
-                    for name, expected in conditions
+                    record.fields.get(name) == expected for name, expected in conditions
                 ):
                     continue
                 selected.append(record)
@@ -3612,9 +5109,7 @@ def command_set(args: argparse.Namespace) -> int:
                                 f"updated field {args.field!r} did not round-trip for record {item['key']!r}",
                             )
                         )
-                index_target, content, index_diagnostics = index_bytes(
-                    patched_document
-                )
+                index_target, content, index_diagnostics = index_bytes(patched_document)
                 document_diagnostics.extend(index_diagnostics)
                 if index_target is not None and content is not None:
                     if index_target in planned_indexes:
@@ -3791,9 +5286,7 @@ def command_set(args: argparse.Namespace) -> int:
                 )
             if current.profile is not None and "index" in current.profile:
                 _indexed_records, index_diagnostics = records_for_query(current)
-                if "index_verified" not in {
-                    item["code"] for item in index_diagnostics
-                }:
+                if "index_verified" not in {item["code"] for item in index_diagnostics}:
                     raise RuntimeError(
                         f"rebuilt index failed verification: {source_path}"
                     )
@@ -3964,6 +5457,37 @@ def build_parser() -> argparse.ArgumentParser:
     add_temporary_selector_options(query_parser)
     query_parser.set_defaults(handler=command_query)
 
+    run_parser = subparsers.add_parser(
+        "run", help="run a reusable mdq v2 named query with quality checks"
+    )
+    run_parser.add_argument("document")
+    run_parser.add_argument("--query", required=True, help="declared query name")
+    run_parser.add_argument("--value", required=True, help="query input value")
+    run_parser.set_defaults(handler=command_run)
+
+    verify_parser = subparsers.add_parser(
+        "verify", help="verify mdq v2 query intents against current record selectivity"
+    )
+    verify_parser.add_argument("document")
+    verify_parser.set_defaults(handler=command_verify_queries)
+
+    optimize_parser = subparsers.add_parser(
+        "optimize", help="preview or apply one deterministic mdq query-contract repair"
+    )
+    optimize_parser.add_argument("document")
+    optimize_selector = optimize_parser.add_mutually_exclusive_group(required=True)
+    optimize_selector.add_argument(
+        "--id", help="exact identity whose current lookup is unsatisfactory"
+    )
+    optimize_selector.add_argument("--query", help="declared named query to refine")
+    optimize_parser.add_argument("--value", help="named-query input value")
+    optimize_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="write the verified mdq control-block patch; default is read-only preview",
+    )
+    optimize_parser.set_defaults(handler=command_optimize)
+
     search_parser = subparsers.add_parser(
         "search", help="perform a case-insensitive literal substring search"
     )
@@ -3985,7 +5509,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory-relative Markdown glob (repeatable; default: **/*.md)",
     )
     selectors = scan_parser.add_mutually_exclusive_group()
-    selectors.add_argument("--id", action="append", help="exact record key (repeatable)")
+    selectors.add_argument(
+        "--id", action="append", help="exact record key (repeatable)"
+    )
     selectors.add_argument("--text", help="case-insensitive literal substring")
     scan_parser.add_argument(
         "--field",
@@ -4010,7 +5536,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="directory-relative Markdown glob (repeatable; default: **/*.md)",
     )
-    set_parser.add_argument("--id", action="append", help="exact record key (repeatable)")
+    set_parser.add_argument(
+        "--id", action="append", help="exact record key (repeatable)"
+    )
     set_parser.add_argument(
         "--where",
         action="append",

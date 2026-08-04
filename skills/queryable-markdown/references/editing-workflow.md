@@ -12,8 +12,9 @@ Use this workflow only for a document with a valid persistent `mdq` contract, or
 6. Rename a record identity
 7. Delete a record
 8. Change the contract
-9. Batch-set an existing label field
-10. Verify and hand off
+9. Optimize a query contract
+10. Batch-set an existing label field
+11. Verify and hand off
 
 ## 1. Transaction Invariants
 
@@ -58,12 +59,12 @@ Do not broaden permission from one class to another. For example, permission to 
 
 When creating a new document:
 
-1. Select an explicit record key convention from the user's domain.
-2. Choose the simplest authored boundary, normally headings.
-3. Map only fields required for expected deterministic queries.
+1. Name the repeated domain entity and select an explicit record key convention.
+2. Define the minimum reusable query intents, expected cardinality, bounded projections, payload limits, and writable fields.
+3. Choose the representation from those access paths: headings and labels for prose-rich records, or v2 table rows and columns for flat GFM matrices.
 4. Write the contract and requested authored content together.
-5. Avoid empty example records, speculative fields, and generated indexes unless repeated or large-document queries justify one.
-6. Validate and query every initial record when the document is small; otherwise sample the first, last, incomplete, and irregular records.
+5. Avoid empty example records, speculative fields, one-off query values, and generated indexes unless repeated or large-document queries justify one.
+6. Run `verify`. Query every initial record when the document is small; otherwise sample the first, middle, last, incomplete, and irregular records plus an absent key and a prose-only ID mention.
 
 When converting an existing ordinary document, run `inspect` first. Prefer a profile that describes the existing document and store it under `mdq` in YAML Front Matter at byte zero. Add markers only when its authored structure cannot delimit records reliably. Conversion does not authorize rewriting prose, headings, labels, or unrelated Front Matter fields for cosmetic consistency. Converting a damaged, TOML, or JSON header requires explicit repair or conversion authority.
 
@@ -124,7 +125,20 @@ Apply the smallest profile patch and then verify:
 
 When a contract migration changes record identity or extracted semantics, report it as a breaking change even if the Markdown body is unchanged.
 
-## 9. Batch-Set an Existing Label Field
+## 9. Optimize a Query Contract
+
+Read [query-design-and-repair.md](query-design-and-repair.md). Run `optimize` without `--apply` after a named query violates declared quality, an exact key appears only as a unique table-column candidate, or one result covers a giant wrapper record.
+
+Require the candidate to validate in memory, satisfy the triggering query, preserve every previously structured key, introduce no duplicates, and change only the top-level `mdq:` control block. Reject tied table, field, or scope candidates. Do not use a smaller result limit or first-match selection as a repair.
+
+Apply only when the user explicitly requested contract repair or `maintenance.query_contract.mode: auto` allows every required scope. Respect `locked` as a document-owned prohibition. Compare the source hash immediately before the atomic source replacement, reparse and requery afterward, rebuild an existing declared index, and roll back the control block if verification fails.
+
+`auto` is invalid without an explicit non-empty `allow` list. Never infer an
+allowlist from the proposed change.
+
+Actor metadata never authorizes this transaction. Query optimization cannot edit authored records, markers, business values, or index paths.
+
+## 10. Batch-Set an Existing Label Field
 
 Use the built-in `set` transaction only when every processed document already has a valid persistent contract and the target is an existing untransformed `source: label` scalar:
 
@@ -159,7 +173,7 @@ Before any write, require every processed document, declared field, key, target 
 
 The command patches only the authored value span. It must preserve label spelling, list or table syntax, spacing, inline comments, neighboring fields, record boundaries, Front Matter, and unrelated documents. It validates patched source in memory, checks source hashes immediately before applying, uses same-directory atomic replacement per path, rebuilds declared indexes for changed documents, and verifies the written result. If a later apply or verification step fails, inspect `rolled_back` or `rollback_failed` diagnostics rather than assuming every filesystem path was restored.
 
-## 10. Verify and Hand Off
+## 11. Verify and Hand Off
 
 After any successful source or contract patch, run:
 
@@ -167,6 +181,7 @@ After any successful source or contract patch, run:
 uv run "$SKILL_DIR/scripts/mdq.py" validate <document.md>
 uv run "$SKILL_DIR/scripts/mdq.py" diagnose <document.md>
 uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> --id <affected-id>
+uv run "$SKILL_DIR/scripts/mdq.py" verify <document.md> # when v2 queries are declared
 ```
 
 Also query an unaffected record and an absent key, and run a literal search whose text appears in a different record. For deletion or rename, query the old identity as the negative case.

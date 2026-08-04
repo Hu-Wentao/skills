@@ -1,6 +1,6 @@
 ---
 name: queryable-markdown
-description: Create, maintain, edit, batch-update, and query Markdown documents governed by a persistent mdq query contract, batch-query Markdown collections under one or more paths, and query ordinary Markdown read-only without requiring or adding metadata. Use for exact, text, field, directory, or glob lookups in semi-structured Markdown; safely setting an existing label-backed field across selected files or records; creating a new contracted Markdown document; converting a document into a persistently queryable document; adding, updating, deleting, or renaming records in a contracted document; maintaining an mdq YAML profile, stable markers, or sidecar index; diagnosing contract drift; or restoring queryability. Ordinary Markdown without a contract is read-only unless the user explicitly requests conversion to a contracted document.
+description: Design, create, maintain, edit, batch-update, verify, optimize, and query Markdown through a persistent mdq query contract, including heading records, GFM table-row records, named query intents, result-quality limits, deterministic query-contract repair, and multi-path collection queries. Use for exact, text, field, directory, or glob lookups; creating or converting persistently queryable documents; preventing over-broad record models; diagnosing excessive or oversized results; safely refining embedded query parameters; setting existing label-backed fields; editing records; maintaining profiles, markers, or indexes; and restoring queryability. Ordinary Markdown without a contract remains read-only unless conversion is explicitly authorized.
 ---
 
 # Queryable Markdown
@@ -32,6 +32,7 @@ Creating a new contracted document, converting an existing document, editing aut
 - Return missing values as `null`. Never invent IDs, titles, fields, closing sections, repaired prose, or business decisions.
 - Return every duplicate or ambiguous match with diagnostics. Never silently choose the first result or edit an ambiguous target.
 - Prefer exact IDs and declared fields. Use text search only for candidate discovery.
+- Treat excessive count, oversized record spans, oversized payloads, low confidence, and candidate-only evidence as separate query-quality failures. Never simulate precision by truncating results or choosing the first match.
 - Preflight every selected document before a batch write. If any selected document is invalid or any write location is unsafe, write none of them.
 - Treat successful parsing and validation as structural evidence, not proof that authored content is correct or complete.
 - Keep document mechanics separate from domain authority. When requirements, baselines, plans, archives, or other governed sources are involved, let the applicable governance workflow decide their semantics.
@@ -44,9 +45,11 @@ Resolve `SKILL_DIR` to this skill directory. Use the same commands whether or no
 uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> --id <exact-id>
 uv run "$SKILL_DIR/scripts/mdq.py" search <document.md> --text <term>
 uv run "$SKILL_DIR/scripts/mdq.py" search <document.md> --field <field> --text <term>
+uv run "$SKILL_DIR/scripts/mdq.py" run <document.md> --query <name> --value <value>
+uv run "$SKILL_DIR/scripts/mdq.py" verify <document.md>
 ```
 
-With a valid contract, the CLI applies declared boundaries, keys, fields, recovery, and index policy. Without one, it infers conservative temporary selectors in memory. Interpret `count`, `confidence`, source ranges, candidates, and diagnostics together.
+With a valid contract, the CLI applies declared boundaries, keys, fields, recovery, query intents, quality limits, and index policy. Without one, it infers conservative temporary selectors in memory. Interpret `count`, payload size, confidence, source ranges, candidates, quality, and diagnostics together. A single giant record can be a failed query even when `count` is one.
 
 For a deterministic collection query, scan one or more Markdown files or directories:
 
@@ -85,19 +88,20 @@ When no safe boundary exists, accept line-local evidence rather than fabricating
 
 ## Create or Convert a Contracted Document
 
-Read [protocol.md](references/protocol.md) before creating or changing a contract.
+Read [protocol.md](references/protocol.md) and [query-design-and-repair.md](references/query-design-and-repair.md) before creating or changing a contract.
 
 For a new document:
 
-1. Derive the smallest record shape from the user's requested content and identity convention.
-2. Create a declarative profile and the authored records in one minimal document.
-3. Do not create placeholder records, fields, or categories not requested by the user.
-4. Validate, diagnose, and query representative records before handoff.
+1. Name the repeated domain entity before choosing Markdown syntax. A document title is not the record when the body contains repeated requirements, tickets, scenarios, or other independently queried entities.
+2. Define the stable key, the minimum reusable query intents, expected result cardinality, bounded projection, payload limits, and source-located writable fields.
+3. Choose the representation from the access pattern: headings and labels for prose-rich or machine-written records; `table-row` and `column` for existing or human-readable flat GFM matrices.
+4. Create the profile and authored records together. Do not add speculative fields or one-off query values.
+5. Run `validate`, `diagnose`, and `verify`; query known first, middle, last, absent, and prose-only identities. Do not hand off a contract that exposes one wrapper record around multiple stable inner identities.
 
 For an existing ordinary document:
 
 1. Run `inspect` and examine several representative records, including an incomplete or irregular one when present.
-2. Infer the smallest stable boundary, key, and field mapping that preserves current authored structure.
+2. Inventory repeated identities, common filters, expected projections, and current result sizes. Infer the smallest stable boundary that makes those entities independently addressable.
 3. If competing interpretations produce different identities, ask the user to choose. Resolve lesser ambiguity conservatively and report it.
 4. Add only the contract control block and strictly necessary stable record markers. Do not rewrite business content merely to normalize it.
 
@@ -149,6 +153,21 @@ uv run "$SKILL_DIR/scripts/mdq.py" set <first.md> <second.md> \
 
 Inspect before changing profile rules, markers, or index policy. Keep the contract minimal and declarative. Preserve an existing valid YAML Front Matter block and its `---` delimiters; never create a second frontmatter block or silently convert another header format without authorization.
 
+When an exact query misses a unique table-row identity, a named query exceeds its declared cardinality, or one returned record exceeds its span or payload budget, preview one deterministic repair:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" optimize <document.md> --id <exact-id>
+uv run "$SKILL_DIR/scripts/mdq.py" optimize <document.md> --query <name> --value <value>
+```
+
+Apply only a unique in-memory-verified candidate and only when the current request authorizes contract repair or `maintenance.query_contract.mode: auto` durably delegates it:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" optimize <document.md> --id <exact-id> --apply
+```
+
+`actors.write: machine` describes authorship; it does not authorize maintenance. `locked` prevents automatic changes, absent policy defaults to proposal, and `auto` permits only declared scopes. Never rewrite authored content during query-contract optimization.
+
 After any contract or contracted-record write, run:
 
 ```bash
@@ -188,3 +207,4 @@ For writes, report:
 - `scripts/mdq.py`: inspect, query, search, scan collections, safely set existing label fields, validate, diagnose, and index Markdown.
 - `references/protocol.md`: contract schema, extraction semantics, lifecycle, result contract, diagnostics, compatibility, and security limits.
 - `references/editing-workflow.md`: transactional creation, record-editing, contract-maintenance, and verification procedures.
+- `references/query-design-and-repair.md`: query-first document design, result-quality gates, repair classification, and bounded adaptive maintenance.
