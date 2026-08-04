@@ -24,10 +24,14 @@ description: "Bootstrap, review, and maintain project architecture, governed doc
 For read-only review, inspect and report without editing. Do not classify a
 project-scoped external dependency or technology evaluation as read-only merely
 because upstream inspection is read-only: follow
-[dependency-evaluation.md](references/dependency-evaluation.md) and persist its
-smallest governed evaluation record unless the user explicitly forbids local
-writes or no writable project context exists. For other changes, follow the
-repository's planning, dirty-worktree, approval, commit, and deployment rules.
+[dependency-evaluation.md](references/dependency-evaluation.md). When the
+installed `recall-resources` skill advertises the compatible shared-assessment
+capability, persist reusable upstream evidence there and keep only a pinned
+`TECH-FIT-*` project-fit record locally. Otherwise persist the complete local
+`TECH-EVAL-*` fallback. Do not infer capability from a folder name. Skip
+persistence only when the user explicitly forbids writes or no writable project
+context exists. For other changes, follow the repository's planning,
+dirty-worktree, approval, commit, and deployment rules.
 
 ## Use Deterministic Task Contracts
 
@@ -73,7 +77,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 ## Select the Governance Domain
 
 - For project design, architecture, module ownership, scaffolding, or implementation handoff, read [design-doc-rules.md](references/design-doc-rules.md), [project-scaffolding.md](references/project-scaffolding.md), and [legacy-extraction.md](references/legacy-extraction.md) as applicable.
-- For a current or proposed third-party library, framework, service, runtime, replacement, or technology fit assessment, read [dependency-evaluation.md](references/dependency-evaluation.md). Keep official upstream evidence, project facts, and AI inference distinct.
+- For a current or proposed third-party library, framework, service, runtime, replacement, or technology fit assessment, read [dependency-evaluation.md](references/dependency-evaluation.md). Keep official upstream evidence, project facts, and AI inference distinct; pin shared evidence revisions when the compatible `recall-resources` capability is available.
 - For SemVer, migrations, compatibility surfaces, release identities, tags, promotions, retries, or hotfix ancestry, read [git-version-governance.md](references/git-version-governance.md) and [release-deployment.md](references/release-deployment.md) only when the task contract cannot decide the required semantic boundary.
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
 - For project-wide documentation inventory, missing or invalid `mdq` contracts, stale lifecycle state, link and index drift, or authorized documentation cleanup, resolve `document-maintenance` and read [document-maintenance.md](references/document-maintenance.md).
