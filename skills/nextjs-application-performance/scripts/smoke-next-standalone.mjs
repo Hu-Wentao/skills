@@ -9,11 +9,12 @@ import { auditStandaloneRoot, loadStandaloneContract } from "./audit-standalone-
 const OUTPUT_LIMIT = 64 * 1024;
 
 function parseArgs(argv) {
-  const options = { manifest: "", app: "", json: false };
+  const options = { manifest: "", app: "", standaloneRoot: "", json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--manifest") options.manifest = argv[++index] ?? "";
     else if (arg === "--app") options.app = argv[++index] ?? "";
+    else if (arg === "--standalone-root") options.standaloneRoot = argv[++index] ?? "";
     else if (arg === "--json") options.json = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -54,7 +55,7 @@ async function fetchStatus(url) {
 }
 
 export async function smokeStandalone({ app, standaloneRoot }) {
-  const closure = auditStandaloneRoot(standaloneRoot, app.standalone.allowedMissing ?? []);
+  const closure = auditStandaloneRoot(standaloneRoot, app.standalone);
   if (closure.status !== "passed") {
     return { schema: "nextjs-standalone-smoke.v1", app: app.id, status: "failed", reason: "closure_failed", closure };
   }
@@ -126,7 +127,7 @@ export async function smokeStandalone({ app, standaloneRoot }) {
       reason: routes.every((route) => route.passed) ? "success" : "route_failed",
       ready: { path: runtime.readyPath, status: readyStatus },
       routes,
-      closure: { scannedFiles: closure.scannedFiles },
+      closure: { traceManifests: closure.traceManifests, tracedFiles: closure.tracedFiles },
       output,
     };
   } finally {
@@ -137,7 +138,7 @@ export async function smokeStandalone({ app, standaloneRoot }) {
 async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
-    const contract = loadStandaloneContract(options.manifest, options.app);
+    const contract = loadStandaloneContract(options.manifest, options.app, options.standaloneRoot);
     const result = await smokeStandalone(contract);
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {

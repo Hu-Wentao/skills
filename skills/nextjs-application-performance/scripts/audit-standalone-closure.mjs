@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 
-import { builtinModules } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCHEMA = "nextjs-build-contracts.v1";
-const BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
-const JS_EXTENSIONS = [".js", ".mjs", ".cjs"];
-const RESOLVE_EXTENSIONS = ["", ".js", ".mjs", ".cjs", ".json", ".node"];
 
 function parseArgs(argv) {
-  const options = { manifest: "", app: "", json: false };
+  const options = { manifest: "", app: "", standaloneRoot: "", json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--manifest") options.manifest = argv[++index] ?? "";
     else if (arg === "--app") options.app = argv[++index] ?? "";
+    else if (arg === "--standalone-root") options.standaloneRoot = argv[++index] ?? "";
     else if (arg === "--json") options.json = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -42,122 +39,148 @@ function resolveInside(root, value, field) {
   return resolved;
 }
 
-function importsFromSource(source) {
-  const results = [];
-  const patterns = [
-    /(?:^|[;\n])\s*(?:import|export)\s+(?!type\b)(?:[^"'\n;]*?\sfrom\s*)?["']([^"']+)["']/gm,
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gm,
-    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/gm,
-  ];
-  for (const pattern of patterns) for (const match of source.matchAll(pattern)) results.push(match[1]);
-  return [...new Set(results)];
-}
-
-function walkFiles(root) {
-  const files = [];
+function walk(root, predicate) {
+  const matches = [];
   const queue = [root];
   while (queue.length > 0) {
     const current = queue.pop();
     const stat = fs.lstatSync(current, { throwIfNoEntry: false });
     if (!stat) continue;
-    if (stat.isSymbolicLink()) {
-      const real = fs.realpathSync(current);
-      if (!inside(real, root)) files.push({ path: current, escapedSymlink: real });
-      continue;
-    }
+    if (stat.isSymbolicLink()) continue;
     if (stat.isDirectory()) {
       for (const entry of fs.readdirSync(current)) queue.push(path.join(current, entry));
-    } else if (stat.isFile()) files.push({ path: current });
+    } else if (stat.isFile() && predicate(current)) matches.push(current);
   }
-  return files;
+  return matches.sort();
 }
 
-function resolveFile(base) {
-  for (const extension of RESOLVE_EXTENSIONS) {
-    const candidate = `${base}${extension}`;
-    if (fs.statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate;
-  }
-  for (const extension of RESOLVE_EXTENSIONS.slice(1)) {
-    const candidate = path.join(base, `index${extension}`);
-    if (fs.statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate;
-  }
-  return null;
-}
-
-function packageParts(specifier) {
-  const pieces = specifier.split("/");
-  const packageName = specifier.startsWith("@") ? pieces.slice(0, 2).join("/") : pieces[0];
-  const subpath = pieces.slice(specifier.startsWith("@") ? 2 : 1).join("/");
-  return { packageName, subpath };
-}
-
-function resolveBareWithin(specifier, fromFile, standaloneRoot) {
-  const { packageName, subpath } = packageParts(specifier);
-  for (let current = path.dirname(fromFile); inside(current, standaloneRoot); current = path.dirname(current)) {
-    const packageRoot = path.join(current, "node_modules", ...packageName.split("/"));
-    if (fs.statSync(packageRoot, { throwIfNoEntry: false })?.isDirectory()) {
-      if (subpath) return resolveFile(path.join(packageRoot, subpath));
-      const packageJsonPath = path.join(packageRoot, "package.json");
-      if (!fs.existsSync(packageJsonPath)) return null;
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-      const rootExport = packageJson.exports?.["."] ?? packageJson.exports;
-      const target = typeof rootExport === "string"
-        ? rootExport
-        : rootExport?.import ?? rootExport?.require ?? rootExport?.default ?? packageJson.module ?? packageJson.main ?? "index.js";
-      if (typeof target !== "string") return null;
-      return resolveFile(path.join(packageRoot, target));
-    }
-    if (current === standaloneRoot) break;
-  }
-  return null;
-}
-
-export function auditStandaloneRoot(standaloneRoot, allowedMissing = []) {
-  const root = fs.realpathSync(standaloneRoot);
-  const allowed = new Set(allowedMissing);
-  const failures = [];
-  let scannedFiles = 0;
-  const files = walkFiles(root);
-  for (const item of files) {
-    if (item.escapedSymlink) {
-      failures.push(`symlink escapes standalone root: ${item.path} -> ${item.escapedSymlink}`);
+function inspectSymlinks(root, failures) {
+  const queue = [root];
+  let symlinkCount = 0;
+  while (queue.length > 0) {
+    const current = queue.pop();
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      symlinkCount += 1;
+      let realpath;
+      try {
+        realpath = fs.realpathSync(current);
+      } catch (error) {
+        failures.push(`broken standalone symlink: ${path.relative(root, current)} (${error.message})`);
+        continue;
+      }
+      if (!inside(realpath, root)) {
+        failures.push(`standalone symlink escapes artifact: ${path.relative(root, current)} -> ${realpath}`);
+      }
       continue;
     }
-    if (!JS_EXTENSIONS.includes(path.extname(item.path))) continue;
-    scannedFiles += 1;
-    const source = fs.readFileSync(item.path, "utf8");
-    for (const specifier of importsFromSource(source)) {
-      if (BUILTINS.has(specifier) || specifier.startsWith("node:")) continue;
-      let resolved = null;
-      if (specifier.startsWith(".")) resolved = resolveFile(path.resolve(path.dirname(item.path), specifier));
-      else if (specifier.startsWith("/")) resolved = resolveFile(specifier);
-      else resolved = resolveBareWithin(specifier, item.path, root);
-      if (!resolved || !inside(fs.realpathSync(resolved), root)) {
-        const key = `${path.relative(root, item.path)}:${specifier}`;
-        if (!allowed.has(specifier) && !allowed.has(key)) failures.push(`${key} does not resolve inside the standalone artifact`);
+    if (stat.isDirectory()) for (const entry of fs.readdirSync(current)) queue.push(path.join(current, entry));
+  }
+  return symlinkCount;
+}
+
+export function auditStandaloneRoot(standaloneRoot, contract = {}) {
+  const root = fs.realpathSync(standaloneRoot);
+  const failures = [];
+  const entrypoints = contract.entrypoints ?? [];
+  if (!Array.isArray(entrypoints) || entrypoints.length === 0) {
+    failures.push("standalone.entrypoints must declare at least one runtime entrypoint");
+  } else {
+    for (const [index, entrypoint] of entrypoints.entries()) {
+      const resolved = path.resolve(root, entrypoint);
+      if (!inside(resolved, root)) failures.push(`standalone.entrypoints[${index}] escapes the artifact`);
+      else if (!fs.statSync(resolved, { throwIfNoEntry: false })?.isFile()) {
+        failures.push(`runtime entrypoint is missing: ${entrypoint}`);
       }
     }
   }
+
+  const traceRoots = contract.traceRoots ?? [];
+  if (!Array.isArray(traceRoots) || traceRoots.length === 0) {
+    failures.push("standalone.traceRoots must declare at least one Next trace root");
+  }
+  const manifests = [];
+  for (const [index, traceRoot] of traceRoots.entries()) {
+    const resolved = path.resolve(root, traceRoot);
+    if (!inside(resolved, root)) {
+      failures.push(`standalone.traceRoots[${index}] escapes the artifact`);
+      continue;
+    }
+    if (!fs.statSync(resolved, { throwIfNoEntry: false })?.isDirectory()) {
+      failures.push(`Next trace root is missing: ${traceRoot}`);
+      continue;
+    }
+    manifests.push(...walk(resolved, (file) => file.endsWith(".nft.json")));
+  }
+  if (manifests.length === 0) failures.push("no Next .nft.json trace manifests were found");
+
+  let tracedFiles = 0;
+  for (const manifestPath of [...new Set(manifests)].sort()) {
+    let manifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    } catch (error) {
+      failures.push(`invalid trace manifest ${path.relative(root, manifestPath)}: ${error.message}`);
+      continue;
+    }
+    if (manifest.version !== 1 || !Array.isArray(manifest.files)) {
+      failures.push(`unsupported trace manifest ${path.relative(root, manifestPath)}`);
+      continue;
+    }
+    for (const [index, tracedFile] of manifest.files.entries()) {
+      tracedFiles += 1;
+      if (typeof tracedFile !== "string" || !tracedFile) {
+        failures.push(`${path.relative(root, manifestPath)} files[${index}] is not a path`);
+        continue;
+      }
+      const resolved = path.resolve(path.dirname(manifestPath), tracedFile);
+      if (!inside(resolved, root)) {
+        failures.push(`${path.relative(root, manifestPath)} trace escapes artifact: ${tracedFile}`);
+        continue;
+      }
+      const stat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+      if (!stat) {
+        failures.push(`${path.relative(root, manifestPath)} traced dependency is missing: ${tracedFile}`);
+        continue;
+      }
+      try {
+        if (!inside(fs.realpathSync(resolved), root)) {
+          failures.push(`${path.relative(root, manifestPath)} traced dependency resolves outside artifact: ${tracedFile}`);
+        }
+      } catch (error) {
+        failures.push(`${path.relative(root, manifestPath)} traced dependency cannot resolve: ${tracedFile} (${error.message})`);
+      }
+    }
+  }
+  const symlinkCount = inspectSymlinks(root, failures);
   return {
     schema: "nextjs-standalone-closure-audit.v1",
     status: failures.length === 0 ? "passed" : "failed",
     standaloneRoot: root,
-    scannedFiles,
+    traceManifests: [...new Set(manifests)].length,
+    tracedFiles,
+    symlinkCount,
     failures,
   };
 }
 
-export function loadStandaloneContract(manifestPath, appId) {
+export function loadStandaloneContract(manifestPath, appId, standaloneRootOverride = "") {
   const absoluteManifest = path.resolve(manifestPath);
   const manifest = JSON.parse(fs.readFileSync(absoluteManifest, "utf8"));
   if (manifest.schema !== SCHEMA) throw new Error(`manifest schema must be ${SCHEMA}`);
-  const repoRoot = findRepoRoot(path.dirname(absoluteManifest));
-  const workspaceRoot = path.resolve(path.dirname(absoluteManifest), manifest.workspaceRoot ?? ".");
-  if (!inside(workspaceRoot, repoRoot)) throw new Error("workspaceRoot escapes the repository");
   const app = (manifest.apps ?? []).find((candidate) => candidate.id === appId);
   if (!app) throw new Error(`app not found in manifest: ${appId}`);
   if (!app.standalone || typeof app.standalone.root !== "string") throw new Error(`${appId}.standalone.root is required`);
-  const standaloneRoot = resolveInside(workspaceRoot, app.standalone.root, `${appId}.standalone.root`);
+  let standaloneRoot;
+  if (standaloneRootOverride) {
+    standaloneRoot = path.resolve(standaloneRootOverride);
+  } else {
+    const repoRoot = findRepoRoot(path.dirname(absoluteManifest));
+    const workspaceRoot = path.resolve(path.dirname(absoluteManifest), manifest.workspaceRoot ?? ".");
+    if (!inside(workspaceRoot, repoRoot)) throw new Error("workspaceRoot escapes the repository");
+    standaloneRoot = resolveInside(workspaceRoot, app.standalone.root, `${appId}.standalone.root`);
+  }
   if (!fs.statSync(standaloneRoot, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`standalone root does not exist: ${standaloneRoot}`);
   }
@@ -167,11 +190,11 @@ export function loadStandaloneContract(manifestPath, appId) {
 async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
-    const { app, standaloneRoot } = loadStandaloneContract(options.manifest, options.app);
-    const result = auditStandaloneRoot(standaloneRoot, app.standalone.allowedMissing ?? []);
+    const { app, standaloneRoot } = loadStandaloneContract(options.manifest, options.app, options.standaloneRoot);
+    const result = auditStandaloneRoot(standaloneRoot, app.standalone);
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {
-      console.log(`${result.status}: ${options.app} (${result.scannedFiles} runtime files)`);
+      console.log(`${result.status}: ${options.app} (${result.traceManifests} trace manifests, ${result.tracedFiles} traced files)`);
       for (const failure of result.failures) console.error(`error: ${failure}`);
     }
     return result.status === "passed" ? 0 : 1;

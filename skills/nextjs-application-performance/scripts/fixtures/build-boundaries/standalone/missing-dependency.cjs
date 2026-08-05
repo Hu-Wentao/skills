@@ -1,1 +1,1 @@
-require("missing-production-dependency");
+{"version":1,"files":["missing-production-dependency.js"]}

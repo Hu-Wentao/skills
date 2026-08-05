@@ -53,7 +53,11 @@ function manifestFor(root) {
         },
       ],
       allowedExternalPackages: [{ specifier: "@fixture/server" }],
-      standalone: { root: "standalone", allowedMissing: [] },
+      standalone: {
+        root: "standalone",
+        entrypoints: ["server.js"],
+        traceRoots: ["traces"],
+      },
       memory: { containerLimitMiB: 640, baselineHeapLimitMiB: 512, heapLimitMiB: 512, coldPath: "app/.next" },
       runtime: {
         command: ["node", "server.js"],
@@ -124,14 +128,23 @@ test("rejects unevidenced symlink and optimizePackageImports workarounds", async
 test("standalone closure rejects a production dependency missing from the artifact", (t) => {
   const root = setupFixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const result = auditStandaloneRoot(path.join(root, "standalone"));
+  const traces = path.join(root, "standalone/traces");
+  fs.mkdirSync(traces);
+  fs.renameSync(path.join(root, "standalone/missing-dependency.cjs"), path.join(traces, "server.js.nft.json"));
+  const result = auditStandaloneRoot(path.join(root, "standalone"), {
+    entrypoints: ["server.js"],
+    traceRoots: ["traces"],
+  });
   assert.equal(result.status, "failed");
-  assert.ok(result.failures.some((failure) => failure.includes("missing-production-dependency")));
+  assert.ok(result.failures.some((failure) => failure.includes("traced dependency is missing")));
 });
 
 test("runtime smoke starts the isolated standalone tree and checks declared routes", async (t) => {
   const root = setupFixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const traces = path.join(root, "standalone/traces");
+  fs.mkdirSync(traces);
+  fs.writeFileSync(path.join(traces, "server.js.nft.json"), '{"version":1,"files":["../server.js"]}\n');
   fs.rmSync(path.join(root, "standalone/missing-dependency.cjs"));
   const app = manifestFor(root).apps[0];
   const result = await smokeStandalone({ app, standaloneRoot: path.join(root, "standalone") });

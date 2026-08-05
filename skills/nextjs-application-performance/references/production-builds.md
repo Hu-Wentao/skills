@@ -26,6 +26,11 @@ node scripts/run-build-memory-probe.mjs --manifest <manifest> --app <id> \
 node scripts/smoke-next-standalone.mjs --manifest <manifest> --app <id>
 ```
 
+When a Docker runtime stage supplements raw Next standalone output, run the
+last two commands inside that final image with `--standalone-root /app` (or its
+actual runtime root). Do not allowlist a dependency merely because an earlier
+build stage omits bytes that the final runtime stage intentionally supplies.
+
 The container and heap limits are distinct: the probe verifies the actual
 cgroup `memory.max`, while the source audit rejects a heap limit above the
 container or an increase over the declared baseline without measured evidence.
@@ -63,10 +68,13 @@ allowlist entries fail closed.
 
 ## Standalone Closure
 
-Audit the standalone output in isolation. Every relative import must exist.
-Every bare runtime import must resolve to a built-in module or a path contained
-by the standalone root. Resolution that succeeds only through a parent source
-workspace is a missing production dependency, not a passing artifact.
+Audit the standalone output in isolation from Next's production `.nft.json`
+trace manifests. Every declared runtime entrypoint and traced file must exist,
+and every traced realpath and symlink target must remain inside the standalone
+root. A path that exists only through the parent source workspace is a missing
+production dependency, not a passing artifact. Do not regex-scan every copied
+JavaScript file: over-traced development and optional packages contain dynamic
+or example imports that are not part of the selected runtime closure.
 
 Run runtime smoke after the closure audit. Start the produced server, wait on
 the declared readiness route, and fetch every declared route with its exact

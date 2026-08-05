@@ -49,8 +49,8 @@ For pnpm workspace and production build boundaries, use schema
 `nextjs-build-contracts.v1`. Declare each Next app, its package and config
 paths, the `server`/`client`/`hybrid` classification and public entrypoints of
 every direct workspace dependency, the exact allowed external packages, the
-standalone directory, the container memory gate, cold-output path, and runtime
-smoke routes. Keep measured exceptions for heap increases,
+standalone directory, runtime entrypoints, Next trace roots, the container
+memory gate, cold-output path, and runtime smoke routes. Keep measured exceptions for heap increases,
 `resolve.symlinks=false`, or `optimizePackageImports` in the manifest with a
 repository evidence file and required marker. The generic scripts reject
 unclassified workspace dependencies, whole-package hybrid externalization,
