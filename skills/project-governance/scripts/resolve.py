@@ -1211,6 +1211,7 @@ def resolve_task(
             "--cwd",
             str(repo_root),
             "execute",
+            "contracted",
             "--task",
             task,
             "--operation",

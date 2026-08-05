@@ -120,7 +120,8 @@ tasks:
         config_root = self.root / ".agents" / "skills-config" / SKILL_NAME
         config_root.mkdir(parents=True, exist_ok=True)
         (self.root / "collect.py").write_text(
-            "import json\nprint(json.dumps({'schema': 'test.evidence.v1'}))\n",
+            "import json, sys\n"
+            "print(json.dumps({'schema': 'test.evidence.v1', 'argv': sys.argv[1:]}))\n",
             encoding="utf-8",
         )
         (config_root / "config.yaml").write_text(
@@ -286,7 +287,22 @@ tasks:
         self.assertEqual(
             list(selected_manifest["contract"]["operations"]), ["collect"]
         )
+        self.assertEqual(
+            selected_manifest["entry_command"][6:9],
+            ["execute", "contracted", "--task"],
+        )
         self.assertEqual(selected_manifest["entry_command"][-1], "collect")
+        executed = subprocess.run(
+            [*selected_manifest["entry_command"], "--request-id", "req_test"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(executed.returncode, 0, executed.stderr)
+        self.assertEqual(
+            json.loads(executed.stdout)["argv"], ["--request-id", "req_test"]
+        )
 
     def test_v3_instructions_id_tracks_policy_content(self) -> None:
         config_root = self.write_v3_config()
