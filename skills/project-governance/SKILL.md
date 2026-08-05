@@ -274,4 +274,12 @@ For release work, always label the release/deployment state separately from
 post-release integration state. Do not collapse an integration-branch conflict
 or dirty-worktree blocker into `release failed` after source freeze.
 
+After a deployment reaches a terminal state, make the final user-visible
+handoff explicitly show the service interruption duration and its measurement
+boundary, or `not measured` with the reason. Also show the exact release
+identity and target, total deployment or release duration when available,
+transaction status, health or canary result, database migration status, timing
+anomalies, and safe evidence or log paths. Do not leave these facts only in
+progress commentary or require the user to ask for them separately.
+
 Do not release, deploy, publish, migrate live state, push, rewrite history, or move tags unless explicitly authorized in the current request.

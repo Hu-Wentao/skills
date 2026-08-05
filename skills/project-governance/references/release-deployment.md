@@ -524,6 +524,28 @@ operation that remains unauthorized or incomplete. Never report secrets,
 authorization headers, request or response bodies, or private captured
 payloads.
 
+After every terminal deployment attempt, make the final user-visible handoff
+show these fields explicitly rather than leaving them only in progress events
+or detailed logs:
+
+- deployment state and exact target;
+- release tag and full commit;
+- service interruption duration and its measurement boundary, such as service
+  stop start through public health restoration;
+- total release or deployment duration when the executor reports it;
+- target transaction phase/status and database migration status;
+- health, smoke, and required canary outcomes;
+- timing-check classification, every abnormal phase with its observed value
+  and threshold, and the read-only diagnosis outcome;
+- successful deployment tag when created, plus safe evidence and log paths;
+- any incomplete or unauthorized operation that remains.
+
+If interruption or total duration evidence is unavailable, write
+`not measured` and the exact reason; never silently omit it or infer a value from
+timestamps that do not share the project's declared measurement boundary. A
+deployment that completed without service interruption should report the
+measured value as zero only when executor evidence proves that boundary.
+
 When synchronization back to the integration branch is requested, report it
 under a separate post-release integration heading or structured scope. A
 blocked or incomplete integration operation does not downgrade a successfully
