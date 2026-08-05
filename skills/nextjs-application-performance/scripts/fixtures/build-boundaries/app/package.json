@@ -1,0 +1,9 @@
+{
+  "name": "@fixture/app",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fixture/hybrid": "workspace:*",
+    "@fixture/server": "workspace:*"
+  }
+}

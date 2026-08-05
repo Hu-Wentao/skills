@@ -44,3 +44,15 @@ manifests, not in the reusable skill. For overlay boundaries, use schema
 required source evidence, forbidden consumer CSS selectors, and browser
 geometry selectors/viewports. The generic audit and probe scripts consume this
 manifest; they do not embed project component names or route selectors.
+
+For pnpm workspace and production build boundaries, use schema
+`nextjs-build-contracts.v1`. Declare each Next app, its package and config
+paths, the `server`/`client`/`hybrid` classification and public entrypoints of
+every direct workspace dependency, the exact allowed external packages, the
+standalone directory, the container memory gate, cold-output path, and runtime
+smoke routes. Keep measured exceptions for heap increases,
+`resolve.symlinks=false`, or `optimizePackageImports` in the manifest with a
+repository evidence file and required marker. The generic scripts reject
+unclassified workspace dependencies, whole-package hybrid externalization,
+cross-boundary root barrels, source-workspace resolution from standalone
+output, non-cold builds, unbounded cgroups, and unevidenced exceptions.

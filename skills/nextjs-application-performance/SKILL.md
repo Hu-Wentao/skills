@@ -1,6 +1,6 @@
 ---
 name: nextjs-application-performance
-description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, overlay clipping, real-user monitoring (RUM), session replay analytics, Microsoft Clarity masking, click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, scalability regressions, Dockerfiles, or Docker Compose deployment for Next.js.
+description: Design, measure, implement, review, and migrate Next.js application performance across App Router data paths, rendered UI, pnpm workspaces, compiler graphs, standalone output, user-perceived business actions, and production containers. Use for RSC pages, Route Handlers, Server Actions, TanStack Query/Table, growing collections, pagination, caching, N+1 queries, payload size, rendering bounds, sticky headers, nested scroll containers, overlay clipping, real-user monitoring (RUM), session replay analytics, Microsoft Clarity masking, click-to-ready or business-action latency, page navigation response time, Web Vitals, TTFB, build OOM or RSS, serverExternalPackages, webpack externalization, pnpm symlinks, server/client package boundaries, standalone dependency closure, Dockerfiles, or Docker Compose deployment for Next.js.
 ---
 
 # Next.js Application Performance
@@ -85,6 +85,27 @@ build`, or equivalent commands in a long-running service's `command` or
 - Run the Compose guardrail check when available, then render the production
   Compose model. Validate the image build and start the resulting runtime
   container before handoff.
+- In a pnpm workspace, resolve every direct workspace dependency from the app
+  and record both its symlink path and realpath before changing transpilation
+  or externalization. Classify it as `server`, `client`, or `hybrid` from its
+  public entrypoints. Never externalize a whole `client` or `hybrid` package.
+- Treat a root barrel that reaches both a server-only module and a client
+  module as a boundary defect. Split public subpath exports before admitting
+  server-only externalization; tree shaking is not a server/client contract.
+- Audit the produced standalone tree as an isolated production dependency
+  closure. A dependency that resolves only by walking into the source
+  workspace is missing from the artifact.
+- Measure a cache-cold production build inside the declared container memory
+  limit. Preserve peak RSS, exit code/signal, cgroup OOM deltas, and the
+  classified exit reason. Exit `137` alone is not OOM evidence.
+- Do not use a larger V8 heap, `resolve.symlinks = false`, or
+  `optimizePackageImports` as an unevidenced default repair. Require a
+  before/after experiment tied to the observed failure and keep the real
+  container gate unchanged.
+- Read [production-builds.md](references/production-builds.md) whenever pnpm
+  resolution, compiler memory, Next externalization, standalone output, or a
+  production runtime image is in scope. Run every project-declared build
+  contract command, including runtime smoke routes, before handoff.
 
 ## Task Flow
 
@@ -125,8 +146,19 @@ build`, or equivalent commands in a long-running service's `command` or
   recordings while keeping sensitive values out of session replay.
 - [project_config.md](references/project_config.md): project profile schema,
   resolver behavior, and validation requirements.
+- [production-builds.md](references/production-builds.md): pnpm realpath,
+  server/client/hybrid package, Next externalization, standalone closure,
+  constrained cold-build, and runtime-smoke contract.
 - `scripts/audit-overlay-contract.mjs`: validate project-owned overlay source,
   focused-test, CSS ownership, and geometry-probe contracts.
 - `scripts/overlay-geometry-probe.mjs`: generate a self-contained browser-page
   expression for portal, viewport, clipping-ancestor, position, and focus
   checks without adding a browser test framework dependency.
+- `scripts/audit-next-build-contract.mjs`: verify workspace resolution,
+  package boundaries, external-package admission, and forbidden defaults.
+- `scripts/audit-standalone-closure.mjs`: verify that runtime imports resolve
+  inside the standalone artifact.
+- `scripts/run-build-memory-probe.mjs`: run a cache-cold build only inside the
+  declared cgroup v2 limit and record RSS/exit evidence.
+- `scripts/smoke-next-standalone.mjs`: start the standalone server and verify
+  the project-declared runtime routes.
