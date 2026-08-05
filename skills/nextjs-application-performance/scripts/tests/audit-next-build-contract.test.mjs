@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { auditContract } from "../audit-next-build-contract.mjs";
-import { auditStandaloneRoot } from "../audit-standalone-closure.mjs";
+import { auditStandaloneRoot, formatFailures } from "../audit-standalone-closure.mjs";
 import { classifyBuildExit, loadProbeContract, runProbe } from "../run-build-memory-probe.mjs";
 import { smokeStandalone } from "../smoke-next-standalone.mjs";
 
@@ -137,6 +137,11 @@ test("standalone closure rejects a production dependency missing from the artifa
   });
   assert.equal(result.status, "failed");
   assert.ok(result.failures.some((failure) => failure.includes("traced dependency is missing")));
+  assert.deepEqual(formatFailures(["one", "two", "three"], 2), [
+    "error: one",
+    "error: two",
+    "error: 1 additional failures omitted",
+  ]);
 });
 
 test("runtime smoke starts the isolated standalone tree and checks declared routes", async (t) => {

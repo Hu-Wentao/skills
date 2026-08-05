@@ -80,6 +80,12 @@ function inspectSymlinks(root, failures) {
   return symlinkCount;
 }
 
+export function formatFailures(failures, limit = 50) {
+  const lines = failures.slice(0, limit).map((failure) => `error: ${failure}`);
+  if (failures.length > limit) lines.push(`error: ${failures.length - limit} additional failures omitted`);
+  return lines;
+}
+
 export function auditStandaloneRoot(standaloneRoot, contract = {}) {
   const root = fs.realpathSync(standaloneRoot);
   const failures = [];
@@ -195,7 +201,7 @@ async function main() {
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {
       console.log(`${result.status}: ${options.app} (${result.traceManifests} trace manifests, ${result.tracedFiles} traced files)`);
-      for (const failure of result.failures) console.error(`error: ${failure}`);
+      for (const line of formatFailures(result.failures)) console.error(line);
     }
     return result.status === "passed" ? 0 : 1;
   } catch (error) {

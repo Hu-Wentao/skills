@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { auditStandaloneRoot, loadStandaloneContract } from "./audit-standalone-closure.mjs";
+import { auditStandaloneRoot, formatFailures, loadStandaloneContract } from "./audit-standalone-closure.mjs";
 
 const OUTPUT_LIMIT = 64 * 1024;
 
@@ -143,6 +143,7 @@ async function main() {
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {
       console.log(`${result.status}: ${result.app} (${result.reason})`);
+      for (const line of formatFailures(result.closure?.failures ?? [])) console.error(line);
       for (const route of result.routes ?? []) console.log(`${route.passed ? "ok" : "error"} ${route.path}: ${route.status}`);
     }
     return result.status === "passed" ? 0 : 1;

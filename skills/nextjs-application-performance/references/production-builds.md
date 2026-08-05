@@ -86,7 +86,10 @@ Audit the standalone output in isolation from Next's production `.nft.json`
 trace manifests. Every declared runtime entrypoint and traced file must exist,
 and every traced realpath and symlink target must remain inside the standalone
 root. A path that exists only through the parent source workspace is a missing
-production dependency, not a passing artifact. Do not regex-scan every copied
+production dependency, not a passing artifact. Do not prune a traced file only
+because its package name looks development-only or a narrow smoke route did
+not load it; retain it or repair the trace owner and regenerate manifests that
+no longer claim it. Do not regex-scan every copied
 JavaScript file: over-traced development and optional packages contain dynamic
 or example imports that are not part of the selected runtime closure.
 
