@@ -75,6 +75,54 @@ and `sha256` revision identify the exact authoritative Markdown evaluated by
 the consuming project. A later shared update creates a different revision and
 must not retroactively change a local conclusion.
 
+## Partition Claims Before Writing Locally
+
+Complete a claim-ownership pass before drafting `TECH-FIT-*`:
+
+1. Put a claim in the shared assessment when it is supported by upstream
+   evidence or remains true for another consuming project. This includes
+   capabilities, implementation mechanisms, dependencies, platform support,
+   version and release facts, license, maintenance, security behavior,
+   strengths, generic risks, and upstream review triggers.
+2. Put a claim in the local fit record only when it is supported by current
+   project authority or describes a consequence unique to that project. This
+   includes affected scope, existing alternatives, policy conflicts,
+   integration work and ownership, migration cost, project blockers, fit,
+   disposition, trial boundaries, and project review triggers.
+3. Write and upsert the shared assessment first. Draft the local record from
+   the project-only claim list plus the returned ID, revision, upstream ref,
+   and normalized repository URL; do not draft it by summarizing the shared
+   record.
+
+Apply this sentence test to every local paragraph and list item:
+
+- If removing the project name and local context leaves a useful statement
+  about the technology, move that statement to the shared assessment.
+- If the statement's only evidence is an upstream page, source file, release,
+  issue, or package registry, keep it out of local prose.
+- To record a blocker, state the consuming project's rule or condition and its
+  decision consequence, then refer to the pinned assessment. Do not repeat the
+  upstream facts that caused the consequence.
+
+For example, do not write this in a local fit record:
+
+> The candidate requires `SYS_PTRACE`, uses seccomp, supports only Linux for
+> its core path, and its latest release is `b390`.
+
+Write the project implication instead:
+
+> The project's least-privilege policy blocks this candidate on managed hosts;
+> the pinned shared assessment owns the underlying platform and privilege
+> evidence.
+
+The normalized repository URL is the only upstream navigation link that
+belongs locally. Keep official evidence links and generic upstream review
+triggers in the shared assessment. Before handoff, compare both records and
+remove every local feature list, architecture description, license or version
+fact, maintenance summary, security description, and generic risk that the
+shared record already owns. Do not report the evaluation complete until this
+ownership audit passes.
+
 ## Write the Local Project-Fit Record
 
 Follow an existing repository convention. Otherwise create one governed record
@@ -96,8 +144,10 @@ Keep project constraints, integration cost, material gaps, blockers, fit
 reasoning, and the project-specific recommendation in bounded prose. Link the
 normalized shared source URL for human navigation, but do not duplicate the
 shared feature inventory, architecture, license, maintenance, security, or
-generic risk analysis. The fit record's revision pin remains unchanged until a
-new project evaluation explicitly adopts a newer shared revision.
+generic risk analysis. Mention an upstream condition only through its pinned
+project consequence; do not copy or paraphrase the condition itself. The fit
+record's revision pin remains unchanged until a new project evaluation
+explicitly adopts a newer shared revision.
 
 ## Complete Local Fallback
 
@@ -137,4 +187,7 @@ adoption authority.
 
 Use `queryable-markdown` to validate and diagnose the document, query its exact
 ID and an absent ID, query representative declared fields, and scan the
-evaluation directory with `--require-contract`.
+evaluation directory with `--require-contract`. For shared-storage evaluations,
+also perform the sentence-level ownership audit above against the final shared
+and local records. Structural validation cannot prove that their semantic
+ownership is correct.
