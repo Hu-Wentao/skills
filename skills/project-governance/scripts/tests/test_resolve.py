@@ -407,7 +407,16 @@ tasks:
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        normalized = " ".join(result.stdout.split())
         self.assertIn("deploy/<target>/<UTC timestamp>/v<version>", result.stdout)
+        self.assertIn(
+            "inspect the resolved task contract and project profile for every declared",
+            normalized,
+        )
+        self.assertIn(
+            "When no stable tag or artifact manifest exists",
+            normalized,
+        )
         self.assertIn("Use preproduction before production.", result.stdout)
         self.assertIn("node ops/deployment/release-deploy.mjs", result.stdout)
 

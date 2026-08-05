@@ -230,6 +230,14 @@ same release commit and record the selected artifact evidence.
 
 Classify a failed deployment before the next mutation. Use `release retry` only when source remains unchanged at the fixed release tag. If source must change, use `release repair-plan` and `release repair` to create the next patch release from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
 
+When a pre-tag artifact build or freeze fails, inspect the resolved task
+contract and project profile for every declared artifact acquisition, build,
+or transfer mode before retrying or editing source. If neither a stable tag nor
+an artifact manifest exists, prefer an already-configured mode that avoids the
+failed execution boundary while preserving the exact commit, tree, target,
+platform, and executor-owned identity verification. Do not invent a fallback,
+change target, or switch modes after artifact identity is frozen.
+
 Treat a missing project repair contract as a release-tooling capability defect, not automatically as a new authorization decision. When the current request already authorizes repairing the failed source and continuing the same target deployment, add the smallest repair contract, executor support, and focused tests on the isolated repair lineage, resolve the updated contract, and continue without asking for the same authority again. Otherwise stop and request only the missing repair authority. Never bypass the contract with a normal release.
 
 Keep a repair candidate untagged while source verification, representative migration rehearsal, candidate admission, or target preflight is failing. Record candidate commits, artifact digests, and attempt evidence instead of minting stable patch tags. Create the next immutable patch tag only after every pre-tag gate passes; retries of that tag never create another version.

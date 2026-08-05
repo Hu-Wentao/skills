@@ -330,6 +330,23 @@ dedicated ingress instance or obtain a separately governed host operation.
 Record the failed phase, fixed identity, target, and whether source bytes must
 change before choosing the next operation:
 
+1. Determine whether a stable tag exists and whether any artifact manifest was
+   persisted for the exact candidate and target.
+2. For a pre-tag artifact build or freeze failure, inspect the resolved task
+   contract and project profile for every declared artifact acquisition,
+   build, or transfer mode, including explicit overrides hidden by a
+   target-specific default.
+3. Compare those configured modes against the failed execution boundary before
+   changing source, resource thresholds, build limits, or retrying the same
+   deterministic failure.
+4. When no stable tag or artifact manifest exists, prefer an already-configured
+   mode that bypasses the failed build location while preserving the exact
+   commit, tree, target, required platform, and executor-owned digest and
+   identity verification.
+5. Never invent an unconfigured fallback, bypass the project executor, change
+   target implicitly, or switch modes after an artifact manifest or stable tag
+   has frozen the artifact identity.
+
 - Before a release tag exists, repair the authorized candidate and rerun its
   gates; do not manufacture a failed release identity.
 - For a transient transport, registry, resource-admission, or host failure,
