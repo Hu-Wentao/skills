@@ -31,6 +31,11 @@ last two commands inside that final image with `--standalone-root /app` (or its
 actual runtime root). Do not allowlist a dependency merely because an earlier
 build stage omits bytes that the final runtime stage intentionally supplies.
 
+Docker build contexts normally exclude `.git`. For a memory probe in such a
+context, pass `--workspace-root /app` (or the actual copied project root). The
+override must exactly equal the manifest's resolved `workspaceRoot`; it is not
+an escape hatch for moving the cold path or command outside the declared tree.
+
 The container and heap limits are distinct: the probe verifies the actual
 cgroup `memory.max`, while the source audit rejects a heap limit above the
 container or an increase over the declared baseline without measured evidence.

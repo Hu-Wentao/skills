@@ -14,12 +14,13 @@ function parseArgs(argv) {
   if (separator < 0 || separator === argv.length - 1) throw new Error("a build command is required after --");
   const command = argv.slice(separator + 1);
   const flags = argv.slice(0, separator);
-  const options = { manifest: "", app: "", evidence: "", cgroupRoot: "/sys/fs/cgroup" };
+  const options = { manifest: "", app: "", evidence: "", workspaceRoot: "", cgroupRoot: "/sys/fs/cgroup" };
   for (let index = 0; index < flags.length; index += 1) {
     const arg = flags[index];
     if (arg === "--manifest") options.manifest = flags[++index] ?? "";
     else if (arg === "--app") options.app = flags[++index] ?? "";
     else if (arg === "--evidence") options.evidence = flags[++index] ?? "";
+    else if (arg === "--workspace-root") options.workspaceRoot = flags[++index] ?? "";
     else if (arg === "--cgroup-root") options.cgroupRoot = flags[++index] ?? "";
     else throw new Error(`unknown argument: ${arg}`);
   }
@@ -102,13 +103,25 @@ export function classifyBuildExit({ code, signal, output, oomDelta, oomKillDelta
   return "process_exit";
 }
 
-function loadContract(manifestPath, appId) {
+export function loadProbeContract(manifestPath, appId, workspaceRootOverride = "") {
   const absoluteManifest = path.resolve(manifestPath);
   const manifest = JSON.parse(fs.readFileSync(absoluteManifest, "utf8"));
   if (manifest.schema !== SCHEMA) throw new Error(`manifest schema must be ${SCHEMA}`);
-  const repoRoot = findRepoRoot(path.dirname(absoluteManifest));
-  const workspaceRoot = path.resolve(path.dirname(absoluteManifest), manifest.workspaceRoot ?? ".");
-  if (!inside(workspaceRoot, repoRoot)) throw new Error("workspaceRoot escapes the repository");
+  const declaredWorkspaceRoot = path.resolve(path.dirname(absoluteManifest), manifest.workspaceRoot ?? ".");
+  let workspaceRoot;
+  if (workspaceRootOverride) {
+    workspaceRoot = path.resolve(workspaceRootOverride);
+    if (workspaceRoot !== declaredWorkspaceRoot) {
+      throw new Error(`--workspace-root resolves to ${workspaceRoot}; manifest declares ${declaredWorkspaceRoot}`);
+    }
+  } else {
+    const repoRoot = findRepoRoot(path.dirname(absoluteManifest));
+    workspaceRoot = declaredWorkspaceRoot;
+    if (!inside(workspaceRoot, repoRoot)) throw new Error("workspaceRoot escapes the repository");
+  }
+  if (!fs.statSync(workspaceRoot, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`workspaceRoot does not exist: ${workspaceRoot}`);
+  }
   const app = (manifest.apps ?? []).find((candidate) => candidate.id === appId);
   if (!app) throw new Error(`app not found in manifest: ${appId}`);
   if (!Number.isInteger(app.memory?.containerLimitMiB) || app.memory.containerLimitMiB <= 0) {
@@ -224,7 +237,7 @@ export async function runProbe({ app, workspaceRoot, coldPath, command, evidence
 async function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
-    const contract = loadContract(options.manifest, options.app);
+    const contract = loadProbeContract(options.manifest, options.app, options.workspaceRoot);
     const evidencePath = path.resolve(options.evidence);
     const result = await runProbe({
       ...contract,

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { auditContract } from "../audit-next-build-contract.mjs";
 import { auditStandaloneRoot } from "../audit-standalone-closure.mjs";
-import { classifyBuildExit, runProbe } from "../run-build-memory-probe.mjs";
+import { classifyBuildExit, loadProbeContract, runProbe } from "../run-build-memory-probe.mjs";
 import { smokeStandalone } from "../smoke-next-standalone.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +156,19 @@ test("build exit classification distinguishes cgroup OOM, V8 heap OOM, and bare 
   assert.equal(classifyBuildExit({ code: 134, signal: null, output: "FATAL ERROR: Reached heap limit", oomDelta: 0, oomKillDelta: 0 }), "v8_heap_oom");
   assert.equal(classifyBuildExit({ code: 137, signal: null, output: "", oomDelta: 0, oomKillDelta: 0 }), "process_exit_137");
   assert.equal(classifyBuildExit({ code: null, signal: "SIGKILL", output: "", oomDelta: 0, oomKillDelta: 0 }), "external_sigkill");
+});
+
+test("memory probe accepts an explicit workspace root in a Git-free container context", (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.rmSync(path.join(root, ".git"), { recursive: true });
+  const manifestPath = writeManifest(root);
+  const contract = loadProbeContract(manifestPath, "fixture", root);
+  assert.equal(contract.workspaceRoot, root);
+  assert.throws(
+    () => loadProbeContract(manifestPath, "fixture", path.dirname(root)),
+    /manifest declares/,
+  );
 });
 
 test("memory probe requires the exact cgroup v2 limit and persists exit evidence", async (t) => {
