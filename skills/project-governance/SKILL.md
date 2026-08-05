@@ -34,14 +34,11 @@ context exists. For other changes, follow the repository's planning,
 dirty-worktree, approval, commit, and deployment rules.
 
 When shared assessment storage is used, treat claim ownership as a completion
-gate. Put every claim that remains true without the consuming project in the
-shared assessment only. Keep the local `TECH-FIT-*` prose limited to project
-facts, project constraints, integration work or ownership, and the decision
-consequences of the pinned shared evidence. A local blocker must state the
-project-specific consequence and reference the pin; it must not restate the
-upstream mechanism, feature, license, maintenance, security, or generic risk.
-Run the sentence-level ownership audit in `dependency-evaluation.md` before
-handoff and repair every misplaced or duplicated claim.
+gate. Keep upstream and generally reusable claims in the shared assessment;
+keep project facts, consequences, integration ownership, and decisions in the
+local `TECH-FIT-*` record. Run the claim-partition and final ownership audit in
+`dependency-evaluation.md` before handoff. Do not apply this split to the
+complete local `TECH-EVAL-*` fallback.
 
 ## Use Deterministic Task Contracts
 

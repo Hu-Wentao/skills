@@ -1,5 +1,16 @@
 # External Dependency and Technology Evaluation
 
+## Contents
+
+- Preserve Authority
+- Gather Evidence
+- Select the Storage Contract
+- Write the Shared Upstream Assessment
+- Partition Claims Before Writing Locally
+- Write the Local Project-Fit Record
+- Complete Local Fallback
+- Verify Queryability
+
 ## Preserve Authority
 
 Evaluate current or proposed third-party libraries, frameworks, services, and
@@ -77,51 +88,68 @@ must not retroactively change a local conclusion.
 
 ## Partition Claims Before Writing Locally
 
-Complete a claim-ownership pass before drafting `TECH-FIT-*`:
+Apply this section only when a compatible shared assessment was successfully
+written or reused. The complete local `TECH-EVAL-*` fallback must retain both
+upstream evidence and project-fit analysis.
 
-1. Put a claim in the shared assessment when it is supported by upstream
-   evidence or remains true for another consuming project. This includes
-   capabilities, implementation mechanisms, dependencies, platform support,
-   version and release facts, license, maintenance, security behavior,
-   strengths, generic risks, and upstream review triggers.
-2. Put a claim in the local fit record only when it is supported by current
+Build a two-part claim inventory before drafting `TECH-FIT-*`:
+
+1. Put a claim in the shared inventory when its meaning and evidence do not
+   depend on the consuming project's state or policy. This includes upstream
+   capabilities, mechanisms, dependencies, platform support, version and
+   release facts, license, maintenance, security behavior, strengths, generic
+   risks, and upstream review triggers.
+2. Put a claim in the project inventory when it is supported by current
    project authority or describes a consequence unique to that project. This
    includes affected scope, existing alternatives, policy conflicts,
    integration work and ownership, migration cost, project blockers, fit,
    disposition, trial boundaries, and project review triggers.
-3. Write and upsert the shared assessment first. Draft the local record from
-   the project-only claim list plus the returned ID, revision, upstream ref,
-   and normalized repository URL; do not draft it by summarizing the shared
-   record.
+3. Split a mixed claim into its reusable premise and project-specific
+   consequence. Put the premise in the shared assessment and the consequence
+   in the local record; do not copy the full premise into both.
+4. Upsert the shared assessment first. Draft the local record from the project
+   inventory plus the returned ID, revision, upstream ref, and normalized
+   repository URL. Do not use a summary of the shared record as the local
+   draft.
 
-Apply this sentence test to every local paragraph and list item:
+The local record may use a short bridge phrase that names the relevant shared
+section or finding when the project consequence would otherwise be ambiguous.
+The phrase must point to the pinned shared assessment and must not repeat
+implementation details, version facts, evidence links, feature lists, or a
+second explanation of the upstream claim.
 
-- If removing the project name and local context leaves a useful statement
-  about the technology, move that statement to the shared assessment.
-- If the statement's only evidence is an upstream page, source file, release,
-  issue, or package registry, keep it out of local prose.
-- To record a blocker, state the consuming project's rule or condition and its
-  decision consequence, then refer to the pinned assessment. Do not repeat the
-  upstream facts that caused the consequence.
-
-For example, do not write this in a local fit record:
+For example, do not duplicate the reusable premise in a local fit record:
 
 > The candidate requires `SYS_PTRACE`, uses seccomp, supports only Linux for
-> its core path, and its latest release is `b390`.
+> its core path, and its latest release is `b390`; therefore it conflicts with
+> this project's least-privilege policy.
 
-Write the project implication instead:
+Keep the detailed premise in the shared assessment and write the project
+consequence with a bounded bridge:
 
-> The project's least-privilege policy blocks this candidate on managed hosts;
-> the pinned shared assessment owns the underlying platform and privilege
-> evidence.
+> Given the pinned shared assessment's Security finding on elevated tracing
+> privileges, this project's least-privilege policy blocks the candidate on
+> managed hosts.
 
-The normalized repository URL is the only upstream navigation link that
-belongs locally. Keep official evidence links and generic upstream review
-triggers in the shared assessment. Before handoff, compare both records and
-remove every local feature list, architecture description, license or version
-fact, maintenance summary, security description, and generic risk that the
-shared record already owns. Do not report the evaluation complete until this
-ownership audit passes.
+Audit every final local paragraph and list item:
+
+- Classify it as a project fact, project consequence or decision, or a bounded
+  bridge plus project consequence. Split mixed items before classifying them.
+- Move an upstream-only item to the shared assessment. A statement whose only
+  authority is an upstream page, source file, release, issue, or package
+  registry is upstream-only.
+- Use removal of the project name and local context as a secondary check: if a
+  useful technology claim remains, it probably belongs in shared storage.
+- Fail the handoff if any local item has no project-specific authority or
+  consequence, or if either record repeats the other's complete claim.
+
+The normalized repository URL is the only external upstream navigation link
+that belongs locally; links to project-owned authority may also remain. Keep
+official upstream evidence links and generic upstream review triggers in the
+shared assessment. Before handoff, compare the final shared and local records,
+remove duplicated upstream descriptions, and confirm that the local decision
+is still understandable from its project facts, bounded bridges, and exact
+shared pin. Do not report the evaluation complete until this audit passes.
 
 ## Write the Local Project-Fit Record
 
@@ -144,10 +172,10 @@ Keep project constraints, integration cost, material gaps, blockers, fit
 reasoning, and the project-specific recommendation in bounded prose. Link the
 normalized shared source URL for human navigation, but do not duplicate the
 shared feature inventory, architecture, license, maintenance, security, or
-generic risk analysis. Mention an upstream condition only through its pinned
-project consequence; do not copy or paraphrase the condition itself. The fit
-record's revision pin remains unchanged until a new project evaluation
-explicitly adopts a newer shared revision.
+generic risk analysis. Use only the bounded bridge allowed above when a
+project consequence needs an upstream premise. The fit record's revision pin
+remains unchanged until a new project evaluation explicitly adopts a newer
+shared revision.
 
 ## Complete Local Fallback
 
