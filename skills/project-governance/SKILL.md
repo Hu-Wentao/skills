@@ -193,6 +193,18 @@ stakeholders decide meanings, context boundaries, and accepted terminology.
 
 ## Govern Git, Releases, and Deployment
 
+Use exactly one governed source-delivery mode for every release/deployment:
+`archive` or `github`. Resolve the project profile's deterministic source-
+delivery command and its `archive|github` contract parameter before execution.
+Do not invent a third mode, manually enumerate files, copy a worktree, use
+`rsync` for source acquisition, or run server-side `git clone`, `git fetch`,
+or `git pull` against a moving ref. Read [source-delivery.md](references/source-delivery.md) for the
+mode-specific invariants. Bind archive creation and manifest verification to a
+deterministic source-preparation command, and bind transfer, receiver
+verification, extraction, source execution, cleanup, and failure propagation
+to the deterministic deployment controller. AI must invoke the contracted
+workflow and must not recreate either boundary as shell snippets.
+
 Use `git snapshot`, `release inspect`, and the applicable normal, promotion, or repair plan before semantic release decisions. Invoke `release run`, `release promote`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
 
 Treat a request for a full release or release-and-deploy as authority over an

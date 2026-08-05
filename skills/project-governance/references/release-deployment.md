@@ -249,6 +249,18 @@ Keep explicit contracted parameters as per-run overrides. A default-mode change
 does not authorize a release, deployment, retry, promotion, or a change to a
 frozen tag.
 
+## Source Delivery
+
+Use exactly one source-delivery mode: `archive` or `github`. The project
+profile must declare the deterministic source-preparation command and the
+deployment controller that owns transport, receiver verification, extraction,
+source execution, cleanup, and failure propagation. The task contract must
+expose only that enum plus every required mode-specific input. Read
+[source-delivery.md](source-delivery.md) for the required archive and GitHub
+invariants. Do not make a release by copying a worktree, enumerating helper
+files, using `rsync` for source acquisition, or asking the server to pull a
+moving Git ref.
+
 ## Govern Shared Host Ingress
 
 Classify ingress, reverse-proxy, load-balancer, and tunnel ownership before an
