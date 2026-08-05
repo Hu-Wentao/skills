@@ -1,4 +1,0 @@
-interface:
-  display_name: "Project Compose Resource Diagnostics"
-  short_description: "Fast-path instance, ingress, deployment, and resource incidents."
-  default_prompt: "Use $project-compose-resource-diagnostics to quickly diagnose a friday-relay llm or llm-dev outage, ingress drift, partial deployment, or resource incident and return the safest authorized recovery boundary."
