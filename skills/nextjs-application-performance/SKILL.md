@@ -97,7 +97,9 @@ build`, or equivalent commands in a long-running service's `command` or
   workspace is missing from the artifact.
 - Measure a cache-cold production build inside the declared container memory
   limit. Preserve peak RSS, exit code/signal, cgroup OOM deltas, and the
-  classified exit reason. Exit `137` alone is not OOM evidence.
+  classified exit reason. The probed process must see the exact finite
+  `memory.max`; an outer BuildKit-daemon limit does not admit a sandbox that
+  reports `max`. Exit `137` alone is not OOM evidence.
 - Do not use a larger V8 heap, `resolve.symlinks = false`, or
   `optimizePackageImports` as an unevidenced default repair. Require a
   before/after experiment tied to the observed failure and keep the real

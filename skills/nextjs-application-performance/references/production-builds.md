@@ -40,6 +40,15 @@ The container and heap limits are distinct: the probe verifies the actual
 cgroup `memory.max`, while the source audit rejects a heap limit above the
 container or an increase over the declared baseline without measured evidence.
 
+Run the memory probe only in the process whose cgroup namespace exposes that
+exact finite limit. A Docker BuildKit `RUN` sandbox can report
+`memory.max=max` even when the outer BuildKit daemon container is limited. Do
+not treat the daemon's limit, a build argument, or a claimed host limit as
+equivalent evidence. Use a regular container with an explicit memory limit for
+the cold build (for example `docker run --memory=4g ...`) or an external monitor
+that reads the exact worker cgroup. Keep final-artifact closure and runtime
+smoke as a separate gate; they may still run in the final Docker stage.
+
 The project may invoke the installed copies under
 `.agents/skills/nextjs-application-performance/scripts/`. Repository CI must
 own its manifest and commands; an installed skill on a developer machine is

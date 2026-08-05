@@ -193,4 +193,16 @@ test("memory probe requires the exact cgroup v2 limit and persists exit evidence
   assert.equal(result.reason, "success");
   assert.equal(result.containerLimitMiB, 640);
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, "utf8")), result);
+  fs.writeFileSync(path.join(cgroupRoot, "memory.max"), "max\n");
+  await assert.rejects(
+    runProbe({
+      app: { id: "fixture", memory: { containerLimitMiB: 640, heapLimitMiB: 512 } },
+      workspaceRoot: root,
+      coldPath: path.join(root, "another-cold-output"),
+      command: [process.execPath, "-e", "process.exit(0)"],
+      evidencePath,
+      cgroupRoot,
+    }),
+    /not a finite numeric cgroup value/,
+  );
 });
