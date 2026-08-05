@@ -7,6 +7,12 @@ description: Design, create, maintain, edit, batch-update, verify, optimize, and
 
 Work with imperfect Markdown according to both its current state and the requested operation. A persistent `mdq` query contract makes record identity, boundaries, fields, recovery, and optional indexing deterministic. It does not make the index authoritative and does not by itself authorize a write.
 
+## Default Authoring Representation for AI-Maintained Documents
+
+When creating new Markdown content or materially extending a document that an AI will maintain, default to a heading hierarchy for records and nested sections or fields. Do not introduce Markdown tables merely to make repeated content compact; headings keep records easier to retrieve and edit independently.
+
+Use `table-row` and `column` only when preserving an existing authored table, when the user explicitly requests a table, or when a flat matrix is essential to the document's intended representation. When maintaining an existing table, preserve it unless conversion is explicitly authorized; this preference does not by itself authorize structural rewrites.
+
 ## Classify Document State and Operation
 
 Use this matrix before acting:
@@ -94,7 +100,7 @@ For a new document:
 
 1. Name the repeated domain entity before choosing Markdown syntax. A document title is not the record when the body contains repeated requirements, tickets, scenarios, or other independently queried entities.
 2. Define the stable key, the minimum reusable query intents, expected result cardinality, bounded projection, payload limits, and source-located writable fields.
-3. Choose the representation from the access pattern: headings and labels for prose-rich or machine-written records; `table-row` and `column` for existing or human-readable flat GFM matrices.
+3. Choose the representation from the access pattern: for new AI-generated or AI-maintained content, default to heading records with nested sections or labels; use `table-row` and `column` only for existing, explicitly requested, or essential flat GFM matrices.
 4. Create the profile and authored records together. Do not add speculative fields or one-off query values.
 5. Run `validate`, `diagnose`, and `verify`; query known first, middle, last, absent, and prose-only identities. Do not hand off a contract that exposes one wrapper record around multiple stable inner identities.
 

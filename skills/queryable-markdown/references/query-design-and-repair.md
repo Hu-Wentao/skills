@@ -32,11 +32,13 @@ Persist only reusable access paths. Do not add a named query for a single litera
 
 Use the query and write shape to choose the source form:
 
+For new AI-generated or AI-maintained authored content, use a heading hierarchy with nested sections or labels by default. Do not add a Markdown table only for compactness. Preserve an existing table unless the user explicitly authorizes conversion; choose a table for new content only when the user requests it or a flat matrix is essential to the document's intended representation.
+
 | Shape | Preferred representation |
 | --- | --- |
 | Prose-rich records, frequent machine edits | One heading or marker per record with stable labels |
 | Flat repeated rows, human or mixed readers | GFM table with `table-row` boundaries and `column` keys and fields |
-| Machine-only read and write | Prefer record blocks over wide tables unless an existing flat table must be preserved |
+| Machine-only read and write | Prefer heading-based record blocks over wide tables unless an existing flat table must be preserved |
 | Narrative document with no repeated identity | Heading records only when headings are truly independently addressed |
 
 `actors.read` and `actors.write` accept `human`, `machine`, or `mixed`. `machine` includes deterministic scripts and AI agents. Actor metadata guides representation; it never grants write authority.

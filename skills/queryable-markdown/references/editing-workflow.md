@@ -61,7 +61,7 @@ When creating a new document:
 
 1. Name the repeated domain entity and select an explicit record key convention.
 2. Define the minimum reusable query intents, expected cardinality, bounded projections, payload limits, and writable fields.
-3. Choose the representation from those access paths: headings and labels for prose-rich records, or v2 table rows and columns for flat GFM matrices.
+3. Choose the representation from those access paths: heading-based records with nested sections or labels by default for new AI-generated or AI-maintained content; v2 table rows and columns only for existing, explicitly requested, or essential flat GFM matrices.
 4. Write the contract and requested authored content together.
 5. Avoid empty example records, speculative fields, one-off query values, and generated indexes unless repeated or large-document queries justify one.
 6. Run `verify`. Query every initial record when the document is small; otherwise sample the first, middle, last, incomplete, and irregular records plus an absent key and a prose-only ID mention.
