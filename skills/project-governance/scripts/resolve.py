@@ -14,7 +14,7 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "9"
+RESOLVER_VERSION = "10"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
@@ -1191,6 +1191,8 @@ def resolve_task(
         hash_input = {
             "resolver_version": RESOLVER_VERSION,
             "state": state,
+            "base": base_text,
+            "profile_text": profile_text,
             "ports": port_config,
             "config": config_text,
             "release_config": release_config_text,

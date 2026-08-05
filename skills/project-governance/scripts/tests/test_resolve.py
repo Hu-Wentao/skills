@@ -287,6 +287,35 @@ tasks:
         )
         self.assertEqual(selected_manifest["entry_command"][-1], "collect")
 
+    def test_v3_instructions_id_tracks_policy_content(self) -> None:
+        config_root = self.write_v3_config()
+        first = self.run_resolver(
+            "--task", "defect-diagnosis", "--format", "json"
+        )
+        repeated = self.run_resolver(
+            "--task", "defect-diagnosis", "--format", "json"
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        first_manifest = json.loads(first.stdout)
+        repeated_manifest = json.loads(repeated.stdout)
+        self.assertEqual(
+            first_manifest["instructions_id"], repeated_manifest["instructions_id"]
+        )
+
+        (config_root / "project.md").write_text(
+            "# Project Defect Policy\n\nRequire updated project behavior.\n",
+            encoding="utf-8",
+        )
+        changed = self.run_resolver(
+            "--task", "defect-diagnosis", "--format", "json"
+        )
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        changed_manifest = json.loads(changed.stdout)
+        self.assertNotEqual(
+            first_manifest["instructions_id"], changed_manifest["instructions_id"]
+        )
+
     def test_missing_release_task_uses_managed_contract_instead_of_mapping_error(self) -> None:
         self.write_port_config()
         result = self.run_resolver(
