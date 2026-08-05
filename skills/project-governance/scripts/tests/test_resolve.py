@@ -208,6 +208,7 @@ tasks:
             "document-maintenance",
             "domain-knowledge",
             "port-allocation",
+            "resource-diagnosis",
             "release-deployment",
         ):
             first = self.run_resolver("--task", task)

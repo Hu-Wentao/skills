@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, and feedback lifecycles. Use for plan or specification implementation in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, and archives; third-party technology assessment or replacement; verification, branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for plan or specification implementation in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, and archives; third-party technology assessment or replacement; verification, branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, host or Compose CPU/memory/OOM/disk incidents, resource pressure, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -66,6 +66,11 @@ Supported release aliases include `release sync-main-plan`, `release sync-main`,
 `release repair-prepare`, `release repair-plan`, and `release repair`. A
 project-owned contract may expose only a subset.
 
+Supported resource diagnostics aliases include `resource diagnose`, which runs
+the configured read-only instance availability collection. Use the task
+contract's additional resource-evidence operation when the fast path says that
+historical CPU, memory, OOM, disk, or capacity evidence is needed.
+
 Supported domain knowledge aliases are `domain inspect`, `domain get`,
 `domain search`, `domain plan`, `domain maintain`, and `domain verify`.
 The managed contract defaults to `docs/domain-concepts.md` and the `lite`
@@ -91,6 +96,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 - For ubiquitous language, stable concept identifiers, aliases, bounded-context ownership, glossaries, or semantic relationships, resolve `domain-knowledge` and read [domain-knowledge.md](references/domain-knowledge.md). Keep requirements, baselines, plans, code, and tests authoritative for their own facts.
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
 - For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
+- For host or Compose availability, CPU, memory, OOM, disk, restart, exit, capacity, or resource-pressure diagnosis, resolve `resource-diagnosis`; read [resource-diagnostics.md](references/resource-diagnostics.md) and use the project-owned collector profile.
 - Before creating, changing, reviewing, or accepting any host-visible port,
   resolve `port-allocation` and use `project-segments.py`; this includes
   loopback, LAN, Tailscale, monitoring, infrastructure, and standard-protocol

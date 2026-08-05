@@ -53,6 +53,10 @@ tasks:
     base: references/defect-governance.md
     profile: policy.md
     contract: contract.json
+  resource-diagnosis:
+    base: references/resource-diagnostics.md
+    profile: policy.md
+    contract: resource-contract.json
   release-deployment:
     base: references/release-deployment.md
     profile: policy.md
@@ -62,6 +66,8 @@ tasks:
         )
         self.contract_path = config_root / "contract.json"
         self.write_contract("read_only")
+        self.resource_contract_path = config_root / "resource-contract.json"
+        self.write_resource_contract()
         (config_root / "release-contract.json").write_text(
             json.dumps(
                 {
@@ -94,6 +100,37 @@ tasks:
                             ("repair-plan", "read_only"),
                             ("repair", "external_write"),
                         )
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def write_resource_contract(self) -> None:
+        self.resource_contract_path.write_text(
+            json.dumps(
+                {
+                    "schema": "project-governance.task-contract.v1",
+                    "id": "test.resource.v1",
+                    "task": "resource-diagnosis",
+                    "operations": {
+                        "collect": {
+                            "description": "Collect resource evidence.",
+                            "command": [sys.executable, "collector.py"],
+                            "mutability": "read_only",
+                            "authorization": "none",
+                            "parameters": {
+                                "target": {
+                                    "flag": "--target",
+                                    "type": "string",
+                                    "required": True,
+                                    "enum": ["llm-dev", "llm"],
+                                }
+                            },
+                            "output_schema": "test.evidence.v1",
+                            "exit_codes": {"0": "evidence_collected"},
+                            "next_states": ["semantic_classification"],
+                        }
                     },
                 }
             ),
@@ -156,6 +193,12 @@ tasks:
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(output["argv"], ["--request-id", "req_test"])
+
+    def test_resource_diagnose_alias_executes_read_only_collection(self) -> None:
+        result = self.invoke("resource", "diagnose", "--target", "llm")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["argv"], ["--target", "llm"])
 
     def test_rejects_parameter_outside_contract(self) -> None:
         result = self.invoke("defect", "collect", "--unknown", "value")

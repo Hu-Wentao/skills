@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern domain knowledge, plans, releases, and defects"
-  default_prompt: "Use $project-governance to govern this project’s domain terminology, concept catalogs, plans, implementation completion handoffs, dependencies, releases, recovery, defects, and verification."
+  short_description: "Govern domains, resources, plans, releases, and defects"
+  default_prompt: "Use $project-governance to govern this project’s domain terminology, concept catalogs, resource diagnostics, plans, implementation completion handoffs, dependencies, releases, recovery, defects, and verification."

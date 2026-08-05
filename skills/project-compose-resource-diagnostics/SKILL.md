@@ -1,9 +1,31 @@
 ---
 name: project-compose-resource-diagnostics
-description: Diagnose friday-relay instance outages, HTTP 502/503/504, ingress-to-Compose port drift, partial deployments, container health/restart/exit, CPU, memory, OOM, disk pressure, and deployment-capacity risk. Use when llm or llm-dev is offline, interrupted, unreachable, unhealthy, returning gateway errors, or suspected of resource exhaustion; use the single-shot availability fast path before Provider/request diagnosis when no exact req_ id or Provider evidence exists.
+description: Diagnose friday-relay instance outages, HTTP 502/503/504, ingress-to-Compose port drift, partial deployments, container health/restart/exit, CPU, memory, OOM, disk pressure, and deployment-capacity risk through the governed resource-diagnosis workflow. Use when llm or llm-dev is offline, interrupted, unreachable, unhealthy, returning gateway errors, or suspected of resource exhaustion; use the single-shot availability fast path before Provider/request diagnosis when no exact req_ id or Provider evidence exists.
 ---
 
 # Project Compose Resource Diagnostics
+
+## Enter Through Project Governance
+
+For a configured Friday Relay repository, resolve the project-governance
+`resource-diagnosis` task before collecting evidence:
+
+```bash
+uv run python <project-governance-skill-root>/scripts/resolve.py \
+  --cwd <project-root> --task resource-diagnosis --operation collect --format json
+```
+
+Consume the resolved target parameters, output schema, mutability,
+authorization, and next states. Run the declared `resource diagnose` operation
+through the governance runner when the project exposes that alias. If the
+project has no resource-diagnosis contract, use the generic fast path below,
+report the governance gap, and do not infer project targets or mutation
+authority.
+
+When the fast path or the user's question requires historical CPU, memory, OOM,
+disk, or capacity evidence, resolve the contract's resource-evidence operation
+and run it through the same read-only boundary. Do not bypass the contract by
+inventing target flags, Beszel systems, or recovery commands.
 
 ## Start With Runtime Evidence
 

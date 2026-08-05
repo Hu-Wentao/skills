@@ -16,6 +16,7 @@ from resolve import ResolveError, resolve_task
 
 ALIASES = {
     ("defect", "collect"): ("defect-diagnosis", "collect"),
+    ("resource", "diagnose"): ("resource-diagnosis", "collect"),
     ("docs", "audit"): ("document-maintenance", "audit"),
     ("docs", "inspect"): ("document-maintenance", "inspect"),
     ("docs", "plan"): ("document-maintenance", "plan"),
@@ -177,7 +178,8 @@ def main() -> int:
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument(
-        "domain", choices=("defect", "docs", "domain", "git", "release", "execute")
+        "domain",
+        choices=("defect", "docs", "domain", "git", "release", "resource", "execute"),
     )
     parser.add_argument("action", nargs="?")
     parser.add_argument("--task")

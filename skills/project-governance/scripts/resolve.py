@@ -24,6 +24,7 @@ DEFAULT_BASES = {
     "domain-knowledge": "references/domain-knowledge.md",
     "git-snapshot": "references/git-snapshot.md",
     "port-allocation": "references/port-allocation.md",
+    "resource-diagnosis": "references/resource-diagnostics.md",
     "release-deployment": "references/release-deployment.md",
 }
 PORT_INSTANCES = {
