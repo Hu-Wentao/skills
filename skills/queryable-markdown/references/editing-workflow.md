@@ -28,14 +28,19 @@ Use this workflow only for a document with a valid persistent `mdq` contract, or
 
 ## 2. Preflight
 
-For an existing contracted document, run:
+For every existing contracted document, run the cheap structural preflight:
 
 ```bash
 uv run "$SKILL_DIR/scripts/mdq.py" validate <document.md>
+```
+
+Run `diagnose` before editing when validation or a prior query reports drift or recovery, or when the mutation can change identity, headings, markers, field labels, boundaries, contract rules, collection semantics, or index behavior:
+
+```bash
 uv run "$SKILL_DIR/scripts/mdq.py" diagnose <document.md>
 ```
 
-Stop the record edit if either command reports an error that prevents reliable identity or boundaries. Warnings about deliberately absent optional fields may be acceptable; record them for the handoff.
+Stop the record edit if the required preflight reports an error that prevents reliable identity or boundaries. Warnings about deliberately absent optional fields may be acceptable; record them for the handoff. A clean, exact prose or field-value update inside an unchanged record does not require a diagnostic dump before the write.
 
 For an update, rename, or delete, query the exact ID and require one structured match:
 
@@ -175,18 +180,30 @@ The command patches only the authored value span. It must preserve label spellin
 
 ## 11. Verify and Hand Off
 
-After any successful source or contract patch, run:
+Choose the smallest sufficient post-write verification tier:
+
+### Tier 1 — Stable record content
+
+Use this for prose or an existing field value changed without modifying the record key, heading, marker, field label, boundary, Front Matter, contract, or index policy:
 
 ```bash
 uv run "$SKILL_DIR/scripts/mdq.py" validate <document.md>
-uv run "$SKILL_DIR/scripts/mdq.py" diagnose <document.md>
 uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> --id <affected-id>
-uv run "$SKILL_DIR/scripts/mdq.py" verify <document.md> # when v2 queries are declared
 ```
 
-Also query an unaffected record and an absent key, and run a literal search whose text appears in a different record. For deletion or rename, query the old identity as the negative case.
+Confirm the requested value and source range. When both checks remain clean, do not add unaffected-record, absent-key, prose-only, or full-diagnostic checks.
 
-If the profile declares an index, rebuild it only after these checks pass:
+### Tier 2 — Record structure or identity
+
+Use this for add, delete, rename, reorder, heading-level, marker, field-label, or boundary changes. Run `validate` and `diagnose`; query every affected identity and one adjacent or unaffected record when present. Query the old or expected-absent identity, and run a prose-only search when candidate-vs-identity behavior could have changed.
+
+### Tier 3 — Contract or collection semantics
+
+Use this for creation, conversion, contract repair, profile/query/index-policy changes, batch writes, or any mutation that can reinterpret multiple records. Run `validate`, `diagnose`, and `verify`. Query representative first, middle, last, incomplete, and irregular records when present, plus an absent identity and a phrase appearing only as prose.
+
+Escalate one tier when validation adds diagnostics, extracted source ranges move unexpectedly, or an applicable governance workflow explicitly requires stronger evidence. Never downgrade an explicit verification requirement, but do not run Tier 3 merely because authored bytes changed.
+
+If the applicable tier or source write requires a declared index refresh, rebuild it only after the checks pass:
 
 ```bash
 uv run "$SKILL_DIR/scripts/mdq.py" index <document.md>
@@ -194,6 +211,6 @@ uv run "$SKILL_DIR/scripts/mdq.py" index <document.md>
 
 Then rerun the affected exact query and confirm the index is verified against fresh parsing. Inspect the final diff for unauthorized control-region, record, or formatting changes.
 
-Report the operation type, affected keys, contract changes, markers, index changes, diagnostics, compatibility limits, unresolved references, and whether any unrelated authored content changed.
+Report the operation type, verification tier, affected keys, contract changes, markers, index changes, diagnostics, compatibility limits, unresolved references, and whether any unrelated authored content changed.
 
 For a batch update, additionally report the processed file scope, IDs and conditions, selected and changed counts, whether the run was a preview or applied write, rebuilt index paths, and any rollback diagnostics.

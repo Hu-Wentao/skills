@@ -117,12 +117,12 @@ Place every contract in YAML Front Matter at byte zero, delimited by `---`, with
 
 Use [editing-workflow.md](references/editing-workflow.md) for every authored-record write. The required transaction is:
 
-1. Validate and diagnose the current contract before editing.
+1. Validate the current contract before editing; diagnose before editing only when the document already reports drift or the mutation can change identity, boundaries, contract rules, markers, fields, or index behavior.
 2. Resolve the exact target and reject ambiguous identity.
 3. Read only the target range and the minimum neighboring style evidence.
 4. Classify the mutation and its authorization.
 5. Apply a minimal source patch within the authorized range.
-6. Revalidate, diagnose, and rerun exact and negative queries.
+6. Apply the smallest verification tier below and escalate when results are unexpected.
 7. Rebuild a declared index after the source edit succeeds.
 8. Inspect the final diff for out-of-scope changes.
 
@@ -174,15 +174,20 @@ uv run "$SKILL_DIR/scripts/mdq.py" optimize <document.md> --id <exact-id> --appl
 
 `actors.write: machine` describes authorship; it does not authorize maintenance. `locked` prevents automatic changes, absent policy defaults to proposal, and `auto` permits only declared scopes. Never rewrite authored content during query-contract optimization.
 
-After any contract or contracted-record write, run:
+Use risk-proportional verification after a contracted write:
+
+- **Tier 1 — stable record content:** For prose or an existing field value changed without touching its key, heading, marker, field label, boundary, Front Matter, contract, or index policy, run `validate` and query the affected exact record. Do not require `diagnose`, unaffected-record queries, or an absent-key matrix when validation and the exact query remain clean.
+- **Tier 2 — record structure or identity:** For add, delete, rename, reorder, heading-level, marker, field-label, or boundary changes, run `validate` and `diagnose`; query every affected identity, one adjacent or unaffected record when present, and the expected absent or old identity. Use a prose-only search when candidate-vs-identity behavior could change.
+- **Tier 3 — contract or collection semantics:** For creation, conversion, contract repair, profile/query/index-policy changes, batch writes, or changes that can reinterpret many records, run `validate`, `diagnose`, and `verify`; query representative first, middle, last, incomplete, and irregular records when present, plus an absent identity and a prose-only mention. Rebuild and recheck a declared index.
+
+Always escalate to the next tier when validation reports new diagnostics, a source range moves unexpectedly, or the requested governance workflow explicitly requires stronger evidence. Do not run the full matrix merely because authored bytes changed.
+
+The common Tier 1 commands are:
 
 ```bash
 uv run "$SKILL_DIR/scripts/mdq.py" validate <document.md>
-uv run "$SKILL_DIR/scripts/mdq.py" diagnose <document.md>
-uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> --id <representative-id>
+uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> --id <affected-id>
 ```
-
-Check at least the edited or created record, one unaffected record when present, an absent ID, and a phrase that appears only in another record's prose. Review duplicate keys, missing fields, conflicts, orphan markers, heading drift, fallback recovery, and profile errors separately from query matches.
 
 Build or rebuild a declared sidecar index only during an authorized contracted-document write or explicit index-maintenance request:
 
@@ -203,6 +208,7 @@ For writes, report:
 - record IDs added, changed, renamed, or removed;
 - for collection operations, selected paths, selectors, matched and changed counts, and whether a preview or applied write ran;
 - validation diagnostics separately from business content;
+- the verification tier used and why it was sufficient;
 - whether markers or an index were created or changed;
 - compatibility limits and external references not verified;
 - whether any business content outside the requested mutation changed;
