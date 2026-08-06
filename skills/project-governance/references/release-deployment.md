@@ -420,6 +420,37 @@ time to first actionable failure, per-gate duration, blocked dependencies,
 cache reuse, and total qualification duration. Passing timing checks remains
 operational evidence, not proof of product semantics.
 
+### Establish generated outputs before tests
+
+Treat generated output consumed through a package export, generated client,
+compiled schema, code-generation entry point, or equivalent build-backed import
+as a prerequisite of the consuming test gate. A checkout may contain stale or
+missing ignored output even when its tracked source is clean, so test discovery
+must not rely on whatever output a prior command happened to leave behind.
+
+For each consuming gate, require the project contract or its deterministic
+executor to:
+
+1. detect changes to package export maps, generated entry points, their source,
+   build configuration, workspace dependency graph, lockfile, or toolchain;
+2. select the smallest affected producer dependency closure and build it in
+   dependency order before starting consumers;
+3. invalidate the selected producers' declared generated directories before
+   rebuilding, so an old file cannot satisfy the gate;
+4. verify every selected export or generated entry target exists after the
+   build and before test collection; and
+5. include the producer inputs and generated-output verification in the gate's
+   reuse digest and private evidence.
+
+Keep the commands and output-directory declarations project-owned. Do not
+guess package-manager commands, delete undeclared directories, or expand an
+affected build into a full-workspace build without a project contract. If a
+test is started before these prerequisites and fails only because a generated
+entry is absent, classify the incident as qualification orchestration and fix
+the gate ordering; do not count it as a product defect, deterministic candidate
+fingerprint, or transient retry. If the declared build or post-build export
+verification fails, retain that failure as the actionable build evidence.
+
 ## Separate Maintenance Validation from Release Gates
 
 Tests that validate a release-governance skill, its project configuration,

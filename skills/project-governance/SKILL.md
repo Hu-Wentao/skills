@@ -214,6 +214,18 @@ failed gate, and require `release qualify` before `release run`. Treat a valid
 qualification receipt as the pre-tag source/artifact admission boundary; do not
 use `release run` to discover builds or repeat unchanged deterministic failures.
 
+When a focused or candidate test resolves package exports that point to
+generated output, establish that output as an explicit test prerequisite in the
+isolated candidate worktree. Use the project-owned affected-package build in
+dependency order, invalidate stale output for that affected closure, and verify
+that every changed export target exists before starting the test. Do not require
+an unrelated full-workspace build unless the project contract declares it. A
+missing generated export discovered before this prerequisite is satisfied is a
+qualification-orchestration defect, not a product-test failure and not a
+candidate repair fingerprint. Read the generated-output section in
+[release-deployment.md](references/release-deployment.md) when package exports,
+generated clients, compiled schemas, or other build-backed imports change.
+
 Keep candidate gates separate from tests that validate the release governance
 skill, its project configuration, or its repository-owned controllers. Declare
 those tests as an explicit read-only maintenance operation in the project task
