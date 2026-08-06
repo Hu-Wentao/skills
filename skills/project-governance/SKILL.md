@@ -62,7 +62,8 @@ Use `--authorized` only after the current user authorizes a non-read-only operat
 
 Supported release aliases include `release sync-main-plan`, `release sync-main`,
 `release inspect`, `release bootstrap-plan`, `release bootstrap`, `release plan`, `release prepare-plan`, `release prepare`,
-`release run`, `release promote-plan`, `release promote`, `release retry`, `release repair-prepare-plan`,
+`release doctor-plan`, `release doctor`, `release status`, `release reproduce`,
+`release qualify-plan`, `release qualify`, `release run`, `release promote-plan`, `release promote`, `release retry`, `release repair-prepare-plan`,
 `release repair-prepare`, `release repair-plan`, and `release repair`. A
 project-owned contract may expose only a subset.
 
@@ -206,6 +207,20 @@ to the deterministic deployment controller. AI must invoke the contracted
 workflow and must not recreate either boundary as shell snippets.
 
 Use `git snapshot`, `release inspect`, and the applicable normal, promotion, or repair plan before semantic release decisions. Invoke `release run`, `release promote`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
+
+When the project contract exposes Doctor and qualification operations, run
+`release doctor` for fast structured diagnosis, use `release reproduce` for one
+failed gate, and require `release qualify` before `release run`. Treat a valid
+qualification receipt as the pre-tag source/artifact admission boundary; do not
+use `release run` to discover builds or repeat unchanged deterministic failures.
+
+Keep candidate gates separate from tests that validate the release governance
+skill, its project configuration, or its repository-owned controllers. Declare
+those tests as an explicit read-only maintenance operation in the project task
+contract. Run that operation after changing the governed skill, controllers, or
+their focused tests; never inject it into normal inspect, prepare, doctor,
+qualify, run, promote, repair, or retry execution. Product and candidate tests
+remain release gates only when the project contract declares them as such.
 
 Treat a request for a full release or release-and-deploy as authority over an
 already committed source identity, not as authority to commit the control

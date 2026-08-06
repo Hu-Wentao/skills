@@ -378,6 +378,66 @@ continue until verified keeps already-authorized retry or repair operations
 active; it does not convert repeated deterministic failures into transient
 ones or broaden the mutation scope.
 
+## Diagnose and Qualify Before Publishing
+
+For a project that supports candidate qualification, keep fast diagnosis,
+production-shape qualification, and publication/deployment as separate
+contracted operations:
+
+1. Run the fast diagnostic graph against one exact committed candidate. Emit
+   the first actionable failure immediately while continuing independent safe
+   gates; mark dependent gates as blocked instead of hiding them.
+2. Persist private per-gate evidence, stable failure codes, input digests,
+   fingerprints, durations, cache decisions, and a deterministic reproduction
+   operation. Do not expose detailed logs or sensitive values in progress
+   events.
+3. Give every diagnostic and production-shape check an explicit project-owned
+   timeout, terminate its process group at the boundary, and retain bounded
+   progress output plus private full stdout/stderr. A timeout is a classified
+   failure with evidence, never permission to wait indefinitely.
+4. Reuse a successful gate only when its declared input digest, toolchain, and tool policy
+   remain identical. After a repair, rerun the failed gate and its downstream
+   dependencies rather than every unrelated gate.
+5. Run production-shape qualification before creating a stable tag. Bind its
+   receipt to the exact commit, tree, target, artifact mode, source evidence,
+   and immutable artifact manifests.
+6. Make publication/deployment consume that receipt. It may refresh short-lived
+   target admission but must not rediscover source, rebuild artifacts, or use
+   the live deployment as the first realistic integration test.
+
+Persist a technical release-task identity when attempts can cross processes or
+worktrees. Track cumulative qualification duration and failure fingerprints,
+but never persist or broaden user authorization. Reject an unchanged
+deterministic failure, bound transient retries, and trip a project-configured
+circuit breaker after the declared distinct-failure or duration budget. A
+generic request to continue does not override that breaker.
+Treat a process that disappeared with a running attempt as an interrupted
+failure and count it against the retry and duration budgets; stale `running`
+state must not create an unbounded crash loop.
+
+Record timing for failed as well as successful attempts. Measure at least the
+time to first actionable failure, per-gate duration, blocked dependencies,
+cache reuse, and total qualification duration. Passing timing checks remains
+operational evidence, not proof of product semantics.
+
+## Separate Maintenance Validation from Release Gates
+
+Tests that validate a release-governance skill, its project configuration,
+repository-owned release controllers, or the focused test harness are
+maintenance validation. Declare them in the project task contract as a
+standalone read-only operation, such as `maintenance-validate`, with their exact
+project command. Run that operation after changing the governed skill,
+controller scripts, contract/configuration, or corresponding focused tests and
+before publishing or merging those changes.
+
+Normal release operations must not invoke maintenance validation. Keep it out
+of inspect, prepare, Doctor, qualification, publication/deployment, promotion,
+repair, and retry paths. Release Doctor and qualification may run product or
+candidate tests whose purpose is to validate the exact application candidate;
+the project contract must declare those separately as candidate gates. A test's
+directory does not determine its role: classify it by the behavior and evidence
+it validates.
+
 ## Admit Stable Tags Only After Candidate Gates
 
 Do not create a stable patch tag merely because repair work has started or a
