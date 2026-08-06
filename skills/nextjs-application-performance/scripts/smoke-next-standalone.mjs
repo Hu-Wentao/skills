@@ -127,7 +127,11 @@ export async function smokeStandalone({ app, standaloneRoot }) {
       reason: routes.every((route) => route.passed) ? "success" : "route_failed",
       ready: { path: runtime.readyPath, status: readyStatus },
       routes,
-      closure: { traceManifests: closure.traceManifests, tracedFiles: closure.tracedFiles },
+      closure: {
+        traceManifests: closure.traceManifests,
+        tracedFiles: closure.tracedFiles,
+        failureCount: closure.failureCount,
+      },
       output,
     };
   } finally {
@@ -143,12 +147,23 @@ async function main() {
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {
       console.log(`${result.status}: ${result.app} (${result.reason})`);
-      for (const line of formatFailures(result.closure?.failures ?? [])) console.error(line);
+      for (const line of formatFailures(
+        result.closure?.failures ?? [],
+        undefined,
+        result.closure?.failureCount ?? result.closure?.failures?.length ?? 0,
+      )) console.error(line);
       for (const route of result.routes ?? []) console.log(`${route.passed ? "ok" : "error"} ${route.path}: ${route.status}`);
     }
     return result.status === "passed" ? 0 : 1;
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    if (process.argv.includes("--json")) {
+      console.log(JSON.stringify({
+        schema: "nextjs-standalone-smoke.v1",
+        status: "failed",
+        reason: "contract_error",
+        error: error.message,
+      }, null, 2));
+    } else console.error(`error: ${error.message}`);
     return 2;
   }
 }

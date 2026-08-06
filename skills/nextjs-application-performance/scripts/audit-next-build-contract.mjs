@@ -7,6 +7,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCHEMA = "nextjs-build-contracts.v1";
 const SOURCE_EXTENSIONS = ["", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+const RUNTIME_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+const RUNTIME_SCAN_IGNORES = new Set([
+  ".git", ".next", ".turbo", "__tests__", "coverage", "dist", "node_modules", "test", "tests",
+]);
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]);
 
 export class ContractError extends Error {}
@@ -100,6 +104,113 @@ function importSpecifiers(source) {
     for (const match of source.matchAll(pattern)) results.push(match[1]);
   }
   return [...new Set(results)];
+}
+
+function walkRuntimeSources(root) {
+  const files = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat || stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(current)) {
+        if (!RUNTIME_SCAN_IGNORES.has(entry)) queue.push(path.join(current, entry));
+      }
+    } else if (stat.isFile() && RUNTIME_SOURCE_EXTENSIONS.has(path.extname(current)) &&
+      !/\.(?:spec|test)\.[^.]+$/.test(path.basename(current))) {
+      files.push(current);
+    }
+  }
+  return files.sort();
+}
+
+function resolveSourceImport(sourceFile, specifier) {
+  if (specifier.startsWith(".")) return sourceCandidate(path.resolve(path.dirname(sourceFile), specifier));
+  if (path.isAbsolute(specifier)) return sourceCandidate(specifier);
+  if (specifier.startsWith("file:")) {
+    try {
+      return sourceCandidate(fileURLToPath(specifier));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function inferApplicationRoots(manifest, workspaceRoot, appRoot, failures) {
+  const declared = manifest.applicationRoots;
+  const roots = [];
+  if (declared !== undefined && (!Array.isArray(declared) || declared.length === 0)) {
+    failures.push("applicationRoots must be a non-empty array when declared");
+    return roots;
+  }
+  const candidates = declared ?? fs.readdirSync(path.dirname(appRoot))
+    .map((entry) => path.join(path.dirname(appRoot), entry))
+    .filter((candidate) => fs.statSync(path.join(candidate, "package.json"), { throwIfNoEntry: false })?.isFile())
+    .map((candidate) => path.relative(workspaceRoot, candidate));
+  for (const [index, candidate] of candidates.entries()) {
+    try {
+      const root = resolveInside(workspaceRoot, candidate, `applicationRoots[${index}]`);
+      if (!fs.statSync(path.join(root, "package.json"), { throwIfNoEntry: false })?.isFile()) {
+        failures.push(`applicationRoots[${index}] has no package.json: ${candidate}`);
+        continue;
+      }
+      if (!roots.some((existing) => fs.realpathSync(existing) === fs.realpathSync(root))) roots.push(root);
+    } catch (error) {
+      failures.push(error.message);
+    }
+  }
+  if (!roots.some((root) => fs.realpathSync(root) === fs.realpathSync(appRoot))) {
+    failures.push("applicationRoots must include the audited app root");
+  }
+  for (let left = 0; left < roots.length; left += 1) {
+    for (let right = left + 1; right < roots.length; right += 1) {
+      const leftRoot = fs.realpathSync(roots[left]);
+      const rightRoot = fs.realpathSync(roots[right]);
+      if (inside(leftRoot, rightRoot) || inside(rightRoot, leftRoot)) {
+        failures.push(`applicationRoots must not overlap: ${path.relative(workspaceRoot, roots[left])} and ${path.relative(workspaceRoot, roots[right])}`);
+      }
+    }
+  }
+  return roots;
+}
+
+function inspectRuntimeApplicationBoundary(manifest, app, workspaceRoot, appRoot, failures) {
+  const applicationRoots = inferApplicationRoots(manifest, workspaceRoot, appRoot, failures);
+  const canonicalAppRoot = fs.realpathSync(appRoot);
+  const siblings = applicationRoots
+    .filter((root) => fs.realpathSync(root) !== canonicalAppRoot)
+    .map((root) => {
+      const packageJson = readJson(path.join(root, "package.json"));
+      return { root, canonicalRoot: fs.realpathSync(root), packageName: packageJson.name };
+    });
+  const violations = [];
+  const sourceFiles = walkRuntimeSources(appRoot);
+  for (const sourceFile of sourceFiles) {
+    const source = fs.readFileSync(sourceFile, "utf8");
+    for (const specifier of importSpecifiers(source)) {
+      const barePackage = specifier.startsWith(".") || path.isAbsolute(specifier) || specifier.startsWith("file:")
+        ? null
+        : packageNameFromSpecifier(specifier);
+      const resolved = resolveSourceImport(sourceFile, specifier);
+      const canonicalTarget = resolved && fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
+      const sibling = siblings.find((candidate) =>
+        (canonicalTarget && inside(canonicalTarget, candidate.canonicalRoot)) ||
+        (candidate.packageName && barePackage === candidate.packageName)
+      );
+      if (!sibling) continue;
+      const detail = `${path.relative(workspaceRoot, sourceFile)} imports ${JSON.stringify(specifier)} from sibling application ${path.relative(workspaceRoot, sibling.root)}`;
+      failures.push(`${app.id}: runtime application boundary violation: ${detail}`);
+      violations.push(detail);
+    }
+  }
+  return {
+    mode: manifest.applicationRoots ? "declared" : "inferred-siblings",
+    applicationRoots: applicationRoots.map((root) => path.relative(workspaceRoot, root)),
+    scannedFiles: sourceFiles.length,
+    violations,
+  };
 }
 
 export function scanEntrypoint(entrypoint, packageRoot) {
@@ -411,6 +522,7 @@ export async function auditContract(manifestPath, appId) {
   if (!app) throw new ContractError(`app not found in manifest: ${appId}`);
   const appRoot = resolveInside(workspaceRoot, app.root, `${app.id}.root`);
   const failures = [];
+  const runtimeBoundary = inspectRuntimeApplicationBoundary(manifest, app, workspaceRoot, appRoot, failures);
   inspectPolicyFiles(app, workspaceRoot, failures);
   const packages = inspectPackages(app, workspaceRoot, appRoot, failures);
   const next = await inspectNextConfig(app, workspaceRoot, appRoot, packages, failures);
@@ -419,6 +531,7 @@ export async function auditContract(manifestPath, appId) {
     app: app.id,
     status: failures.length === 0 ? "passed" : "failed",
     failures,
+    runtimeBoundary,
     externalized: next.detected,
     resolutions: [...packages.values()].map((entry) => ({
       name: entry.name,
@@ -449,7 +562,14 @@ async function main() {
     }
     return result.status === "passed" ? 0 : 1;
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    if (process.argv.includes("--json")) {
+      console.log(JSON.stringify({
+        schema: "nextjs-build-contract-audit.v1",
+        status: "failed",
+        reason: "contract_error",
+        error: error.message,
+      }, null, 2));
+    } else console.error(`error: ${error.message}`);
     return 2;
   }
 }

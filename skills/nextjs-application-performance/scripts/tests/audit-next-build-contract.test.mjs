@@ -29,6 +29,7 @@ function manifestFor(root) {
   return {
     schema: "nextjs-build-contracts.v1",
     workspaceRoot: ".",
+    applicationRoots: ["app"],
     apps: [{
       id: "fixture",
       root: "app",
@@ -125,6 +126,42 @@ test("rejects unevidenced symlink and optimizePackageImports workarounds", async
   assert.ok(result.failures.some((failure) => failure.includes("optimizePackageImports requires measured evidence")));
 });
 
+test("rejects runtime source imports from a sibling application", async (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "other-app"));
+  fs.writeFileSync(path.join(root, "other-app/package.json"), '{"name":"@fixture/other-app"}\n');
+  fs.mkdirSync(path.join(root, "app/lib"));
+  fs.writeFileSync(
+    path.join(root, "app/lib/runtime-version.js"),
+    'import siblingVersion from "../../other-app/package.json";\nexport default siblingVersion;\n',
+  );
+  const manifest = manifestFor(root);
+  manifest.applicationRoots.push("other-app");
+  const result = await auditContract(writeManifest(root, manifest), "fixture");
+  assert.equal(result.status, "failed", JSON.stringify(result, null, 2));
+  assert.equal(result.runtimeBoundary.mode, "declared");
+  assert.ok(result.failures.some((failure) => failure.includes("runtime application boundary violation")));
+});
+
+test("infers package-bearing sibling applications for v1 migration", async (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "other-app"));
+  fs.writeFileSync(path.join(root, "other-app/package.json"), '{"name":"@fixture/other-app"}\n');
+  fs.mkdirSync(path.join(root, "app/lib"));
+  fs.writeFileSync(
+    path.join(root, "app/lib/runtime-version.js"),
+    'export { default } from "@fixture/other-app/package.json";\n',
+  );
+  const manifest = manifestFor(root);
+  delete manifest.applicationRoots;
+  const result = await auditContract(writeManifest(root, manifest), "fixture");
+  assert.equal(result.status, "failed", JSON.stringify(result, null, 2));
+  assert.equal(result.runtimeBoundary.mode, "inferred-siblings");
+  assert.ok(result.runtimeBoundary.applicationRoots.includes("other-app"));
+});
+
 test("standalone closure rejects a production dependency missing from the artifact", (t) => {
   const root = setupFixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -136,12 +173,56 @@ test("standalone closure rejects a production dependency missing from the artifa
     traceRoots: ["traces"],
   });
   assert.equal(result.status, "failed");
+  assert.equal(result.failureCount, 1);
+  assert.equal(result.omittedFailures, 0);
   assert.ok(result.failures.some((failure) => failure.includes("traced dependency is missing")));
   assert.deepEqual(formatFailures(["one", "two", "three"], 2), [
     "error: one",
     "error: two",
     "error: 1 additional failures omitted",
   ]);
+});
+
+test("standalone closure bounds deterministic failure output", (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const traces = path.join(root, "standalone/traces");
+  fs.mkdirSync(traces);
+  fs.writeFileSync(path.join(traces, "server.js.nft.json"), JSON.stringify({
+    version: 1,
+    files: Array.from({ length: 80 }, (_, index) => `../missing-${index}.js`),
+  }));
+  const result = auditStandaloneRoot(path.join(root, "standalone"), {
+    entrypoints: ["server.js"],
+    traceRoots: ["traces"],
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.failureCount, 80);
+  assert.equal(result.failures.length, 50);
+  assert.equal(result.omittedFailures, 30);
+  assert.equal(formatFailures(result.failures, 50, result.failureCount).at(-1), "error: 30 additional failures omitted");
+});
+
+test("standalone closure rejects copied and traced sibling applications", (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const sibling = path.join(root, "standalone/other-app");
+  fs.mkdirSync(sibling);
+  fs.writeFileSync(path.join(sibling, "package.json"), '{"name":"@fixture/other-app"}\n');
+  const traces = path.join(root, "standalone/traces");
+  fs.mkdirSync(traces);
+  fs.writeFileSync(path.join(traces, "server.js.nft.json"), JSON.stringify({
+    version: 1,
+    files: ["../server.js", "../other-app/package.json"],
+  }));
+  const result = auditStandaloneRoot(path.join(root, "standalone"), {
+    entrypoints: ["server.js"],
+    traceRoots: ["traces"],
+    forbiddenApplicationRoots: ["other-app"],
+  });
+  assert.equal(result.status, "failed");
+  assert.ok(result.failures.some((failure) => failure.includes("contains sibling application root")));
+  assert.ok(result.failures.some((failure) => failure.includes("traces sibling application")));
 });
 
 test("runtime smoke starts the isolated standalone tree and checks declared routes", async (t) => {

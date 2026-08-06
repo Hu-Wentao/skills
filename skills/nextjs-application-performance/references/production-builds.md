@@ -7,6 +7,9 @@ admission lists from a one-off build log. Each app entry declares:
 
 - app root, package manifest, Next config, standalone directory, and files
   containing build-policy knobs;
+- every deployable application root in `applicationRoots`; when omitted for
+  migration, the source audit infers package-bearing siblings of the audited
+  app, but explicit roots are the durable contract;
 - every direct pnpm workspace dependency with package root, one of `server`,
   `client`, or `hybrid`, and its public entrypoints;
 - the exact package or subpath imports admitted to Next/webpack server
@@ -19,11 +22,11 @@ admission lists from a one-off build log. Each app entry declares:
 Run:
 
 ```bash
-node scripts/audit-next-build-contract.mjs --manifest <manifest> --app <id>
-node scripts/audit-standalone-closure.mjs --manifest <manifest> --app <id>
+node scripts/audit-next-build-contract.mjs --manifest <manifest> --app <id> --json
+node scripts/audit-standalone-closure.mjs --manifest <manifest> --app <id> --json
 node scripts/run-build-memory-probe.mjs --manifest <manifest> --app <id> \
   --evidence <output.json> -- <cold-build-command...>
-node scripts/smoke-next-standalone.mjs --manifest <manifest> --app <id>
+node scripts/smoke-next-standalone.mjs --manifest <manifest> --app <id> --json
 ```
 
 When a Docker runtime stage supplements raw Next standalone output, run the
@@ -53,6 +56,28 @@ The project may invoke the installed copies under
 `.agents/skills/nextjs-application-performance/scripts/`. Repository CI must
 own its manifest and commands; an installed skill on a developer machine is
 not a CI dependency contract.
+
+Each JSON command emits a structured failed result even for contract/setup
+errors. Persist and classify only the final invocation's `status` and `reason`.
+Do not search accumulated logs for network or OOM phrases after a later gate
+has produced a deterministic closure or runtime failure.
+
+## Application Runtime Boundaries
+
+Declare every deployable application root relative to `workspaceRoot`. The
+source audit scans non-test JavaScript and TypeScript below the audited app and
+rejects literal imports, exports, `require`, and dynamic imports that
+resolve into a sibling application or name its package. This prevents a small
+fallback metadata read from expanding Next output tracing across application
+boundaries. Shared runtime metadata belongs in generated build metadata, the
+current application, a declared workspace library, or startup environment.
+
+Do not respond to a closure failure by copying the sibling application, source
+workspace, test framework, compiler, or development dependency graph into the
+runtime stage. With explicit `applicationRoots`, the closure audit rejects both
+traced paths and copied artifact roots belonging to sibling applications. Fix
+the source dependency or trace owner, rebuild, then run the isolated closure
+audit and runtime smoke again.
 
 ## pnpm Resolution and Package Boundaries
 

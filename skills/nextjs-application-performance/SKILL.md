@@ -95,6 +95,13 @@ build`, or equivalent commands in a long-running service's `command` or
 - Audit the produced standalone tree as an isolated production dependency
   closure. A dependency that resolves only by walking into the source
   workspace is missing from the artifact.
+- Keep application roots as runtime build boundaries. Runtime-capable source
+  in one application must not import sibling application source, package
+  manifests, or build configuration for fallback metadata. Read metadata from
+  the current app, generated build metadata, or startup environment instead.
+- Do not repair a standalone closure by copying a sibling application, the
+  whole workspace, or development dependencies into the runtime artifact.
+  Repair the import/trace owner and regenerate the artifact.
 - Measure a cache-cold production build inside the declared container memory
   limit. Preserve peak RSS, exit code/signal, cgroup OOM deltas, and the
   classified exit reason. The probed process must see the exact finite
@@ -108,6 +115,10 @@ build`, or equivalent commands in a long-running service's `command` or
   resolution, compiler memory, Next externalization, standalone output, or a
   production runtime image is in scope. Run every project-declared build
   contract command, including runtime smoke routes, before handoff.
+- Treat the final structured build-gate result as authoritative. Invoke the
+  build contract, closure, and standalone smoke commands with `--json`; consume
+  that invocation's `status` and `reason`, and never reclassify it from earlier
+  or accumulated stdout/stderr.
 
 ## Task Flow
 

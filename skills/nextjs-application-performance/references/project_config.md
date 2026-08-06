@@ -46,7 +46,8 @@ geometry selectors/viewports. The generic audit and probe scripts consume this
 manifest; they do not embed project component names or route selectors.
 
 For pnpm workspace and production build boundaries, use schema
-`nextjs-build-contracts.v1`. Declare each Next app, its package and config
+`nextjs-build-contracts.v1`. Declare every deployable application root, then
+declare each Next app, its package and config
 paths, the `server`/`client`/`hybrid` classification and public entrypoints of
 every direct workspace dependency, the exact allowed external packages, the
 standalone directory, runtime entrypoints, Next trace roots, the container
@@ -55,4 +56,5 @@ memory gate, cold-output path, and runtime smoke routes. Keep measured exception
 repository evidence file and required marker. The generic scripts reject
 unclassified workspace dependencies, whole-package hybrid externalization,
 cross-boundary root barrels, source-workspace resolution from standalone
-output, non-cold builds, unbounded cgroups, and unevidenced exceptions.
+output, cross-application runtime imports, non-cold builds, unbounded cgroups,
+and unevidenced exceptions.

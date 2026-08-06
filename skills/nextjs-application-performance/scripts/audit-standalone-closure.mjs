@@ -5,6 +5,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCHEMA = "nextjs-build-contracts.v1";
+const FAILURE_SAMPLE_LIMIT = 50;
+
+class FailureCollector {
+  constructor(limit = FAILURE_SAMPLE_LIMIT) {
+    this.limit = limit;
+    this.items = [];
+    this.count = 0;
+  }
+
+  push(...messages) {
+    for (const message of messages) {
+      this.count += 1;
+      if (this.items.length < this.limit) this.items.push(message);
+    }
+    return this.count;
+  }
+
+  get length() {
+    return this.count;
+  }
+}
 
 function parseArgs(argv) {
   const options = { manifest: "", app: "", standaloneRoot: "", json: false };
@@ -80,15 +101,29 @@ function inspectSymlinks(root, failures) {
   return symlinkCount;
 }
 
-export function formatFailures(failures, limit = 50) {
+export function formatFailures(failures, limit = FAILURE_SAMPLE_LIMIT, total = failures.length) {
   const lines = failures.slice(0, limit).map((failure) => `error: ${failure}`);
-  if (failures.length > limit) lines.push(`error: ${failures.length - limit} additional failures omitted`);
+  if (total > Math.min(failures.length, limit)) {
+    lines.push(`error: ${total - Math.min(failures.length, limit)} additional failures omitted`);
+  }
   return lines;
 }
 
 export function auditStandaloneRoot(standaloneRoot, contract = {}) {
   const root = fs.realpathSync(standaloneRoot);
-  const failures = [];
+  const failures = new FailureCollector();
+  const forbiddenApplicationRoots = [];
+  for (const [index, applicationRoot] of (contract.forbiddenApplicationRoots ?? []).entries()) {
+    const resolved = path.resolve(root, applicationRoot);
+    if (!inside(resolved, root)) {
+      failures.push(`standalone.forbiddenApplicationRoots[${index}] escapes the artifact`);
+      continue;
+    }
+    forbiddenApplicationRoots.push({ declared: applicationRoot, resolved });
+    if (fs.lstatSync(resolved, { throwIfNoEntry: false })) {
+      failures.push(`standalone artifact contains sibling application root: ${applicationRoot}`);
+    }
+  }
   const entrypoints = contract.entrypoints ?? [];
   if (!Array.isArray(entrypoints) || entrypoints.length === 0) {
     failures.push("standalone.entrypoints must declare at least one runtime entrypoint");
@@ -145,6 +180,10 @@ export function auditStandaloneRoot(standaloneRoot, contract = {}) {
         failures.push(`${path.relative(root, manifestPath)} trace escapes artifact: ${tracedFile}`);
         continue;
       }
+      const forbiddenRoot = forbiddenApplicationRoots.find((candidate) => inside(resolved, candidate.resolved));
+      if (forbiddenRoot) {
+        failures.push(`${path.relative(root, manifestPath)} traces sibling application ${forbiddenRoot.declared}: ${tracedFile}`);
+      }
       const stat = fs.lstatSync(resolved, { throwIfNoEntry: false });
       if (!stat) {
         failures.push(`${path.relative(root, manifestPath)} traced dependency is missing: ${tracedFile}`);
@@ -167,7 +206,9 @@ export function auditStandaloneRoot(standaloneRoot, contract = {}) {
     traceManifests: [...new Set(manifests)].length,
     tracedFiles,
     symlinkCount,
-    failures,
+    failureCount: failures.length,
+    failures: failures.items,
+    omittedFailures: failures.length - failures.items.length,
   };
 }
 
@@ -190,7 +231,16 @@ export function loadStandaloneContract(manifestPath, appId, standaloneRootOverri
   if (!fs.statSync(standaloneRoot, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`standalone root does not exist: ${standaloneRoot}`);
   }
-  return { app, standaloneRoot };
+  const currentApplicationRoot = path.normalize(app.root);
+  const forbiddenApplicationRoots = (manifest.applicationRoots ?? [])
+    .filter((candidate) => typeof candidate === "string" && path.normalize(candidate) !== currentApplicationRoot);
+  return {
+    app: {
+      ...app,
+      standalone: { ...app.standalone, forbiddenApplicationRoots },
+    },
+    standaloneRoot,
+  };
 }
 
 async function main() {
@@ -201,11 +251,18 @@ async function main() {
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else {
       console.log(`${result.status}: ${options.app} (${result.traceManifests} trace manifests, ${result.tracedFiles} traced files)`);
-      for (const line of formatFailures(result.failures)) console.error(line);
+      for (const line of formatFailures(result.failures, FAILURE_SAMPLE_LIMIT, result.failureCount)) console.error(line);
     }
     return result.status === "passed" ? 0 : 1;
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    if (process.argv.includes("--json")) {
+      console.log(JSON.stringify({
+        schema: "nextjs-standalone-closure-audit.v1",
+        status: "failed",
+        reason: "contract_error",
+        error: error.message,
+      }, null, 2));
+    } else console.error(`error: ${error.message}`);
     return 2;
   }
 }
