@@ -104,12 +104,15 @@ metadata, secrets, caches, dependency folders, and build output.
 For a skill already in its source checkout:
 
 1. Validate it with the installed `skillcraft` validator.
-2. Inspect the diff and stage only the intended skill files.
-3. Commit the staged skill changes when any exist.
-4. Report every existing unpushed commit that the push will also publish. Ask
+2. If `scripts/tests/run.py` exists, run it with `uv run --script` before
+   staging. Its PEP 723 block owns the complete test environment; do not replace
+   it with `uv run python -m unittest discover` or ad hoc `--with` dependencies.
+3. Inspect the diff and stage only the intended skill files.
+4. Commit the staged skill changes when any exist.
+5. Report every existing unpushed commit that the push will also publish. Ask
    before pushing when those commits are outside the user's approved scope.
-5. Push the current branch to its configured GitHub upstream without force.
-6. Verify that local `HEAD` equals the upstream branch after the push.
+6. Push the current branch to its configured GitHub upstream without force.
+7. Verify that local `HEAD` equals the upstream branch after the push.
 
 The bundled sync command retries a transient `git push` failure three times by
 default and retains every attempt's stdout/stderr. Do not create another commit

@@ -385,6 +385,11 @@ To begin implementation, start with the reusable resources identified above: `sc
 
 Added scripts must be tested by actually running them to ensure there are no bugs and that the output matches what is expected. If there are many similar scripts, only a representative sample needs to be tested to ensure confidence that they all work while balancing time to completion.
 
+When a Python test suite needs any third-party dependency, provide one
+`scripts/tests/run.py` entry point with complete PEP 723 metadata and run it
+through `uv run --script`. Do not rely on metadata in the scripts under test:
+`uv run python -m unittest discover` does not inherit those dependencies.
+
 If you used `--examples`, delete any placeholder files that are not needed for the skill. Only create resource directories that are actually required.
 
 For a config-aware skill, keep `SKILL.md` responsible for when the resolver is
@@ -429,6 +434,10 @@ PEP 723 dependency metadata. Do not run it with `python`, `python3`, or
 `uv run python`.
 
 The validation script checks YAML frontmatter format, required fields, and naming rules. If validation fails, fix the reported issues and run the command again.
+
+When `scripts/tests/run.py` exists, run it with `uv run --script` after
+`quick_validate.py`; treat that runner's dependency declaration as the
+authoritative test environment.
 
 For a config-aware skill, also run its resolver tests and verify at least:
 

@@ -306,6 +306,16 @@ Keep diagnosis read-only unless implementation is explicitly authorized. Persist
 
 Run the smallest contracted checks first, then project-specific tests appropriate to the change. Validate every modified skill with Skillcraft and test every added deterministic script.
 
+Run this skill's complete Python suite only through its dependency-declaring
+entry point:
+
+```bash
+uv run --script <skill-root>/scripts/tests/run.py
+```
+
+Do not replace it with `uv run python -m unittest discover`; that command does
+not inherit PEP 723 dependencies from the scripts under test.
+
 Report:
 
 - domains and authoritative files changed;
