@@ -87,6 +87,21 @@ bootstrapping or changing those hooks.
 
 Legacy v1/v2 profiles remain readable during migration. They return composed instructions and declarative command strings; read their resolved instructions because they do not provide executable contracts.
 
+## Choose the Script Runtime
+
+- In JavaScript or Node projects, default new automation and operational
+  scripts to `.mjs`, invoked through `node` or a declared `pnpm` script.
+- In Python projects, default new automation and operational scripts to `.py`,
+  invoked through `uv run python` or a declared `uv` entry point.
+- Keep `.sh` limited to thin POSIX boundaries such as `exec` forwarding,
+  environment/bootstrap setup, or a host-required `systemd`/Docker entrypoint.
+  Do not put transactions, remote transport, retries, structured error
+  classification, or complex state transitions in new Shell scripts.
+- When an existing Shell script owns complex logic, preserve its compatibility
+  entrypoint while moving substantive control flow to `.mjs` or `.py`. If a
+  new `.sh` file is still necessary, document the boundary that prevents the
+  runtime-native implementation and add an explicit error-propagation test.
+
 ## Select the Governance Domain
 
 - For project design, architecture, module ownership, scaffolding, or implementation handoff, read [design-doc-rules.md](references/design-doc-rules.md), [project-scaffolding.md](references/project-scaffolding.md), and [legacy-extraction.md](references/legacy-extraction.md) as applicable.
