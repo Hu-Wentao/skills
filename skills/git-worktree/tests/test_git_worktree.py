@@ -155,6 +155,23 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertTrue(listed[0]["main"])
         self.assertEqual(listed[1]["branch"], "feat/demo")
 
+    def test_create_rejects_a_worktree_path_inside_the_repository(self) -> None:
+        result = self.cli(
+            "create",
+            "--branch",
+            "feat/inside-repository",
+            "--path",
+            str(self.repo / ".worktrees" / "inside-repository"),
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be outside the repository root", result.stderr)
+        self.assertEqual(
+            run(["git", "branch", "--list", "feat/inside-repository"], self.repo).stdout,
+            "",
+        )
+
     def test_merge_auto_selects_single_source_and_creates_merge_commit(self) -> None:
         worktree = self.create("feature")
         self.commit_file(worktree, "feature.txt", "feature\n")

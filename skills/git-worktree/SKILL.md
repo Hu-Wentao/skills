@@ -63,6 +63,9 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> create \
 The default path is a sibling of the main worktree named
 `<project>-T-<branch>`, with `/` converted to `-`. Initialize dependencies only
 when appropriate and follow the repository's package-manager instructions.
+Explicit `--path` values must also be outside the repository root. Prefer
+omitting `--path` so the deterministic creator selects the sibling path;
+paths below the repository (including `.worktrees/`) are rejected.
 
 ## Mark Owner Completion
 

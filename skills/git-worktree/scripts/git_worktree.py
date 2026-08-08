@@ -1521,6 +1521,15 @@ def command_create(repo: Path, args: argparse.Namespace) -> None:
         if args.path
         else main_path.parent / f"{main_path.name}-T-{safe_branch}"
     )
+    try:
+        destination.relative_to(repo.resolve())
+    except ValueError:
+        pass
+    else:
+        raise WorkflowError(
+            "Worktree path must be outside the repository root: "
+            f"{destination}. Omit --path to use the managed sibling path."
+        )
     if destination.exists():
         raise WorkflowError(f"Worktree path already exists: {destination}")
 
