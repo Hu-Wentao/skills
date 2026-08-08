@@ -52,12 +52,16 @@ base to the current branch only when the user did not specify another base.
 - Treat a worktree explicitly requested by the user as user-owned. Keep it
   until the user explicitly requests cleanup or removal.
 - Treat a worktree created only to isolate an internal temporary task as
-  agent-created temporary state. Record its path and automatically remove it
-  after the task finishes. Refuse forced cleanup and preserve it if unsafe.
+  agent-created temporary state. Create it with `--temporary` so the CLI
+  persistently records its base commit and original target branch. Deliver its
+  completed change to that target and automatically remove the worktree before
+  reporting the requested repository update complete. Refuse forced cleanup
+  and preserve it if delivery is unsafe.
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> create \
-  --branch <new-branch> [--base <base-branch>] [--path <worktree-path>]
+  --branch <new-branch> [--base <base-branch>] [--path <worktree-path>] \
+  [--temporary]
 ```
 
 The default path is a sibling of the main worktree named
@@ -70,11 +74,10 @@ paths below the repository (including `.worktrees/`) are rejected.
 ## Mark Owner Completion
 
 For an owned plan/specification implementation on an eligible non-main task
-branch, marking completion is a required terminal step, not an optional cleanup
-suggestion. After every authorized change is committed and every required
-validation passes, run `owner-status` again, confirm the worktree is clean and
-has no active Git operation, resolve its final exact HEAD, and mark that commit
-complete before sending the final response:
+branch, marking completion is a required handoff step. After every authorized
+change is committed and every source-worktree validation passes, run
+`owner-status` again, confirm the worktree is clean and has no active Git
+operation, resolve its final exact HEAD, and mark that commit complete:
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <worktree-path> \
@@ -85,6 +88,24 @@ This creates the local custom ref `refs/agents/completed/<branch>` at the exact
 branch commit. It is neither a normal tag nor a remote ref. Only the task that
 owns the branch may create or refresh this handoff. Do not mark incomplete,
 blocked, dirty, uncommitted, or unvalidated work complete.
+
+The completion ref is not proof that the user's requested repository was
+updated. After marking, run `owner-status` again and obey its ownership-aware
+`next_action`:
+
+- `user_owned` work ends as a handoff unless the user separately requests a
+  merge or cleanup.
+- `agent_temporary` work remains incomplete while `delivery.status` is
+  `integration_required` or `target_validation_and_cleanup_required`.
+- For `agent_temporary`, merge the exact completed HEAD to the recorded target,
+  passing both exact HEADs from the latest `owner-status`; validate the merged
+  target; and remove the temporary worktree with `--require-merged-into` and
+  `--expected-head`. Only then report the repository update complete. The CLI
+  rejects delivery without a current completion ref or to a different target.
+- If the target is dirty, moved, conflicted, missing, or fails validation,
+  preserve the branch and worktree and report `delivery blocked`; never report
+  the implementation or skill update as complete merely because the completion
+  ref exists.
 
 Do not silently omit the terminal step. If the current path is the main
 worktree, detached, dirty, locked, missing, uninspectable, prunable, has an
@@ -380,6 +401,14 @@ worktree. Interpret authorization narrowly:
 - **Merge and clean up `<branch>`**: merge first; remove the source worktree
   only after merge and validation succeed.
 
+When Codex created a worktree with `--temporary` solely to implement the
+user's requested change, that implementation authorization includes the safe
+local merge into the target recorded at creation and removal of the clean
+temporary worktree after target validation. It does not authorize push,
+publication, remote deletion, branch deletion, history rewriting, or a
+different target. A target HEAD change requires a fresh read-only comparison;
+a dirty target or semantic conflict blocks delivery and must not be bypassed.
+
 If conflicts occur, preserve clear intent from both branches, run focused
 validation, and continue the merge. Stop when multiple semantic resolutions
 remain plausible. Never resolve blindly with `ours` or `theirs`.
@@ -410,6 +439,10 @@ retains its branch. Removing a protected branch's clean worktree does not
 authorize deletion of the protected branch. Never force removal, stash, push,
 rebase, or squash without authorization for that exact operation.
 
+Removing an `agent_temporary` worktree also removes its internal temporary
+ownership refs. Retain its ordinary local branch and completion ref unless a
+separate branch-maintenance decision authorizes branch deletion.
+
 ## Report
 
 Report:
@@ -431,8 +464,9 @@ Report:
 - validation commands and results;
 - whether remote branches remained untouched;
 - owner-task worktree identity discovered from the current directory, final
-  exact HEAD, and the created/current completion ref, or the exact reason no
-  completion marker was created;
+  exact HEAD, ownership kind, delivery status, target merge commit, removed
+  temporary worktree, and the created/current completion ref, or the exact
+  reason delivery did not finish;
 - breaking and compatibility effects.
 
 ## Resource

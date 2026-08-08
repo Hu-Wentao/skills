@@ -70,8 +70,11 @@ class GitWorktreeCliTests(unittest.TestCase):
             input_text=input_text,
         )
 
-    def create(self, branch: str = "feat/demo") -> Path:
-        result = self.cli("create", "--branch", branch)
+    def create(self, branch: str = "feat/demo", *, temporary: bool = False) -> Path:
+        arguments = ["create", "--branch", branch]
+        if temporary:
+            arguments.append("--temporary")
+        result = self.cli(*arguments)
         return Path(json.loads(result.stdout)["worktree"])
 
     def create_detached(self, name: str, base: str = "main") -> Path:
@@ -310,6 +313,192 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertFalse(dirty["completion_eligible"])
         self.assertTrue(
             any(blocker.endswith(":dirty") for blocker in dirty["completion_blockers"])
+        )
+
+    def test_agent_temporary_owner_status_requires_delivery_after_completion(self) -> None:
+        worktree = self.create("feat/temporary-delivery", temporary=True)
+        self.commit_file(worktree, "delivered.txt", "delivered\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        target_head = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
+
+        before_completion = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(before_completion["ownership"]["kind"], "agent_temporary")
+        self.assertEqual(before_completion["ownership"]["target"], "main")
+        self.assertEqual(before_completion["ownership"]["base_head"], target_head)
+        self.assertEqual(before_completion["delivery"]["status"], "completion_required")
+
+        uncompleted_merge = self.cli(
+            "merge",
+            "--source",
+            "feat/temporary-delivery",
+            "--target",
+            "main",
+            "--expected-source-head",
+            source_head,
+            "--expected-target-head",
+            target_head,
+            check=False,
+        )
+        self.assertEqual(uncompleted_merge.returncode, 2)
+        self.assertIn("current completion ref", uncompleted_merge.stderr)
+
+        run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                source_head,
+            ],
+            worktree,
+        )
+        integration_required = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(
+            integration_required["delivery"]["status"], "integration_required"
+        )
+        self.assertEqual(
+            integration_required["next_action"], "merge_to_recorded_target"
+        )
+
+        unaudited_merge = self.cli(
+            "merge",
+            "--source",
+            "feat/temporary-delivery",
+            "--target",
+            "main",
+            check=False,
+        )
+        self.assertEqual(unaudited_merge.returncode, 2)
+        self.assertIn("--expected-source-head", unaudited_merge.stderr)
+
+        self.cli(
+            "merge",
+            "--source",
+            "feat/temporary-delivery",
+            "--target",
+            "main",
+            "--expected-source-head",
+            source_head,
+            "--expected-target-head",
+            target_head,
+        )
+        cleanup_required = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(
+            cleanup_required["delivery"]["status"],
+            "target_validation_and_cleanup_required",
+        )
+        self.assertEqual(
+            cleanup_required["next_action"],
+            "validate_target_then_remove_temporary_worktree",
+        )
+        self.assertNotEqual(cleanup_required["next_action"], "already_marked_complete")
+
+        unaudited_cleanup = self.cli(
+            "remove",
+            "--worktree",
+            str(worktree),
+            "--require-merged-into",
+            "main",
+            check=False,
+        )
+        self.assertEqual(unaudited_cleanup.returncode, 2)
+        self.assertIn("--expected-head", unaudited_cleanup.stderr)
+
+        removed = json.loads(
+            self.cli(
+                "remove",
+                "--worktree",
+                str(worktree),
+                "--require-merged-into",
+                "main",
+                "--expected-head",
+                source_head,
+            ).stdout
+        )
+        self.assertTrue(removed["temporary_ownership_removed"])
+        self.assertFalse(worktree.exists())
+        for ref in (
+            "refs/agents/temporary/feat/temporary-delivery",
+            "refs/agents/temporary-target/feat/temporary-delivery",
+        ):
+            self.assertNotEqual(
+                run(
+                    ["git", "rev-parse", "--verify", "--quiet", ref],
+                    self.repo,
+                    check=False,
+                ).returncode,
+                0,
+            )
+
+    def test_user_owned_completion_remains_a_handoff(self) -> None:
+        worktree = self.create("feat/user-owned")
+        self.commit_file(worktree, "user.txt", "user\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "mark-complete",
+                "--expected-head",
+                source_head,
+            ],
+            worktree,
+        )
+
+        status = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+
+        self.assertEqual(status["ownership"]["kind"], "user_owned")
+        self.assertEqual(status["delivery"]["status"], "not_applicable")
+        self.assertEqual(
+            status["next_action"], "handoff_completed_owner_retains_worktree"
         )
 
     def test_maintenance_audit_reports_current_and_stale_completion(self) -> None:

@@ -63,6 +63,8 @@ OPERATION_MARKERS = {
 }
 
 COMPLETION_REF_PREFIX = "refs/agents/completed/"
+TEMPORARY_REF_PREFIX = "refs/agents/temporary/"
+TEMPORARY_TARGET_REF_PREFIX = "refs/agents/temporary-target/"
 MAINTENANCE_PLAN_SCHEMA_VERSION = 1
 MUTATING_COMMANDS = frozenset(
     {
@@ -208,6 +210,14 @@ def completion_ref_name(branch: str) -> str:
     return f"{COMPLETION_REF_PREFIX}{branch}"
 
 
+def temporary_ref_name(branch: str) -> str:
+    return f"{TEMPORARY_REF_PREFIX}{branch}"
+
+
+def temporary_target_ref_name(branch: str) -> str:
+    return f"{TEMPORARY_TARGET_REF_PREFIX}{branch}"
+
+
 def ref_object_id(repo: Path, ref: str) -> str | None:
     result = run_git(repo, "rev-parse", "--verify", "--quiet", ref, check=False)
     return result.stdout.strip() if result.returncode == 0 else None
@@ -288,6 +298,74 @@ def clear_completion_ref(repo: Path, branch: str) -> bool:
     if object_id is None:
         return False
     return run_git(repo, "update-ref", "-d", ref, object_id, check=False).returncode == 0
+
+
+def mark_temporary_worktree(
+    repo: Path,
+    *,
+    branch: str,
+    target: str,
+    base_head: str,
+) -> None:
+    run_git(repo, "update-ref", temporary_ref_name(branch), base_head)
+    run_git(
+        repo,
+        "symbolic-ref",
+        temporary_target_ref_name(branch),
+        f"refs/heads/{target}",
+    )
+
+
+def clear_temporary_worktree_refs(repo: Path, branch: str) -> bool:
+    temporary_ref = temporary_ref_name(branch)
+    target_ref = temporary_target_ref_name(branch)
+    base_head = ref_object_id(repo, temporary_ref)
+    target = run_git(repo, "symbolic-ref", "--quiet", target_ref, check=False)
+    removed = False
+    if base_head is not None:
+        run_git(repo, "update-ref", "-d", temporary_ref, base_head)
+        removed = True
+    if target.returncode == 0:
+        run_git(repo, "symbolic-ref", "--delete", target_ref)
+        removed = True
+    return removed
+
+
+def worktree_ownership(repo: Path, branch: str | None) -> dict[str, object]:
+    if branch is None:
+        return {
+            "kind": "not_applicable",
+            "base_head": None,
+            "target": None,
+            "valid": True,
+        }
+    base_head = ref_object_id(repo, temporary_ref_name(branch))
+    target_result = run_git(
+        repo,
+        "symbolic-ref",
+        "--quiet",
+        temporary_target_ref_name(branch),
+        check=False,
+    )
+    target_ref = target_result.stdout.strip() if target_result.returncode == 0 else None
+    if base_head is None and target_ref is None:
+        return {
+            "kind": "user_owned",
+            "base_head": None,
+            "target": None,
+            "valid": True,
+        }
+    target = (
+        target_ref.removeprefix("refs/heads/")
+        if target_ref and target_ref.startswith("refs/heads/")
+        else None
+    )
+    return {
+        "kind": "agent_temporary",
+        "base_head": base_head,
+        "target": target,
+        "valid": base_head is not None and target is not None,
+    }
 
 
 def completion_refs(repo: Path) -> list[dict[str, str]]:
@@ -968,21 +1046,78 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
         worktree.head or "",
         [snapshot],
     )
+    ownership = worktree_ownership(
+        repo,
+        None if worktree.main or worktree.detached else worktree.branch,
+    )
+    delivery: dict[str, object] = {
+        "status": "not_applicable",
+        "target": ownership["target"],
+        "target_head": None,
+        "source_contained": False,
+    }
+    if ownership["kind"] == "agent_temporary":
+        if not ownership["valid"]:
+            blockers.append("invalid_temporary_ownership_metadata")
+            delivery["status"] = "ownership_metadata_invalid"
+        else:
+            target = str(ownership["target"])
+            if not local_branch_exists(repo, target):
+                blockers.append(f"delivery_target_missing:{target}")
+                delivery["status"] = "target_missing"
+            else:
+                target_head = run_git(
+                    repo, "rev-parse", f"{target}^{{commit}}"
+                ).stdout.strip()
+                contained = (
+                    run_git(
+                        repo,
+                        "merge-base",
+                        "--is-ancestor",
+                        worktree.head or "",
+                        target,
+                        check=False,
+                    ).returncode
+                    == 0
+                )
+                delivery.update(
+                    {
+                        "status": (
+                            "completion_required"
+                            if completion["status"] != "current"
+                            else "target_validation_and_cleanup_required"
+                            if contained
+                            else "integration_required"
+                        ),
+                        "target_head": target_head,
+                        "source_contained": contained,
+                    }
+                )
+    if blockers:
+        next_action = "resolve_or_report_blockers"
+    elif ownership["kind"] == "agent_temporary":
+        next_action = {
+            "completion_required": "mark_complete_after_semantic_completion",
+            "integration_required": "merge_to_recorded_target",
+            "target_validation_and_cleanup_required": (
+                "validate_target_then_remove_temporary_worktree"
+            ),
+        }[str(delivery["status"])]
+    elif completion["status"] != "current":
+        next_action = "mark_complete_after_semantic_completion"
+    else:
+        next_action = "handoff_completed_owner_retains_worktree"
     emit(
         {
             "action": "owner_status_inspected",
             "git_common_dir": str(git_common_dir(repo)),
             "worktree": snapshot,
             "completion": completion,
+            "ownership": ownership,
+            "delivery": delivery,
             "completion_eligible": not blockers,
             "completion_blockers": blockers,
-            "next_action": (
-                "mark_complete_after_semantic_completion"
-                if not blockers and completion["status"] != "current"
-                else "already_marked_complete"
-                if not blockers
-                else "resolve_or_report_blockers"
-            ),
+            "next_action": next_action,
         }
     )
 
@@ -1533,12 +1668,23 @@ def command_create(repo: Path, args: argparse.Namespace) -> None:
     if destination.exists():
         raise WorkflowError(f"Worktree path already exists: {destination}")
 
-    run_git(repo, "worktree", "add", "-b", branch, str(destination), base)
+    base_head = run_git(repo, "rev-parse", f"{base}^{{commit}}").stdout.strip()
+    run_git(repo, "worktree", "add", "-b", branch, str(destination), base_head)
+    if args.temporary:
+        mark_temporary_worktree(
+            repo,
+            branch=branch,
+            target=base,
+            base_head=base_head,
+        )
     emit(
         {
             "action": "created",
             "base": base,
+            "base_head": base_head,
             "branch": branch,
+            "ownership": "agent_temporary" if args.temporary else "user_owned",
+            "target": base if args.temporary else None,
             "worktree": str(destination),
         }
     )
@@ -1574,6 +1720,36 @@ def command_merge(repo: Path, args: argparse.Namespace) -> dict[str, object]:
             raise WorkflowError(f"Local branch does not exist: {branch}")
     source_head = run_git(repo, "rev-parse", f"{source}^{{commit}}").stdout.strip()
     target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
+    source_ownership = worktree_ownership(repo, source)
+    if source_ownership["kind"] == "agent_temporary":
+        if not source_ownership["valid"]:
+            raise WorkflowError(
+                f"Agent-temporary branch '{source}' has invalid ownership metadata."
+            )
+        if source_ownership["target"] != target:
+            raise WorkflowError(
+                f"Agent-temporary branch '{source}' must be delivered to recorded "
+                f"target '{source_ownership['target']}', not '{target}'."
+            )
+        if not args.expected_source_head or not args.expected_target_head:
+            raise WorkflowError(
+                "Agent-temporary delivery requires --expected-source-head and "
+                "--expected-target-head from the latest owner-status result."
+            )
+        source_worktrees = [
+            worktree_snapshot(item) for item in affected_worktrees(repo, source)
+        ]
+        completion = completion_evidence(
+            repo,
+            source,
+            source_head,
+            source_worktrees,
+        )
+        if completion["status"] != "current":
+            raise WorkflowError(
+                f"Agent-temporary branch '{source}' must have a current completion "
+                "ref before delivery."
+            )
     verify_expected_head(source_head, args.expected_source_head, f"Source '{source}'")
     verify_expected_head(target_head, args.expected_target_head, f"Target '{target}'")
     ensure_no_operation(repo)
@@ -1622,6 +1798,32 @@ def command_remove(repo: Path, args: argparse.Namespace) -> dict[str, object]:
         )
     ensure_no_operation(requested)
     actual_head = run_git(requested, "rev-parse", "HEAD^{commit}").stdout.strip()
+    ownership = worktree_ownership(repo, selected.branch)
+    if ownership["kind"] == "agent_temporary":
+        if not ownership["valid"]:
+            raise WorkflowError(
+                f"Agent-temporary worktree has invalid ownership metadata: {requested}"
+            )
+        if args.require_merged_into != ownership["target"]:
+            raise WorkflowError(
+                "Agent-temporary cleanup requires --require-merged-into "
+                f"{ownership['target']}."
+            )
+        if not args.expected_head:
+            raise WorkflowError(
+                "Agent-temporary cleanup requires --expected-head from the latest "
+                "owner-status result."
+            )
+        completion = completion_evidence(
+            repo,
+            selected.branch,
+            actual_head,
+            [worktree_snapshot(selected)],
+        )
+        if completion["status"] != "current":
+            raise WorkflowError(
+                "Agent-temporary cleanup requires a current completion ref."
+            )
     if selected.detached and not args.expected_head:
         raise WorkflowError(
             "Detached worktree removal requires --expected-head from a current audit."
@@ -1685,6 +1887,11 @@ def command_remove(repo: Path, args: argparse.Namespace) -> dict[str, object]:
             )
 
     run_git(repo, "worktree", "remove", str(requested))
+    temporary_refs_removed = (
+        clear_temporary_worktree_refs(repo, selected.branch)
+        if selected.branch
+        else False
+    )
     return emit_command_result(
         args,
         {
@@ -1693,6 +1900,7 @@ def command_remove(repo: Path, args: argparse.Namespace) -> dict[str, object]:
             "branch_retained": selected.branch is not None,
             "head": actual_head,
             "reason": args.reason,
+            "temporary_ownership_removed": temporary_refs_removed,
             "worktree": str(requested),
         },
     )
@@ -1891,6 +2099,7 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> dict[str, obj
 
     run_git(repo, "branch", "-d" if merged else "-D", "--", branch)
     completion_ref_removed = clear_completion_ref(repo, branch)
+    temporary_refs_removed = clear_temporary_worktree_refs(repo, branch)
     return emit_command_result(
         args,
         {
@@ -1898,6 +2107,7 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> dict[str, obj
             "branch": branch,
             "commit": commit,
             "completion_ref_removed": completion_ref_removed,
+            "temporary_ownership_removed": temporary_refs_removed,
             "merged_into_target": merged,
             "reason": args.reason,
             "remote_branch_untouched": True,
@@ -1966,6 +2176,11 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--branch", required=True)
     create.add_argument("--base")
     create.add_argument("--path")
+    create.add_argument(
+        "--temporary",
+        action="store_true",
+        help="Record an agent-created temporary worktree that must be delivered and removed",
+    )
     create.set_defaults(handler=command_create)
 
     merge = commands.add_parser("merge", help="Merge a source branch into the target")

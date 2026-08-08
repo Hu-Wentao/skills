@@ -16,10 +16,15 @@ description: "Bootstrap, review, and maintain project architecture, governed doc
    prompt, use `git-worktree` `owner-status` on the current directory before
    editing. Treat an eligible non-main worktree as this conversation's owner
    task even when the worktree existed before the conversation or was created
-   outside this turn. After the implementation is fully validated, committed,
-   and clean, use `git-worktree` `mark-complete` on the final exact HEAD before
-   reporting completion. Never mark partial, blocked, dirty, unvalidated,
-   detached, or main-worktree work complete; report the exact blocker instead.
+   outside this turn. Create an internally chosen isolation worktree with
+   `--temporary` so its original target is durable. After the implementation is
+   fully validated, committed, and clean, use `git-worktree` `mark-complete` on
+   the final exact HEAD, then follow its ownership-aware delivery status. For
+   Agent-temporary work, merge to the recorded target, validate that target,
+   and remove the clean temporary worktree before reporting the requested
+   repository update complete. Never confuse a completion ref with delivered
+   target state. Never mark partial, blocked, dirty, unvalidated, detached, or
+   main-worktree work complete; report the exact delivery blocker instead.
 
 For read-only review, inspect and report without editing. Do not classify a
 project-scoped external dependency or technology evaluation as read-only merely
