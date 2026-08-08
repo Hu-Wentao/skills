@@ -28,6 +28,12 @@ class ServerBootstrapTest(unittest.TestCase):
             "os_id": "ubuntu",
             "os_version": "24.04",
             "ssh_port": "22",
+            "ssh_ports": "22",
+            "password_auth": "yes",
+            "kbd_auth": "yes",
+            "pubkey_auth": "yes",
+            "root_login": "yes",
+            "ssh_socket_active": "inactive",
             "firewall": "inactive",
             "tailscale_state": "absent",
             "beszel_state": "absent",
@@ -78,6 +84,36 @@ class ServerBootstrapTest(unittest.TestCase):
             MODULE.validate_target("host; reboot")
         with self.assertRaises(MODULE.BootstrapError):
             MODULE.validate_device_id("CTB_EU")
+        self.assertEqual(MODULE.validate_ssh_alias("dmit_la_ts"), "dmit_la_ts")
+        with self.assertRaises(MODULE.BootstrapError):
+            MODULE.validate_ssh_alias("dmit_la_ts; reboot")
+
+    def test_run_ssh_uses_jump_port_identity_and_no_remote_tty(self) -> None:
+        args = Namespace(
+            target="169.58.146.63",
+            ssh_user="root",
+            ssh_port=10604,
+            jump_host="dmit_la_ts",
+            identity_file="~/.ssh/ctb_eu",
+            allow_password_bootstrap=False,
+        )
+        completed = MODULE.subprocess.CompletedProcess([], 0, stdout="ok\n", stderr="")
+        with patch.object(MODULE.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(MODULE.run_ssh(args, "true"), "ok\n")
+        command = run.call_args.args[0]
+        self.assertEqual(command[0:5], ["ssh", "-o", "BatchMode=yes", "-T", "-J"])
+        self.assertIn("dmit_la_ts", command)
+        self.assertIn("10604", command)
+        self.assertIn(str(Path("~/.ssh/ctb_eu").expanduser()), command)
+
+    def test_cli_accepts_proxy_jump_transport(self) -> None:
+        args = MODULE.build_parser().parse_args([
+            "inspect", "--device-id", "ctb-eu", "--target", "169.58.146.63",
+            "--ssh-port", "10604", "--jump-host", "dmit_la_ts",
+            "--identity-file", "~/.ssh/ctb_eu",
+        ])
+        self.assertEqual(args.ssh_port, 10604)
+        self.assertEqual(args.jump_host, "dmit_la_ts")
 
     def test_rejects_tampered_facts_file(self) -> None:
         temporary, path = self.inspection_file()
@@ -112,7 +148,14 @@ class ServerBootstrapTest(unittest.TestCase):
         )
         clean = {
             "generation": "sha256:clean",
-            "facts": {"hostname": "ctb-eu", "firewall": "active"},
+            "facts": {
+                "hostname": "ctb-eu",
+                "firewall": "active",
+                "password_auth": "no",
+                "kbd_auth": "no",
+                "pubkey_auth": "yes",
+                "root_login": "no",
+            },
         }
         with patch.object(MODULE, "inspect", return_value=clean):
             result = MODULE.verify(args)

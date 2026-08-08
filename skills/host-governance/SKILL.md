@@ -133,6 +133,16 @@ changing a project profile.
   echo, recover from page state, or place it in argv. If the credential is not
   available when needed, stop and report the initialization as blocked; do not
   imply that password authentication was attempted.
+- Treat a device ID, hostname, direct target, SSH alias, and jump-host alias as
+  distinct identities. Use only aliases declared by authoritative device
+  manifests or a fixed operation contract. Never guess an SSH alias from a
+  device ID, and use the same declared jump route for host-key observation,
+  password bootstrap, administrator-key verification, and finalize checks.
+- Require a successful password-bootstrap transport to disable remote PTY
+  allocation, wait for an authenticated remote-ready marker before sending a
+  script, send an explicit remote exit, and distinguish pre-auth closure from
+  rejected credentials. Never fall back to a direct connection when the
+  contract declares a jump host.
 - Treat an SSH connectivity or credential blocker as scoped to SSH. Do not
   open a provider console, call a provider API, inspect a credential-bearing
   login page, or read browser autofill values unless the user separately and
@@ -183,6 +193,9 @@ changing a project profile.
 4. Inspect all involved products and compute one ordered plan without writes.
    Resolve contracted credential sources and verify exact API capability before
    proposing interactive browser or Dashboard authentication.
+   For SSH port changes, inspect effective `sshd -T` ports, actual listeners,
+   and `ssh.socket` activation and overrides. Treat a declared port without a
+   live listener as blocked.
 5. Present material exposure, deletion, billing, downtime, and recovery
    effects before requesting any missing authority.
 6. Apply only authorized steps, using the relevant product reference:
@@ -208,7 +221,16 @@ changing a project profile.
    before retiring the old key, closing the bootstrap port, or claiming
    completion. Treat service installation and external enrollment checks as
    separate required evidence when enabled.
+   When systemd socket activation owns SSH listeners, snapshot and configure
+   its override in the same host transaction; reloading only `ssh.service` is
+   not evidence that a new port is listening. Keep the old listener until the
+   new one is positively reachable through the declared route.
 10. Run end-to-end and negative-path checks after all components pass.
+    Treat local key generation, the local SSH host block, plaintext credential
+    removal, identity-file migration, and old-key retirement as explicit local
+    host operations. If the executor cannot write `~/.ssh`, report that exact
+    permission blocker and emit a bounded patch; never imply the remote
+    transaction updated local SSH configuration.
 11. Report repository changes, live changes, transaction identity and
    generation, credentials/configuration needed,
    compatibility, rollback state, and every item still unverified.

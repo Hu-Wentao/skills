@@ -43,6 +43,19 @@ class SkillPolicyTest(unittest.TestCase):
         )
         self.assertIn("browser autofill", normalized_reference)
 
+    def test_jump_transport_socket_activation_and_local_config_are_durable(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (SKILL_ROOT / "references" / "server-bootstrap.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Never guess an SSH alias", skill)
+        self.assertIn("remote-ready marker", skill)
+        self.assertIn("systemd socket activation", skill)
+        self.assertIn("local SSH host block", skill)
+        self.assertIn("same route for `host-key`", reference)
+        self.assertIn("`ssh.socket` override", reference)
+        self.assertIn("Filesystem sandbox denial", reference)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ from typing import Any
 SCHEMA = "host-governance.server-bootstrap.v1"
 DEVICE_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 USER_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+SSH_ALIAS_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?")
 TAG_RE = re.compile(r"tag:[a-zA-Z0-9-]{1,63}")
 
 
@@ -42,9 +43,28 @@ if [ -r /etc/os-release ]; then
   os_version=${VERSION_ID:-unknown}
 fi
 ssh_port=22
+ssh_ports=22
+password_auth=unknown
+kbd_auth=unknown
+pubkey_auth=unknown
+root_login=unknown
 if command -v sshd >/dev/null 2>&1; then
   ssh_port=$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}')
   ssh_port=${ssh_port:-22}
+  ssh_ports=$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' | sort -nu | paste -sd, -)
+  ssh_ports=${ssh_ports:-22}
+  password_auth=$(sshd -T 2>/dev/null | awk '$1 == "passwordauthentication" {print $2; exit}')
+  kbd_auth=$(sshd -T 2>/dev/null | awk '$1 == "kbdinteractiveauthentication" {print $2; exit}')
+  pubkey_auth=$(sshd -T 2>/dev/null | awk '$1 == "pubkeyauthentication" {print $2; exit}')
+  root_login=$(sshd -T 2>/dev/null | awk '$1 == "permitrootlogin" {print $2; exit}')
+fi
+ssh_socket_active=absent
+ssh_socket_enabled=absent
+ssh_socket_listen=
+if systemctl list-unit-files ssh.socket >/dev/null 2>&1; then
+  ssh_socket_active=$(systemctl is-active ssh.socket 2>/dev/null || true)
+  ssh_socket_enabled=$(systemctl is-enabled ssh.socket 2>/dev/null || true)
+  ssh_socket_listen=$(systemctl show ssh.socket -p Listen --value 2>/dev/null | tr '\n' ',' | sed 's/,$//' || true)
 fi
 firewall=unknown
 if command -v ufw >/dev/null 2>&1; then
@@ -73,6 +93,14 @@ printf 'cpu_count=%s\n' "$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf unkno
 printf 'memory_kib=%s\n' "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
 printf 'root_disk=%s\n' "$(df -Pk / | awk 'NR == 2 {print $2 ":" $3 ":" $4}')"
 printf 'ssh_port=%s\n' "$ssh_port"
+printf 'ssh_ports=%s\n' "$ssh_ports"
+printf 'password_auth=%s\n' "$password_auth"
+printf 'kbd_auth=%s\n' "$kbd_auth"
+printf 'pubkey_auth=%s\n' "$pubkey_auth"
+printf 'root_login=%s\n' "$root_login"
+printf 'ssh_socket_active=%s\n' "$ssh_socket_active"
+printf 'ssh_socket_enabled=%s\n' "$ssh_socket_enabled"
+printf 'ssh_socket_listen=%s\n' "$ssh_socket_listen"
 printf 'firewall=%s\n' "$firewall"
 printf 'tailscale_state=%s\n' "$tailscale_state"
 printf 'tailscale_ipv4=%s\n' "$tailscale_ipv4"
@@ -254,18 +282,36 @@ def validate_target(value: str) -> str:
     raise BootstrapError("target must be one exact IP address or lowercase SSH alias")
 
 
+def validate_ssh_alias(value: str) -> str:
+    if not SSH_ALIAS_RE.fullmatch(value):
+        raise BootstrapError("SSH jump host must be one exact configured alias")
+    return value
+
+
+def validate_port(value: int) -> int:
+    if value < 1 or value > 65535:
+        raise BootstrapError("SSH port must be between 1 and 65535")
+    return value
+
+
 def run_ssh(args: argparse.Namespace, script: str, remote_args: list[str] | None = None) -> str:
     target = validate_target(args.target)
     user = validate_user(args.ssh_user)
-    command = [
-        "ssh",
+    command = ["ssh", "-T"]
+    jump_host = getattr(args, "jump_host", None)
+    if jump_host:
+        command.extend(["-J", validate_ssh_alias(jump_host)])
+    command.extend([
+        "-p", str(validate_port(getattr(args, "ssh_port", 22))),
         "-o", "ConnectTimeout=10",
         "-o", "ServerAliveInterval=5",
         "-o", "ServerAliveCountMax=2",
         "-o", "StrictHostKeyChecking=yes",
-        f"{user}@{target}",
-        "bash -s" if user == "root" else "sudo -n bash -s",
-    ]
+    ])
+    identity_file = getattr(args, "identity_file", None)
+    if identity_file:
+        command.extend(["-o", "IdentitiesOnly=yes", "-i", str(Path(identity_file).expanduser())])
+    command.extend([f"{user}@{target}", "bash -s" if user == "root" else "sudo -n bash -s"])
     if remote_args:
         command[-1] += " -- " + " ".join(shlex.quote(item) for item in remote_args)
     if getattr(args, "allow_password_bootstrap", False):
@@ -278,7 +324,10 @@ def run_ssh(args: argparse.Namespace, script: str, remote_args: list[str] | None
             "-o", "PreferredAuthentications=password",
             "-o", "PubkeyAuthentication=no",
             "-o", "KbdInteractiveAuthentication=no",
+            "-o", "NumberOfPasswordPrompts=1",
         ] + command[1:]
+        ready_marker = "HOST_GOVERNANCE_SSH_READY"
+        password_command[-1] = f"printf '{ready_marker}\\n'; exec " + password_command[-1]
         try:
             child = pexpect.spawn(
                 password_command[0],
@@ -290,11 +339,24 @@ def run_ssh(args: argparse.Namespace, script: str, remote_args: list[str] | None
             if match != 0:
                 detail = child.before.strip().splitlines()[-1:] or ["password SSH bootstrap failed"]
                 raise BootstrapError(detail[0])
+            child.setecho(False)
             child.sendline(password)
-            child.send(script)
-            child.sendeof()
+            authenticated = child.expect([
+                ready_marker + r"\r?\n",
+                r"(?i)permission denied",
+                pexpect.EOF,
+            ])
+            if authenticated != 0:
+                detail = child.before.strip().splitlines()[-1:] or ["password SSH authentication failed"]
+                raise BootstrapError(detail[0])
+            child.send(script + "\nexit\n")
             child.expect(pexpect.EOF, timeout=1800)
-            return child.before
+            output = child.before
+            child.close()
+            if child.exitstatus not in {0, None}:
+                detail = output.strip().splitlines()[-1:] or ["password SSH bootstrap failed"]
+                raise BootstrapError(detail[0])
+            return output
         except (pexpect.TIMEOUT, pexpect.EOF) as exc:
             raise BootstrapError("password SSH bootstrap timed out or closed") from exc
     completed = subprocess.run(
@@ -329,12 +391,22 @@ def generation_for(facts: dict[str, Any]) -> str:
 
 def host_key(args: argparse.Namespace) -> dict[str, Any]:
     target = validate_target(args.target)
+    port = validate_port(getattr(args, "ssh_port", 22))
+    jump_host = getattr(args, "jump_host", None)
+    if jump_host:
+        scan_command = [
+            "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+            validate_ssh_alias(jump_host),
+            "ssh-keyscan", "-T", "10", "-p", str(port), target,
+        ]
+    else:
+        scan_command = ["ssh-keyscan", "-T", "10", "-p", str(port), target]
     scanned = subprocess.run(
-        ["ssh-keyscan", "-T", "10", target],
+        scan_command,
         capture_output=True,
         text=True,
         check=False,
-        timeout=15,
+        timeout=30 if jump_host else 15,
     )
     lines = [line for line in scanned.stdout.splitlines() if line and not line.startswith("#")]
     if scanned.returncode != 0 or not lines:
@@ -355,6 +427,7 @@ def host_key(args: argparse.Namespace) -> dict[str, Any]:
         "operation": "host-key",
         "status": "server_bootstrap_host_key_observed",
         "target": target,
+        "port": port,
         "fingerprints": fingerprints,
         "trusted": False,
         "completion": "pending_host_key_verification",
@@ -484,6 +557,14 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         findings.append("hostname_mismatch")
     if facts.get("firewall") not in {"active", "nftables"}:
         findings.append("firewall_not_active")
+    if facts.get("password_auth") != "no":
+        findings.append("password_authentication_not_disabled")
+    if facts.get("kbd_auth") != "no":
+        findings.append("keyboard_interactive_authentication_not_disabled")
+    if facts.get("pubkey_auth") != "yes":
+        findings.append("public_key_authentication_not_enabled")
+    if facts.get("root_login") != "no":
+        findings.append("root_login_not_disabled")
     if args.enable_tailscale and facts.get("tailscale_state") == "absent":
         findings.append("tailscale_missing")
     if args.enable_beszel and facts.get("beszel_state") != "active":
@@ -531,6 +612,9 @@ def build_parser() -> argparse.ArgumentParser:
         if name != "host-key":
             command.add_argument("--device-id", required=True)
         command.add_argument("--target", required=True)
+        command.add_argument("--ssh-port", type=int, default=22)
+        command.add_argument("--jump-host")
+        command.add_argument("--identity-file")
         if name != "host-key":
             command.add_argument("--ssh-user", default="root")
             command.add_argument("--allow-password-bootstrap", action="store_true")

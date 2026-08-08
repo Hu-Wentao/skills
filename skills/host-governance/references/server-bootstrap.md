@@ -6,6 +6,27 @@ default baseline and makes Tailscale and Beszel explicit boolean options.
 Run `host-key` first and verify one returned fingerprint through the provider
 console before trusting it or starting `inspect`.
 
+## Transport and local identity contract
+
+Keep the direct target, device ID, destination SSH alias, and jump-host SSH
+alias separate. A project contract that requires a jump host must fix or
+validate that alias explicitly and use the same route for `host-key`,
+`inspect`, `plan`, `apply`, key verification, and `finalize`; never retry by
+silently falling back to the controller's direct public IP.
+
+A password-bootstrap executor must disable remote PTY allocation, wait for an
+authenticated ready marker before sending the remote script, terminate the
+script explicitly, and distinguish a pre-auth connection close from a remote
+password rejection. Add a focused successful-authentication regression test;
+testing only failures leaves the credential path unproved.
+
+Model local SSH configuration as its own contracted local-host mutation. It
+must atomically update one exact `Host` block, set the declared `ProxyJump` and
+new `IdentityFile`, remove password-bearing comments without copying them into
+a backup, validate `ssh -G`, prove a batch-mode new-key login, and only then
+retire the old local key. Filesystem sandbox denial is an explicit local
+permission blocker, not permission to bypass the contract or claim completion.
+
 ## Completion contract
 
 Treat a user request to initialize a server as an outcome request, not a
@@ -65,6 +86,15 @@ unsupported operating systems. Keep the bootstrap SSH session open until a
 second public-key session succeeds. A provider console or rescue path must be
 available before hardening SSH or enabling the firewall, but availability does
 not authorize the agent to operate it.
+
+Before migrating an SSH port, inspect `sshd -T`, live listeners, and
+`ssh.socket`. Snapshot `/etc/ssh`, the applicable systemd socket override, and
+the socket activation state. On socket-activated Debian or Ubuntu systems,
+install and restart a validated `ssh.socket` override for both the recovery and
+desired ports; reloading `ssh.service` alone does not activate the new port.
+Require a fresh new-key connection to the desired listener before the finalize
+transaction removes the recovery listener. If that connection fails, keep the
+old listener open and report the transaction as blocked.
 
 `rollback` restores the snapshotted hostname and SSH configuration and disables
 UFW only when it was previously inactive. Package changes, the administrator
