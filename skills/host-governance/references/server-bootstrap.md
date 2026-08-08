@@ -6,11 +6,50 @@ default baseline and makes Tailscale and Beszel explicit boolean options.
 Run `host-key` first and verify one returned fingerprint through the provider
 console before trusting it or starting `inspect`.
 
+## Completion contract
+
+Treat a user request to initialize a server as an outcome request, not a
+request to create a proposal. Local SSH configuration, a device manifest, a
+new key pair, a host-key observation, `inspect`, `plan`, and `apply` are only
+intermediate evidence. Never describe any of them as an initialized server.
+
+End the task in exactly one of these states:
+
+- `verified complete`: prove a fresh administrator-key login on the desired
+  SSH port, prove password authentication and prohibited root login are
+  rejected, verify the firewall and enabled native services, and finish any
+  contracted key retirement or old-port closure.
+- `explicitly blocked`: name the failed operation, state whether authentication
+  was actually attempted, list every local and remote change already made, and
+  provide the exact safe next action. A missing credential, unreachable SSH
+  listener, or unverified host key is blocked, not complete.
+- `rolled back`: identify the transaction and restored configuration, and list
+  every deliberately preserved or non-reversible change.
+
+`server_bootstrap_applied` means pending verification. Only a clean
+`server_bootstrap_verified` result plus all required negative-path and finalize
+checks permits a completion claim. A registered proposal is never evidence of
+remote initialization.
+
+## Credential and provider boundary
+
 SSH public-key authentication is the default. Use `--allow-password-bootstrap`
 only for a reviewed first connection: the controller reads the password from a
 hidden interactive prompt or `SSH_BOOTSTRAP_PASSWORD`, forces password-only SSH
 for that connection, and never places the value in argv or output. Stop using
-the option after administrator key login succeeds.
+the option after administrator key login succeeds. Consume an available
+bootstrap password immediately for the contracted connection or report it as
+unavailable; never claim a password attempt when only `ssh-keyscan`, TCP
+probing, or key authentication ran. Never write the password to a repository,
+task transcript, journal, shell history, local SSH config, or provider page.
+
+An SSH failure does not authorize a provider-console detour. Do not open or
+operate the provider Dashboard, inspect a login page or browser autofill,
+submit provider credentials, reset a password, reboot, or use rescue mode
+unless the user separately authorizes that exact action. Ask the user to verify
+the host-key fingerprint or recovery-path availability out of band when the
+bootstrap contract requires it; do not turn that prerequisite into permission
+to operate the provider account.
 
 ## Default baseline
 
@@ -24,7 +63,8 @@ use `--skip-package-upgrade` only after the reviewed plan accepts that gap.
 `apply` requires an exact live generation from the latest `inspect` and refuses
 unsupported operating systems. Keep the bootstrap SSH session open until a
 second public-key session succeeds. A provider console or rescue path must be
-available before hardening SSH or enabling the firewall.
+available before hardening SSH or enabling the firewall, but availability does
+not authorize the agent to operate it.
 
 `rollback` restores the snapshotted hostname and SSH configuration and disables
 UFW only when it was previously inactive. Package changes, the administrator

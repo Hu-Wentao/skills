@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "server_bootstrap.py"
@@ -92,6 +93,40 @@ class ServerBootstrapTest(unittest.TestCase):
         )
         with self.assertRaises(MODULE.BootstrapError):
             MODULE.plan(args)
+
+    def test_intermediate_operations_cannot_claim_completion(self) -> None:
+        temporary, path = self.inspection_file()
+        self.addCleanup(temporary.cleanup)
+        args = Namespace(
+            device_id="ctb-eu", target="169.58.146.63", ssh_user="root",
+            hostname="ctb-eu", admin_user="wyatt", skip_package_upgrade=False,
+            enable_tailscale=False, tailscale_tag="tag:server",
+            enable_beszel=False, beszel_key="", facts_file=str(path),
+        )
+        self.assertEqual(MODULE.plan(args)["completion"], "pending_apply")
+
+    def test_verify_requires_finalize_evidence_or_reports_blocked(self) -> None:
+        args = Namespace(
+            device_id="ctb-eu", target="169.58.146.63", ssh_user="wyatt",
+            hostname="ctb-eu", enable_tailscale=False, enable_beszel=False,
+        )
+        clean = {
+            "generation": "sha256:clean",
+            "facts": {"hostname": "ctb-eu", "firewall": "active"},
+        }
+        with patch.object(MODULE, "inspect", return_value=clean):
+            result = MODULE.verify(args)
+        self.assertEqual(result["completion"], "pending_finalize_verification")
+        self.assertIn("prohibited-root rejection", result["next_action"])
+
+        blocked = {
+            "generation": "sha256:blocked",
+            "facts": {"hostname": "wrong", "firewall": "inactive"},
+        }
+        with patch.object(MODULE, "inspect", return_value=blocked):
+            result = MODULE.verify(args)
+        self.assertEqual(result["completion"], "blocked")
+        self.assertTrue(result["findings"])
 
 
 if __name__ == "__main__":

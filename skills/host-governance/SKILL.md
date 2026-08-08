@@ -123,6 +123,20 @@ changing a project profile.
 - Treat `inspect` and `plan` as read-only. Require current-turn authorization
   for each remote write, reload, policy save, DNS mutation, migration, or
   rollback target.
+- For an initial server-bootstrap request, treat local key creation, manifest
+  edits, host-key scans, `inspect`, `plan`, and `apply` as intermediate states,
+  never as proof that the server was initialized. End the task only as
+  `verified complete`, `explicitly blocked`, or `rolled back`; report the
+  exact remote changes and verification evidence for that terminal state.
+- Consume a bootstrap password only through the contracted hidden prompt or
+  approved secret source, only for the first SSH connection, and never persist,
+  echo, recover from page state, or place it in argv. If the credential is not
+  available when needed, stop and report the initialization as blocked; do not
+  imply that password authentication was attempted.
+- Treat an SSH connectivity or credential blocker as scoped to SSH. Do not
+  open a provider console, call a provider API, inspect a credential-bearing
+  login page, or read browser autofill values unless the user separately and
+  explicitly authorizes that exact provider action.
 - Never expose or persist API tokens, auth keys, private keys, session data,
   environment dumps, or secret-bearing request bodies.
 - Never treat a live service inventory as a desired declaration or use a single
@@ -183,14 +197,19 @@ changing a project profile.
      [cloudflare.md](references/cloudflare.md).
    - Cloudflare Tunnel public hostnames and Access protection: read
      [cloudflare-tunnel.md](references/cloudflare-tunnel.md).
-6. Apply through the host-owned lock and transaction journal. Compose from the
+7. Apply through the host-owned lock and transaction journal. Compose from the
    latest accepted per-owner declarations, validate the complete candidate,
    atomically install, and preserve a recoverable prior generation.
-7. Validate each component immediately after its change. Stop the forward
+8. Validate each component immediately after its change. Stop the forward
    sequence on failure and preserve evidence. A retry must resume or safely
    supersede according to the authoritative transaction, not start a blind write.
-8. Run end-to-end and negative-path checks after all components pass.
-9. Report repository changes, live changes, transaction identity and
+9. For initial server bootstrap, verify a fresh administrator-key connection
+   on the desired SSH port plus rejection of password and prohibited root login
+   before retiring the old key, closing the bootstrap port, or claiming
+   completion. Treat service installation and external enrollment checks as
+   separate required evidence when enabled.
+10. Run end-to-end and negative-path checks after all components pass.
+11. Report repository changes, live changes, transaction identity and
    generation, credentials/configuration needed,
    compatibility, rollback state, and every item still unverified.
 

@@ -357,6 +357,7 @@ def host_key(args: argparse.Namespace) -> dict[str, Any]:
         "target": target,
         "fingerprints": fingerprints,
         "trusted": False,
+        "completion": "pending_host_key_verification",
         "next_action": "verify out of band before adding to known_hosts",
     }
 
@@ -372,6 +373,7 @@ def inspect(args: argparse.Namespace) -> dict[str, Any]:
         "facts": facts,
         "generation": generation_for(facts),
         "redaction": "secret-safe",
+        "completion": "pending_plan",
     }
 
 
@@ -425,6 +427,7 @@ def plan(args: argparse.Namespace) -> dict[str, Any]:
         "base_generation": facts["generation"],
         "actions": build_actions(args, facts),
         "authorization_required": ["host_write"] + (["external_write"] if args.enable_tailscale or args.enable_beszel else []),
+        "completion": "pending_apply",
     }
 
 
@@ -463,7 +466,14 @@ def apply(args: argparse.Namespace) -> dict[str, Any]:
         ],
     )
     result = parse_pairs(output)
-    return {"schema": SCHEMA, "operation": "apply", "status": "server_bootstrap_applied", **result}
+    return {
+        "schema": SCHEMA,
+        "operation": "apply",
+        "status": "server_bootstrap_applied",
+        "completion": "pending_verification",
+        "next_action": "verify from a fresh administrator-key session before finalizing",
+        **result,
+    }
 
 
 def verify(args: argparse.Namespace) -> dict[str, Any]:
@@ -478,13 +488,20 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         findings.append("tailscale_missing")
     if args.enable_beszel and facts.get("beszel_state") != "active":
         findings.append("beszel_agent_not_active")
+    blocked = bool(findings)
     return {
         "schema": SCHEMA,
         "operation": "verify",
-        "status": "server_bootstrap_verified" if not findings else "server_bootstrap_verification_failed",
+        "status": "server_bootstrap_verified" if not blocked else "server_bootstrap_verification_failed",
         "generation": observed["generation"],
         "findings": findings,
         "external_verification_required": bool(args.enable_tailscale or args.enable_beszel),
+        "completion": "blocked" if blocked else "pending_finalize_verification",
+        "next_action": (
+            "resolve findings and verify again"
+            if blocked
+            else "prove password and prohibited-root rejection, then finalize old key and port retirement"
+        ),
     }
 
 
