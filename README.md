@@ -40,6 +40,10 @@
 - [`queryable-markdown`](skills/queryable-markdown)：只读查询普通 Markdown，批量查询 Markdown 集合，并创建、维护、编辑和安全批量更新具有持久化查询契约的 Markdown 文档。
 - [`write-technical-docs`](skills/write-technical-docs)：依据 Google Developer Documentation Style Guide 撰写、改写和审校开发者文档。
 
+### 微信数据
+
+- [`batch-download-wechat-data`](skills/batch-download-wechat-data)：保留三种公众号数据能力：已知文章 URL 下载、公众号历史导出与阅读/点赞/转发/收藏/评论等增强数据采集。
+
 ### Token 实验
 
 - [`burn-tokens-fast`](skills/burn-tokens-fast)：记录高 Token 消耗、低日常收益的开发活动。
