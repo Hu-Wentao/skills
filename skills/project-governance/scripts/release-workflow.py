@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 from contextlib import contextmanager
@@ -27,8 +29,11 @@ from typing import Any, Iterator
 SCHEMA = "project-governance.release-workflow.v1"
 EVENT_SCHEMA = "project-governance.release-event.v1"
 ARTIFACT_SCHEMA = "project-governance.artifact-freeze.v1"
+DEPLOYED_RELEASE_SCHEMA = "project-governance.deployed-release.v1"
 SEMVER = re.compile(r"^(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)$")
 TAG = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 VERSION_KINDS = {"package-json", "pyproject", "pubspec"}
 
@@ -73,6 +78,13 @@ def run(
     if result.returncode != 0:
         raise WorkflowError(code, f"command failed with exit {result.returncode}: {argv[0]}")
     return result.stdout.strip() if capture else ""
+
+
+def run_bytes(argv: list[str], *, cwd: Path, code: str) -> bytes:
+    result = subprocess.run(argv, cwd=cwd, capture_output=True, check=False)
+    if result.returncode != 0:
+        raise WorkflowError(code, f"command failed with exit {result.returncode}: {argv[0]}")
+    return result.stdout
 
 
 def git(root: Path, *args: str, code: str = "GIT_FAILED") -> str:
@@ -130,7 +142,13 @@ def contained_file(root: Path, relative: str, field: str) -> Path:
     return candidate
 
 
-def load_config(root: Path, *, require_complete: bool = False, target: str | None = None) -> dict[str, Any]:
+def load_config(
+    root: Path,
+    *,
+    require_complete: bool = False,
+    require_hotfix: bool = False,
+    target: str | None = None,
+) -> dict[str, Any]:
     path = config_path(root)
     if not path.is_file():
         raise WorkflowError(
@@ -143,7 +161,7 @@ def load_config(root: Path, *, require_complete: bool = False, target: str | Non
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkflowError("INVALID_RELEASE_CONFIG", f"cannot parse {path}: {exc}", exit_code=2) from exc
     config = require_mapping(raw, "release workflow config")
-    allowed = {"schema", "integration_branch", "version", "gates", "artifact", "targets", "migration"}
+    allowed = {"schema", "integration_branch", "version", "gates", "artifact", "targets", "migration", "hotfix"}
     unknown = sorted(set(config) - allowed)
     if unknown:
         raise WorkflowError("INVALID_RELEASE_CONFIG", f"unsupported config keys: {', '.join(unknown)}", exit_code=2)
@@ -170,10 +188,28 @@ def load_config(root: Path, *, require_complete: bool = False, target: str | Non
         if not SAFE_TARGET.fullmatch(str(name)):
             raise WorkflowError("INVALID_RELEASE_CONFIG", f"invalid target name: {name}", exit_code=2)
         item = require_mapping(value, f"targets.{name}")
-        if set(item) != {"deploy", "verify"}:
-            raise WorkflowError("INVALID_RELEASE_CONFIG", f"targets.{name} must contain deploy and verify", exit_code=2)
+        if set(item) - {"inspect", "deploy", "verify"} or not {"deploy", "verify"}.issubset(item):
+            raise WorkflowError(
+                "INVALID_RELEASE_CONFIG",
+                f"targets.{name} must contain deploy and verify, with optional inspect",
+                exit_code=2,
+            )
+        if "inspect" in item:
+            argv_value(item.get("inspect"), f"targets.{name}.inspect")
         argv_value(item.get("deploy"), f"targets.{name}.deploy")
         argv_value(item.get("verify"), f"targets.{name}.verify")
+    hotfix = config.get("hotfix")
+    if hotfix is not None:
+        hotfix_value = require_mapping(hotfix, "hotfix")
+        if set(hotfix_value) != {"scope", "gates", "freeze"}:
+            raise WorkflowError("INVALID_RELEASE_CONFIG", "hotfix must contain scope, gates, and freeze", exit_code=2)
+        argv_value(hotfix_value.get("scope"), "hotfix.scope")
+        hotfix_gates = hotfix_value.get("gates")
+        if not isinstance(hotfix_gates, list) or not hotfix_gates:
+            raise WorkflowError("INVALID_RELEASE_CONFIG", "hotfix.gates must be a non-empty list of argv arrays", exit_code=2)
+        for index, command in enumerate(hotfix_gates):
+            argv_value(command, f"hotfix.gates[{index}]")
+        argv_value(hotfix_value.get("freeze"), "hotfix.freeze")
     migration = config.get("migration")
     if migration is not None:
         migration_value = require_mapping(migration, "migration")
@@ -189,6 +225,20 @@ def load_config(root: Path, *, require_complete: bool = False, target: str | Non
             missing.append(f"targets.{target or '<target>'}")
         if missing:
             raise WorkflowError("RELEASE_WORKFLOW_NOT_CONFIGURED", f"missing release hooks: {', '.join(missing)}", exit_code=2)
+    if require_hotfix:
+        missing_hotfix: list[str] = []
+        if target is None or target not in targets:
+            missing_hotfix.append(f"targets.{target or '<target>'}")
+        elif "inspect" not in targets[target]:
+            missing_hotfix.append(f"targets.{target}.inspect")
+        if hotfix is None:
+            missing_hotfix.append("hotfix")
+        if missing_hotfix:
+            raise WorkflowError(
+                "HOTFIX_WORKFLOW_NOT_CONFIGURED",
+                f"missing hotfix hooks: {', '.join(missing_hotfix)}",
+                exit_code=2,
+            )
     return config
 
 
@@ -244,9 +294,69 @@ def ref_exists(root: Path, ref: str) -> bool:
 
 def full_commit(root: Path, ref: str) -> str:
     value = git(root, "rev-parse", f"{ref}^{{commit}}", code="INVALID_RELEASE_IDENTITY")
-    if not re.fullmatch(r"[0-9a-f]{40,64}", value):
+    if not COMMIT.fullmatch(value):
         raise WorkflowError("INVALID_RELEASE_IDENTITY", f"cannot resolve full commit for {ref}")
     return value
+
+
+def semver_tuple(value: str) -> tuple[int, int, int]:
+    match = SEMVER.fullmatch(value)
+    if not match:
+        raise WorkflowError("INVALID_RELEASE_VERSION", f"invalid SemVer: {value}", exit_code=2)
+    return tuple(int(match.group(name)) for name in ("major", "minor", "patch"))
+
+
+def tag_version(tag: str) -> tuple[int, int, int]:
+    if not TAG.fullmatch(tag):
+        raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
+    return semver_tuple(tag[1:])
+
+
+def bump_patch(value: tuple[int, int, int]) -> tuple[int, int, int]:
+    return value[0], value[1], value[2] + 1
+
+
+def format_semver(value: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in value)
+
+
+def committed_integration_branch(root: Path) -> str:
+    relative = config_path(root).relative_to(root).as_posix()
+    text = git(root, "show", f"HEAD:{relative}", code="RELEASE_CONFIG_AT_COMMIT_MISSING")
+    try:
+        value = require_mapping(json.loads(text), "release workflow config")
+    except json.JSONDecodeError as exc:
+        raise WorkflowError("INVALID_RELEASE_CONFIG", "cannot parse committed release workflow config", exit_code=2) from exc
+    return require_string(value.get("integration_branch"), "integration_branch")
+
+
+def current_controller_commit(root: Path) -> str:
+    branch = committed_integration_branch(root)
+    ref = f"refs/heads/{branch}"
+    if not ref_exists(root, ref):
+        raise WorkflowError("INTEGRATION_BRANCH_MISSING", f"missing {ref}", exit_code=2)
+    return full_commit(root, ref)
+
+
+@contextmanager
+def materialized_ref(root: Path, ref: str) -> Iterator[Path]:
+    archive_bytes = run_bytes(
+        ["git", "archive", "--format=tar", ref],
+        cwd=root,
+        code="CONTROLLER_SOURCE_ARCHIVE_FAILED",
+    )
+    with tempfile.TemporaryDirectory(prefix="project-governance-controller-") as temporary_name:
+        destination = Path(temporary_name)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+                archive.extractall(destination, filter="data")
+        except (tarfile.TarError, ValueError, OSError) as exc:
+            raise WorkflowError(
+                "CONTROLLER_SOURCE_ARCHIVE_INVALID",
+                f"cannot materialize committed controller source: {exc}",
+                exit_code=2,
+            ) from exc
+        yield destination
 
 
 def is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
@@ -388,8 +498,17 @@ def expand(argv: list[str], values: dict[str, str]) -> list[str]:
         ) from exc
 
 
-def hook_env(root: Path, *, version: str, tag: str, target: str, worktree: Path, artifact: Path) -> dict[str, str]:
-    return {
+def hook_env(
+    root: Path,
+    *,
+    version: str,
+    tag: str,
+    target: str,
+    worktree: Path,
+    artifact: Path,
+    hotfix: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    result = {
         **os.environ,
         "PROJECT_GOVERNANCE_RELEASE_VERSION": version,
         "PROJECT_GOVERNANCE_RELEASE_TAG": tag,
@@ -398,6 +517,19 @@ def hook_env(root: Path, *, version: str, tag: str, target: str, worktree: Path,
         "PROJECT_GOVERNANCE_ARTIFACT_MANIFEST": str(artifact),
         "PROJECT_GOVERNANCE_REPOSITORY": str(root),
     }
+    if hotfix:
+        result.update(
+            {
+                "PROJECT_GOVERNANCE_HOTFIX_BASE_TAG": str(hotfix["baseTag"]),
+                "PROJECT_GOVERNANCE_HOTFIX_BASE_COMMIT": str(hotfix["baseCommit"]),
+                "PROJECT_GOVERNANCE_HOTFIX_EVIDENCE_DIGEST": str(hotfix["evidenceDigest"]),
+                "PROJECT_GOVERNANCE_HOTFIX_CONTROLLER_COMMIT": str(hotfix["controllerCommit"]),
+                "PROJECT_GOVERNANCE_HOTFIX_SUPERSEDED_RESERVATIONS": json.dumps(
+                    hotfix.get("supersededReservations", []), separators=(",", ":")
+                ),
+            }
+        )
+    return result
 
 
 def assert_transaction_compatible(root: Path, state: dict[str, Any]) -> None:
@@ -466,6 +598,113 @@ def run_hook(argv: list[str], *, cwd: Path, values: dict[str, str], env: dict[st
             if not script_path.is_file():
                 raise WorkflowError("RELEASE_HOOK_UNAVAILABLE", f"hook script is unavailable: {script}", exit_code=2)
     return run(expanded, cwd=cwd, env=env, capture=True, code=code)
+
+
+def parse_deployed_release_output(
+    output: str,
+    *,
+    root: Path,
+    target: str,
+    controller_commit: str,
+) -> dict[str, str]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise WorkflowError("DEPLOYED_RELEASE_EVIDENCE_MISSING", "target inspect hook returned no evidence", exit_code=2)
+    try:
+        value = require_mapping(json.loads(lines[-1]), "target inspect output")
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(
+            "DEPLOYED_RELEASE_EVIDENCE_INVALID",
+            "target inspect hook must end with one JSON object",
+            exit_code=2,
+        ) from exc
+    deployed_target = value.get("target")
+    tag = value.get("tag")
+    commit = value.get("commit")
+    evidence_digest = value.get("evidenceDigest")
+    if value.get("schema") != DEPLOYED_RELEASE_SCHEMA:
+        raise WorkflowError("DEPLOYED_RELEASE_EVIDENCE_INVALID", f"schema must be {DEPLOYED_RELEASE_SCHEMA}", exit_code=2)
+    if deployed_target != target or not TAG.fullmatch(str(tag)) or not COMMIT.fullmatch(str(commit)):
+        raise WorkflowError("DEPLOYED_RELEASE_EVIDENCE_INVALID", "target, tag, or commit is invalid", exit_code=2)
+    if value.get("deploymentStatus") != "succeeded" or value.get("transactionStatus") != "succeeded":
+        raise WorkflowError(
+            "DEPLOYED_RELEASE_NOT_VERIFIED",
+            "current target deployment and transaction must both be succeeded",
+            exit_code=2,
+        )
+    if not DIGEST.fullmatch(str(evidence_digest)):
+        raise WorkflowError("DEPLOYED_RELEASE_EVIDENCE_INVALID", "evidenceDigest must be sha256:<64 lowercase hex>", exit_code=2)
+    tagged_commit = annotated_tag_commit(root, str(tag))
+    if tagged_commit != commit:
+        raise WorkflowError(
+            "DEPLOYED_RELEASE_IDENTITY_MISMATCH",
+            "target evidence does not match the local annotated release tag",
+            exit_code=2,
+        )
+    deployment_tags = git(
+        root,
+        "for-each-ref",
+        "--sort=-creatordate",
+        "--format=%(refname:short)",
+        f"refs/tags/deploy/{target}/*/{tag}",
+    ).splitlines()
+    deployment_tag = next(
+        (candidate for candidate in deployment_tags if annotated_tag_commit(root, candidate) == commit),
+        None,
+    )
+    if deployment_tag is None:
+        raise WorkflowError(
+            "DEPLOYED_RELEASE_GIT_EVIDENCE_MISSING",
+            f"no annotated deploy/{target} evidence tag matches {tag} {commit}",
+            exit_code=2,
+        )
+    return {
+        "target": target,
+        "baseTag": str(tag),
+        "baseCommit": str(commit),
+        "evidenceDigest": str(evidence_digest),
+        "deploymentTag": deployment_tag,
+        "controllerCommit": controller_commit,
+    }
+
+
+def inspect_deployed_release(
+    root: Path,
+    *,
+    target: str,
+    controller_commit: str | None = None,
+) -> dict[str, str]:
+    selected_controller = controller_commit or current_controller_commit(root)
+    with materialized_ref(root, selected_controller) as controller:
+        config = load_config(controller, require_hotfix=True, target=target)
+        inspect_hook = config["targets"][target]["inspect"]
+        values = {
+            "version": "",
+            "tag": "",
+            "target": target,
+            "worktree": str(controller),
+            "artifact_manifest": "",
+        }
+        env = {
+            **os.environ,
+            "PROJECT_GOVERNANCE_RELEASE_TARGET": target,
+            "PROJECT_GOVERNANCE_RELEASE_WORKTREE": str(controller),
+            "PROJECT_GOVERNANCE_REPOSITORY": str(root),
+            "PROJECT_GOVERNANCE_HOTFIX_CONTROLLER_COMMIT": selected_controller,
+        }
+        output = run_hook(
+            inspect_hook,
+            cwd=controller,
+            values=values,
+            env=env,
+            code="DEPLOYED_RELEASE_INSPECTION_FAILED",
+        )
+    return parse_deployed_release_output(
+        output,
+        root=root,
+        target=target,
+        controller_commit=selected_controller,
+    )
 
 
 def release_inspect(root: Path, target: str | None) -> int:
@@ -582,16 +821,41 @@ def bootstrap(root: Path, preset: str) -> int:
     return 0
 
 
-def active_reservations(root: Path, desired_branch: str) -> list[str]:
-    output = git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/release/v*", "refs/heads/repair/v*")
-    active: list[str] = []
+def reservation_records(root: Path, desired_branch: str | None = None) -> list[dict[str, Any]]:
+    output = git(
+        root,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads/release/v*",
+        "refs/heads/repair/v*",
+        "refs/heads/hotfix/v*",
+    )
+    records: list[dict[str, Any]] = []
     for branch in output.splitlines():
         if not branch or branch == desired_branch:
             continue
         version_tag = branch.split("/", 1)[1]
-        if not ref_exists(root, f"refs/tags/{version_tag}"):
-            active.append(branch)
-    return active
+        if ref_exists(root, f"refs/tags/{version_tag}") or not TAG.fullmatch(version_tag):
+            continue
+        records.append(
+            {
+                "branch": branch,
+                "tag": version_tag,
+                "version": tag_version(version_tag),
+                "commit": full_commit(root, f"refs/heads/{branch}"),
+            }
+        )
+    return sorted(records, key=lambda item: item["version"])
+
+
+def active_reservations(root: Path, desired_branch: str) -> list[str]:
+    tags = stable_tags(root)
+    highest_stable = tag_version(tags[0]) if tags else None
+    return [
+        item["branch"]
+        for item in reservation_records(root, desired_branch)
+        if highest_stable is None or item["version"] > highest_stable
+    ]
 
 
 def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None = None) -> dict[str, Any]:
@@ -605,8 +869,15 @@ def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None 
     if base_tag:
         if not TAG.fullmatch(base_tag) or not ref_exists(root, f"refs/tags/{base_tag}"):
             raise WorkflowError("INVALID_REPAIR_BASE", f"repair base tag is unavailable: {base_tag}", exit_code=2)
-        base_version = tuple(int(part) for part in base_tag[1:].split("."))
-        desired = tuple(int(part) for part in version.split("."))
+        tags = stable_tags(root)
+        if not tags or tags[0] != base_tag:
+            raise WorkflowError(
+                "INVALID_REPAIR_BASE",
+                f"repair base must be the highest stable tag {tags[0] if tags else '(none)'}",
+                exit_code=2,
+            )
+        base_version = tag_version(base_tag)
+        desired = semver_tuple(version)
         if desired != (base_version[0], base_version[1], base_version[2] + 1):
             raise WorkflowError("INVALID_REPAIR_VERSION", "repair must reserve the immediate next patch", exit_code=2)
         source_ref = f"refs/tags/{base_tag}"
@@ -623,6 +894,13 @@ def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None 
             raise WorkflowError("MAIN_SYNC_REQUIRED", f"{tags[0]} is not reachable from {config['integration_branch']}", exit_code=2)
         branch = f"release/{tag}"
         lineage = "release"
+    tags = stable_tags(root)
+    if tags and semver_tuple(version) <= tag_version(tags[0]):
+        raise WorkflowError(
+            "RELEASE_VERSION_SUPERSEDED",
+            f"version {version} is not greater than highest stable tag {tags[0]}",
+            exit_code=2,
+        )
     reservations = active_reservations(root, branch)
     if reservations:
         raise WorkflowError("RELEASE_VERSION_RESERVED", f"active release reservation exists: {reservations[0]}", exit_code=2)
@@ -640,43 +918,200 @@ def plan_prepare(root: Path, *, version: str, target: str, base_tag: str | None 
     }
 
 
+def plan_hotfix_prepare(
+    root: Path,
+    *,
+    version: str,
+    target: str,
+    base_tag: str,
+    base_commit: str,
+    evidence_digest: str,
+    controller_commit: str | None = None,
+) -> dict[str, Any]:
+    if not SEMVER.fullmatch(version):
+        raise WorkflowError("INVALID_RELEASE_VERSION", f"invalid SemVer: {version}", exit_code=2)
+    if not TAG.fullmatch(base_tag) or not COMMIT.fullmatch(base_commit) or not DIGEST.fullmatch(evidence_digest):
+        raise WorkflowError("INVALID_HOTFIX_BASE", "hotfix base tag, commit, or evidence digest is invalid", exit_code=2)
+    deployed = inspect_deployed_release(root, target=target, controller_commit=controller_commit)
+    expected = {
+        "baseTag": base_tag,
+        "baseCommit": base_commit,
+        "evidenceDigest": evidence_digest,
+    }
+    if any(deployed[name] != value for name, value in expected.items()):
+        raise WorkflowError(
+            "HOTFIX_BASE_CHANGED",
+            "current target deployment no longer matches the authorized hotfix base",
+            exit_code=2,
+        )
+    tag = f"v{version}"
+    branch = f"hotfix/{tag}"
+    if ref_exists(root, f"refs/tags/{tag}"):
+        raise WorkflowError("RELEASE_VERSION_EXISTS", f"tag already exists: {tag}", exit_code=2)
+    identities = [tag_version(item) for item in stable_tags(root)]
+    reservations = reservation_records(root, branch)
+    identities.extend(item["version"] for item in reservations)
+    if not identities:
+        raise WorkflowError("HOTFIX_VERSION_BASE_MISSING", "hotfix requires an existing stable release identity", exit_code=2)
+    required = bump_patch(max(identities))
+    desired = semver_tuple(version)
+    if desired != required:
+        raise WorkflowError(
+            "INVALID_HOTFIX_VERSION",
+            f"hotfix must reserve next global patch {format_semver(required)}",
+            exit_code=2,
+        )
+    superseded = [item["branch"] for item in reservations if item["branch"] != branch and item["version"] < desired]
+    blocking = [item["branch"] for item in reservations if item["branch"] != branch and item["version"] >= desired]
+    if blocking:
+        raise WorkflowError("RELEASE_VERSION_RESERVED", f"higher release reservation exists: {blocking[0]}", exit_code=2)
+    return {
+        "version": version,
+        "tag": tag,
+        "target": target,
+        "lineage": "hotfix",
+        "branch": branch,
+        "sourceRef": f"refs/tags/{base_tag}",
+        "sourceCommit": base_commit,
+        "worktree": str(branch_path(root, branch)),
+        "baseTag": base_tag,
+        "baseCommit": base_commit,
+        "evidenceDigest": evidence_digest,
+        "deploymentTag": deployed["deploymentTag"],
+        "controllerCommit": deployed["controllerCommit"],
+        "supersededReservations": superseded,
+        "releaseBoundary": release_boundary(),
+    }
+
+
+def apply_prepared_plan(
+    root: Path,
+    *,
+    plan: dict[str, Any],
+    resume: bool,
+    version_config: dict[str, Any],
+    event: str,
+) -> int:
+    branch = plan["branch"]
+    version = plan["version"]
+    worktree = Path(plan["worktree"])
+    existing_state = None
+    if resume and state_path(root, version).is_file():
+        existing_state = read_json(state_path(root, version), "RELEASE_STATE_INVALID")
+        identity_fields = ["version", "tag", "target", "lineage", "branch", "sourceCommit"]
+        identity_fields.extend(
+            field
+            for field in ("baseTag", "baseCommit", "evidenceDigest", "controllerCommit")
+            if field in plan
+        )
+        for field in identity_fields:
+            if existing_state.get(field) != plan.get(field):
+                raise WorkflowError(
+                    "RELEASE_IDENTITY_MISMATCH",
+                    f"retained state field {field} does not match the requested lineage",
+                    exit_code=2,
+                )
+    if ref_exists(root, f"refs/heads/{branch}"):
+        if not resume:
+            raise WorkflowError("RELEASE_VERSION_RESERVED", f"branch already exists: {branch}; use --resume", exit_code=2)
+        if not worktree.is_dir():
+            git(root, "worktree", "add", str(worktree), branch)
+    else:
+        if worktree.exists():
+            raise WorkflowError("RELEASE_WORKTREE_COLLISION", f"worktree path already exists: {worktree}", exit_code=2)
+        git(root, "worktree", "add", "-b", branch, str(worktree), plan["sourceCommit"])
+    if git(worktree, "status", "--porcelain"):
+        raise WorkflowError("RELEASE_WORKTREE_DIRTY", f"release worktree is dirty: {worktree}")
+    observed = current_version(worktree, version_config)
+    if observed != version:
+        changed = write_version(worktree, version_config, version)
+        relative = changed.relative_to(worktree)
+        git(worktree, "add", "--", str(relative))
+        git(worktree, "commit", "-m", f"chore(release): v{version}")
+    candidate = full_commit(worktree, "HEAD")
+    prepared_commit = (
+        existing_state.get("preparedCommit")
+        if existing_state and COMMIT.fullmatch(str(existing_state.get("preparedCommit", "")))
+        else candidate
+    )
+    state = {
+        "schema": "project-governance.release-state.v1",
+        **plan,
+        "preparedCommit": prepared_commit,
+        "candidateCommit": candidate,
+        "status": "prepared",
+        "phase": "version_reserved",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_json(state_path(root, version), state)
+    emit(event, **state)
+    return 0
+
+
 def prepare(root: Path, *, version: str, target: str, base_tag: str | None, dry_run: bool, resume: bool) -> int:
     plan = plan_prepare(root, version=version, target=target, base_tag=base_tag)
     if dry_run:
         emit("repair_prepare_planned" if base_tag else "release_prepare_planned", **plan)
         return 0
     with release_lock(root):
-        branch = plan["branch"]
-        worktree = Path(plan["worktree"])
-        if ref_exists(root, f"refs/heads/{branch}"):
-            if not resume:
-                raise WorkflowError("RELEASE_VERSION_RESERVED", f"branch already exists: {branch}; use --resume", exit_code=2)
-            if not worktree.is_dir():
-                git(root, "worktree", "add", str(worktree), branch)
-        else:
-            if worktree.exists():
-                raise WorkflowError("RELEASE_WORKTREE_COLLISION", f"worktree path already exists: {worktree}", exit_code=2)
-            git(root, "worktree", "add", "-b", branch, str(worktree), plan["sourceCommit"])
-        if git(worktree, "status", "--porcelain"):
-            raise WorkflowError("RELEASE_WORKTREE_DIRTY", f"release worktree is dirty: {worktree}")
+        plan = plan_prepare(root, version=version, target=target, base_tag=base_tag)
         config = load_config(root)
-        observed = current_version(worktree, config["version"])
-        if observed != version:
-            changed = write_version(worktree, config["version"], version)
-            relative = changed.relative_to(worktree)
-            git(worktree, "add", "--", str(relative))
-            git(worktree, "commit", "-m", f"chore(release): v{version}")
-        candidate = full_commit(worktree, "HEAD")
-        state = {
-            "schema": "project-governance.release-state.v1",
-            **plan,
-            "candidateCommit": candidate,
-            "status": "prepared",
-            "phase": "version_reserved",
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
-        }
-        atomic_json(state_path(root, version), state)
-        emit("repair_prepared" if base_tag else "release_prepared", **state)
+        return apply_prepared_plan(
+            root,
+            plan=plan,
+            resume=resume,
+            version_config=config["version"],
+            event="repair_prepared" if base_tag else "release_prepared",
+        )
+
+
+def hotfix_prepare(
+    root: Path,
+    *,
+    version: str,
+    target: str,
+    base_tag: str,
+    base_commit: str,
+    evidence_digest: str,
+    dry_run: bool,
+    resume: bool,
+) -> int:
+    resume_controller = None
+    if resume and state_path(root, version).is_file():
+        retained = read_json(state_path(root, version), "RELEASE_STATE_INVALID")
+        if retained.get("lineage") == "hotfix" and COMMIT.fullmatch(str(retained.get("controllerCommit", ""))):
+            resume_controller = retained["controllerCommit"]
+    plan = plan_hotfix_prepare(
+        root,
+        version=version,
+        target=target,
+        base_tag=base_tag,
+        base_commit=base_commit,
+        evidence_digest=evidence_digest,
+        controller_commit=resume_controller,
+    )
+    if dry_run:
+        emit("hotfix_prepare_planned", **plan)
+        return 0
+    with release_lock(root):
+        plan = plan_hotfix_prepare(
+            root,
+            version=version,
+            target=target,
+            base_tag=base_tag,
+            base_commit=base_commit,
+            evidence_digest=evidence_digest,
+            controller_commit=plan["controllerCommit"],
+        )
+        with materialized_ref(root, plan["controllerCommit"]) as controller:
+            config = load_config(controller, require_hotfix=True, target=target)
+            return apply_prepared_plan(
+                root,
+                plan=plan,
+                resume=resume,
+                version_config=config["version"],
+                event="hotfix_prepared",
+            )
     return 0
 
 
@@ -731,12 +1166,32 @@ def annotated_tag_commit(root: Path, tag: str) -> str | None:
     return full_commit(root, tag)
 
 
-def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, Any], worktree: Path, artifact: dict[str, Any], artifact_file: Path, migration: bool) -> None:
+def execute_deployment(
+    root: Path,
+    *,
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree: Path,
+    artifact: dict[str, Any],
+    artifact_file: Path,
+    migration: bool,
+    hook_cwd: Path | None = None,
+    hotfix: dict[str, Any] | None = None,
+) -> None:
     version = state["version"]
     tag = state["tag"]
     target = state["target"]
     values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
-    env = hook_env(root, version=version, tag=tag, target=target, worktree=worktree, artifact=artifact_file)
+    env = hook_env(
+        root,
+        version=version,
+        tag=tag,
+        target=target,
+        worktree=worktree,
+        artifact=artifact_file,
+        hotfix=hotfix,
+    )
+    execution_cwd = hook_cwd or worktree
     assert_transaction_compatible(root, state)
     transaction = {
         "schema": "project-governance.deployment-transaction.v1",
@@ -753,20 +1208,20 @@ def execute_deployment(root: Path, *, config: dict[str, Any], state: dict[str, A
     if migration:
         if not migration_config:
             raise WorkflowError("MIGRATION_WORKFLOW_NOT_CONFIGURED", "--migration requires migration hooks", exit_code=2)
-        run_hook(migration_config["preflight"], cwd=worktree, values=values, env=env, code="MIGRATION_PREFLIGHT_FAILED")
+        run_hook(migration_config["preflight"], cwd=execution_cwd, values=values, env=env, code="MIGRATION_PREFLIGHT_FAILED")
         transaction["phase"] = "migration_started"
         atomic_json(transaction_path(root, target), transaction)
-        run_hook(migration_config["apply"], cwd=worktree, values=values, env=env, code="MIGRATION_FAILED")
-        run_hook(migration_config["verify"], cwd=worktree, values=values, env=env, code="MIGRATION_VERIFICATION_FAILED")
+        run_hook(migration_config["apply"], cwd=execution_cwd, values=values, env=env, code="MIGRATION_FAILED")
+        run_hook(migration_config["verify"], cwd=execution_cwd, values=values, env=env, code="MIGRATION_VERIFICATION_FAILED")
         transaction["phase"] = "migration_completed"
         atomic_json(transaction_path(root, target), transaction)
     transaction["phase"] = "deployment_started"
     atomic_json(transaction_path(root, target), transaction)
     target_config = config["targets"][target]
-    run_hook(target_config["deploy"], cwd=worktree, values=values, env=env, code="DEPLOYMENT_FAILED")
+    run_hook(target_config["deploy"], cwd=execution_cwd, values=values, env=env, code="DEPLOYMENT_FAILED")
     transaction["phase"] = "deployed"
     atomic_json(transaction_path(root, target), transaction)
-    run_hook(target_config["verify"], cwd=worktree, values=values, env=env, code="DEPLOYMENT_VERIFICATION_FAILED")
+    run_hook(target_config["verify"], cwd=execution_cwd, values=values, env=env, code="DEPLOYMENT_VERIFICATION_FAILED")
     transaction.update({"phase": "completed", "status": "succeeded", "updatedAt": datetime.now(timezone.utc).isoformat()})
     atomic_json(transaction_path(root, target), transaction)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -848,6 +1303,165 @@ def run_release(root: Path, *, version: str, target: str, migration: bool, repai
     return 0
 
 
+def run_hotfix(
+    root: Path,
+    *,
+    version: str,
+    target: str,
+    base_tag: str,
+    base_commit: str,
+    evidence_digest: str,
+) -> int:
+    state = read_json(state_path(root, version), "RELEASE_NOT_PREPARED")
+    expected = {
+        "lineage": "hotfix",
+        "target": target,
+        "baseTag": base_tag,
+        "baseCommit": base_commit,
+        "evidenceDigest": evidence_digest,
+    }
+    if any(state.get(name) != value for name, value in expected.items()):
+        raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "prepared hotfix identity does not match this operation", exit_code=2)
+    worktree = Path(state["worktree"])
+    if not worktree.is_dir():
+        raise WorkflowError("RELEASE_WORKTREE_MISSING", f"missing prepared worktree: {worktree}")
+    with release_lock(root):
+        deployed = inspect_deployed_release(
+            root,
+            target=target,
+            controller_commit=state["controllerCommit"],
+        )
+        if any(deployed[name] != state[name] for name in ("baseTag", "baseCommit", "evidenceDigest")):
+            raise WorkflowError(
+                "HOTFIX_BASE_CHANGED",
+                "current target deployment changed after hotfix preparation",
+                exit_code=2,
+            )
+        tags = stable_tags(root)
+        if tags and semver_tuple(version) <= tag_version(tags[0]):
+            raise WorkflowError(
+                "HOTFIX_VERSION_SUPERSEDED",
+                f"hotfix version {version} is not greater than highest stable tag {tags[0]}",
+                exit_code=2,
+            )
+        if git(worktree, "branch", "--show-current") != state["branch"]:
+            raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "hotfix worktree branch changed")
+        if git(worktree, "status", "--porcelain"):
+            raise WorkflowError("RELEASE_WORKTREE_DIRTY", "commit the authorized hotfix before continuing")
+        candidate = full_commit(worktree, "HEAD")
+        if candidate == state.get("preparedCommit"):
+            raise WorkflowError("HOTFIX_REPAIR_COMMIT_MISSING", "hotfix requires a committed repair after preparation", exit_code=2)
+        if not is_ancestor(root, state["sourceCommit"], candidate):
+            raise WorkflowError("RELEASE_LINEAGE_DIVERGED", "hotfix candidate is not a descendant of deployed source")
+        if git(root, "rev-list", "--merges", f"{state['sourceCommit']}..{candidate}"):
+            raise WorkflowError("HOTFIX_MERGE_COMMIT_FORBIDDEN", "hotfix lineage must not contain merge commits", exit_code=2)
+        tag = state["tag"]
+        if annotated_tag_commit(root, tag) is not None:
+            raise WorkflowError("RELEASE_ALREADY_TAGGED", f"use release retry for existing tag {tag}", exit_code=2)
+        artifact_file = artifact_path(root, tag, target)
+        values = {
+            "version": version,
+            "tag": tag,
+            "target": target,
+            "worktree": str(worktree),
+            "artifact_manifest": str(artifact_file),
+        }
+        with materialized_ref(root, state["controllerCommit"]) as controller:
+            config = load_config(controller, require_complete=True, require_hotfix=True, target=target)
+            env = hook_env(
+                root,
+                version=version,
+                tag=tag,
+                target=target,
+                worktree=worktree,
+                artifact=artifact_file,
+                hotfix=state,
+            )
+            run_hook(
+                config["hotfix"]["scope"],
+                cwd=controller,
+                values=values,
+                env=env,
+                code="HOTFIX_SCOPE_REJECTED",
+            )
+            for index, gate in enumerate(config["hotfix"]["gates"]):
+                emit("hotfix_gate_started", index=index, executable=gate[0])
+                run_hook(gate, cwd=controller, values=values, env=env, code="HOTFIX_GATE_FAILED")
+            output = run_hook(
+                config["hotfix"]["freeze"],
+                cwd=controller,
+                values=values,
+                env=env,
+                code="HOTFIX_ARTIFACT_FREEZE_FAILED",
+            )
+            artifact = parse_artifact_output(output, tag=tag, commit=candidate, target=target)
+            if git(worktree, "status", "--porcelain"):
+                raise WorkflowError("ARTIFACT_FREEZE_MUTATED_SOURCE", "hotfix hooks changed candidate source")
+            deployed_before_tag = inspect_deployed_release(
+                root,
+                target=target,
+                controller_commit=state["controllerCommit"],
+            )
+            if any(
+                deployed_before_tag[name] != state[name]
+                for name in ("baseTag", "baseCommit", "evidenceDigest")
+            ):
+                raise WorkflowError(
+                    "HOTFIX_BASE_CHANGED",
+                    "current target deployment changed while hotfix gates were running",
+                    exit_code=2,
+                )
+            atomic_json_once(artifact_file, artifact)
+            git(root, "tag", "-a", tag, candidate, "-m", f"Release {tag}")
+            if annotated_tag_commit(root, tag) != candidate:
+                raise WorkflowError("RELEASE_TAG_IDENTITY_MISMATCH", "annotated tag does not match frozen hotfix")
+            state.update(
+                {
+                    "status": "tagged",
+                    "phase": "artifact_frozen",
+                    "candidateCommit": candidate,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            atomic_json(state_path(root, version), state)
+            try:
+                execute_deployment(
+                    root,
+                    config=config,
+                    state=state,
+                    worktree=worktree,
+                    artifact=artifact,
+                    artifact_file=artifact_file,
+                    migration=False,
+                    hook_cwd=controller,
+                    hotfix=state,
+                )
+            except WorkflowError:
+                state.update(
+                    {
+                        "status": "failed",
+                        "phase": "deployment_failed",
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                atomic_json(state_path(root, version), state)
+                raise
+        state.update({"status": "succeeded", "phase": "completed", "updatedAt": datetime.now(timezone.utc).isoformat()})
+        atomic_json(state_path(root, version), state)
+        emit(
+            "hotfix_completed",
+            tag=tag,
+            commit=candidate,
+            target=target,
+            baseTag=base_tag,
+            baseCommit=base_commit,
+            artifactManifest=str(artifact_file),
+            supersededReservations=state.get("supersededReservations", []),
+            releaseBoundary=release_boundary(),
+        )
+    return 0
+
+
 def retry(root: Path, *, tag: str, target: str) -> int:
     if not TAG.fullmatch(tag):
         raise WorkflowError("INVALID_RELEASE_TAG", f"invalid stable tag: {tag}", exit_code=2)
@@ -858,6 +1472,23 @@ def retry(root: Path, *, tag: str, target: str) -> int:
     assert selected is not None
     artifact_file, artifact = selected
     version = tag[1:]
+    retained_state: dict[str, Any] | None = None
+    retained_path = state_path(root, version)
+    if retained_path.is_file():
+        candidate_state = read_json(retained_path, "RELEASE_STATE_INVALID")
+        if candidate_state.get("lineage") == "hotfix":
+            if (
+                candidate_state.get("tag") != tag
+                or candidate_state.get("target") != target
+                or candidate_state.get("candidateCommit") != commit
+                or not COMMIT.fullmatch(str(candidate_state.get("controllerCommit", "")))
+            ):
+                raise WorkflowError(
+                    "RELEASE_IDENTITY_MISMATCH",
+                    "retained hotfix state does not match the fixed-tag retry",
+                    exit_code=2,
+                )
+            retained_state = candidate_state
     attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     worktree = worktree_root(root) / f"retry-{tag}-{target}-{attempt}"
     with release_lock(root):
@@ -865,6 +1496,31 @@ def retry(root: Path, *, tag: str, target: str) -> int:
         try:
             if full_commit(worktree, "HEAD") != commit or git(worktree, "status", "--porcelain"):
                 raise WorkflowError("RELEASE_IDENTITY_MISMATCH", "retry worktree identity check failed")
+            if retained_state is not None:
+                with materialized_ref(root, retained_state["controllerCommit"]) as controller:
+                    config = load_config(controller, require_complete=True, require_hotfix=True, target=target)
+                    retry_state = {**retained_state, "candidateCommit": commit}
+                    execute_deployment(
+                        root,
+                        config=config,
+                        state=retry_state,
+                        worktree=worktree,
+                        artifact=artifact,
+                        artifact_file=artifact_file,
+                        migration=False,
+                        hook_cwd=controller,
+                        hotfix=retained_state,
+                    )
+                    emit(
+                        "release_retry_completed",
+                        tag=tag,
+                        commit=commit,
+                        target=target,
+                        artifactManifest=str(artifact_file),
+                        controllerCommit=retained_state["controllerCommit"],
+                        releaseBoundary=release_boundary(),
+                    )
+                return 0
             config = load_config(worktree, require_complete=True, target=target)
             for index, gate in enumerate(config["gates"]):
                 values = {"version": version, "tag": tag, "target": target, "worktree": str(worktree), "artifact_manifest": str(artifact_file)}
@@ -947,10 +1603,36 @@ def promote(root: Path, *, tag: str, target: str, migration: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("inspect", "sync-main-plan", "sync-main", "plan", "bootstrap-plan", "bootstrap", "prepare-plan", "prepare", "repair-prepare-plan", "repair-prepare", "run", "repair", "promote-plan", "promote", "retry"))
+    parser.add_argument(
+        "operation",
+        choices=(
+            "inspect",
+            "sync-main-plan",
+            "sync-main",
+            "plan",
+            "bootstrap-plan",
+            "bootstrap",
+            "prepare-plan",
+            "prepare",
+            "repair-prepare-plan",
+            "repair-prepare",
+            "hotfix-inspect",
+            "hotfix-prepare-plan",
+            "hotfix-prepare",
+            "hotfix-plan",
+            "hotfix-run",
+            "run",
+            "repair",
+            "promote-plan",
+            "promote",
+            "retry",
+        ),
+    )
     parser.add_argument("--target")
     parser.add_argument("--version")
     parser.add_argument("--base-tag")
+    parser.add_argument("--base-commit")
+    parser.add_argument("--evidence-digest")
     parser.add_argument("--tag")
     parser.add_argument("--preset", default="auto", choices=("auto", "node-pnpm", "python-uv", "flutter-fvm"))
     parser.add_argument("--resume", action="store_true")
@@ -974,6 +1656,12 @@ def main(argv: list[str] | None = None) -> int:
             release_inspect(root, args.target)
             load_config(root, require_complete=True, target=args.target)
             return 0
+        if args.operation == "hotfix-inspect":
+            if not args.target:
+                raise WorkflowError("TARGET_REQUIRED", "hotfix-inspect requires --target", exit_code=2)
+            deployed = inspect_deployed_release(root, target=args.target)
+            emit("hotfix_deployed_base_inspected", status="ready", **deployed)
+            return 0
         if args.operation in {"prepare-plan", "prepare"}:
             if not args.version or not args.target:
                 raise WorkflowError("RELEASE_IDENTITY_REQUIRED", f"{args.operation} requires --version and --target", exit_code=2)
@@ -982,6 +1670,49 @@ def main(argv: list[str] | None = None) -> int:
             if not args.version or not args.target or not args.base_tag:
                 raise WorkflowError("REPAIR_IDENTITY_REQUIRED", f"{args.operation} requires --base-tag, --version, and --target", exit_code=2)
             return prepare(root, version=args.version, target=args.target, base_tag=args.base_tag, dry_run=args.operation.endswith("plan"), resume=args.resume)
+        if args.operation in {"hotfix-prepare-plan", "hotfix-prepare", "hotfix-plan"}:
+            if not all((args.version, args.target, args.base_tag, args.base_commit, args.evidence_digest)):
+                raise WorkflowError(
+                    "HOTFIX_IDENTITY_REQUIRED",
+                    f"{args.operation} requires --base-tag, --base-commit, --evidence-digest, --version, and --target",
+                    exit_code=2,
+                )
+            if args.operation == "hotfix-plan":
+                plan = plan_hotfix_prepare(
+                    root,
+                    version=args.version,
+                    target=args.target,
+                    base_tag=args.base_tag,
+                    base_commit=args.base_commit,
+                    evidence_digest=args.evidence_digest,
+                )
+                emit("hotfix_planned", **plan)
+                return 0
+            return hotfix_prepare(
+                root,
+                version=args.version,
+                target=args.target,
+                base_tag=args.base_tag,
+                base_commit=args.base_commit,
+                evidence_digest=args.evidence_digest,
+                dry_run=args.operation == "hotfix-prepare-plan",
+                resume=args.resume,
+            )
+        if args.operation == "hotfix-run":
+            if not all((args.version, args.target, args.base_tag, args.base_commit, args.evidence_digest)):
+                raise WorkflowError(
+                    "HOTFIX_IDENTITY_REQUIRED",
+                    "hotfix-run requires --base-tag, --base-commit, --evidence-digest, --version, and --target",
+                    exit_code=2,
+                )
+            return run_hotfix(
+                root,
+                version=args.version,
+                target=args.target,
+                base_tag=args.base_tag,
+                base_commit=args.base_commit,
+                evidence_digest=args.evidence_digest,
+            )
         if args.operation in {"run", "repair"}:
             if not args.version or not args.target:
                 raise WorkflowError("RELEASE_IDENTITY_REQUIRED", f"{args.operation} requires --version and --target", exit_code=2)

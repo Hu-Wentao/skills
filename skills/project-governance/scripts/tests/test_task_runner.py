@@ -99,6 +99,9 @@ tasks:
                         for operation, mutability in (
                             ("repair-plan", "read_only"),
                             ("repair", "external_write"),
+                            ("hotfix-plan", "read_only"),
+                            ("hotfix-qualify", "external_write"),
+                            ("hotfix-run", "external_write"),
                         )
                     },
                 }
@@ -229,6 +232,20 @@ tasks:
             "--authorized", "release", "repair", "--base-tag", "v1.2.3"
         )
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    def test_release_hotfix_aliases_preserve_plan_qualification_and_run_authority(self) -> None:
+        planned = self.invoke("release", "hotfix-plan", "--base-tag", "v1.2.3")
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        self.assertEqual(json.loads(planned.stdout)["argv"], ["--base-tag", "v1.2.3"])
+
+        for operation in ("hotfix-qualify", "hotfix-run"):
+            blocked = self.invoke("release", operation, "--base-tag", "v1.2.3")
+            self.assertEqual(blocked.returncode, 2)
+            self.assertIn("requires --authorized", blocked.stderr)
+            allowed = self.invoke(
+                "--authorized", "release", operation, "--base-tag", "v1.2.3"
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
     def test_document_maintenance_aliases_preserve_operation_authority(self) -> None:
         inspected = self.invoke("docs", "inspect", "--limit", "1")

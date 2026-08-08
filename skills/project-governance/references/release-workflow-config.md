@@ -68,9 +68,17 @@ Supported version presets are:
   },
   "targets": {
     "preproduction": {
+      "inspect": ["pnpm", "release:inspect-target", "--target", "{target}"],
       "deploy": ["pnpm", "release:deploy", "--target", "{target}"],
       "verify": ["pnpm", "release:verify", "--target", "{target}"]
     }
+  },
+  "hotfix": {
+    "scope": ["pnpm", "release:hotfix-scope"],
+    "gates": [
+      ["pnpm", "release:hotfix-test"]
+    ],
+    "freeze": ["pnpm", "release:hotfix-freeze"]
   }
 }
 ```
@@ -94,6 +102,48 @@ PROJECT_GOVERNANCE_REPOSITORY
 Do not put credentials in configuration, argv, hook output, or artifact
 evidence. Hooks load credentials through the project's existing protected
 runtime mechanism.
+
+`targets.<target>.inspect` and the top-level `hotfix` block are optional for
+ordinary release, repair, promotion, and retry. They are both required for a
+deployed-base hotfix. The inspector runs from a temporary archive of the exact
+committed integration controller, not from uncommitted control-worktree bytes,
+and must finish stdout with:
+
+```json
+{
+  "schema": "project-governance.deployed-release.v1",
+  "target": "preproduction",
+  "tag": "v1.4.2",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "deploymentStatus": "succeeded",
+  "transactionStatus": "succeeded",
+  "evidenceDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+The hook owns target-specific reconciliation of the live manifest and durable
+transaction. The managed engine emits only normalized safe fields, checks the
+annotated release tag and matching `deploy/<target>/.../<tag>` evidence tag,
+and rejects non-success or identity drift. It repeats this inspection during
+prepare and immediately before stable-tag creation.
+
+The hotfix scope, gate, freeze, deploy, and verify hooks run from the frozen
+committed controller archive. The candidate application source path remains in
+`PROJECT_GOVERNANCE_RELEASE_WORKTREE`. These additional variables are set:
+
+```text
+PROJECT_GOVERNANCE_HOTFIX_BASE_TAG
+PROJECT_GOVERNANCE_HOTFIX_BASE_COMMIT
+PROJECT_GOVERNANCE_HOTFIX_EVIDENCE_DIGEST
+PROJECT_GOVERNANCE_HOTFIX_CONTROLLER_COMMIT
+PROJECT_GOVERNANCE_HOTFIX_SUPERSEDED_RESERVATIONS
+```
+
+`hotfix.scope` must reject changes outside the project's emergency boundary.
+`hotfix.gates` must cover the affected regression surface. `hotfix.freeze`
+must reuse only unchanged content-identified base artifacts and return the
+ordinary artifact-freeze schema for the new tag and commit. Migration is not a
+managed hotfix operation.
 
 ## Artifact Boundary
 
@@ -169,6 +219,13 @@ migration remain separate current-user authority.
   `release/v<version>`, and creates a retained sibling worktree.
 - Repair preparation reserves only the immediate next patch and roots
   `repair/v<version>` directly at the failed annotated tag.
+- Hotfix inspection resolves one target's exact current deployed identity.
+  Hotfix preparation roots `hotfix/v<version>` at that tag while reserving the
+  next global patch after all stable tags and untagged reservations.
+- Lower untagged reservations remain intact but become superseded after the
+  higher hotfix tag exists. They cannot later publish their lower versions.
+- Hotfix preparation and run both require the same target tag, commit,
+  successful transaction status, and evidence digest.
 - Only one release command runs at a time per Git common directory.
 - Gates and artifact freeze run in the retained candidate worktree.
 - The stable annotated tag is created only after gates and artifact evidence
@@ -182,6 +239,9 @@ migration remain separate current-user authority.
   as the stable release tag.
 - Retry creates a fresh detached worktree at the exact tag and reuses the frozen
   target artifact manifest.
+- A fixed-tag retry for a managed hotfix reuses the committed controller frozen
+  in its retained hotfix state; it does not depend on controller scripts in the
+  older application tag or repeat source gates and artifact freeze.
 - After preparation, release and deployment status come only from the retained
   lineage and frozen evidence. Synchronization back to the integration branch
   is a separately reported post-release operation and cannot downgrade the

@@ -64,7 +64,9 @@ Supported release aliases include `release sync-main-plan`, `release sync-main`,
 `release inspect`, `release bootstrap-plan`, `release bootstrap`, `release plan`, `release prepare-plan`, `release prepare`,
 `release doctor-plan`, `release doctor`, `release status`, `release reproduce`,
 `release qualify-plan`, `release qualify`, `release run`, `release promote-plan`, `release promote`, `release retry`, `release repair-prepare-plan`,
-`release repair-prepare`, `release repair-plan`, and `release repair`. A
+`release repair-prepare`, `release repair-plan`, `release repair`, `release
+hotfix-inspect`, `release hotfix-prepare-plan`, `release hotfix-prepare`,
+`release hotfix-plan`, `release hotfix-qualify`, and `release hotfix-run`. A
 project-owned contract may expose only a subset.
 
 Supported resource diagnostics aliases include `resource diagnose`, which runs
@@ -221,7 +223,11 @@ verification, extraction, source execution, cleanup, and failure propagation
 to the deterministic deployment controller. AI must invoke the contracted
 workflow and must not recreate either boundary as shell snippets.
 
-Use `git snapshot`, `release inspect`, and the applicable normal, promotion, or repair plan before semantic release decisions. Invoke `release run`, `release promote`, `release retry`, or `release repair` only with current explicit authorization and the exact target/ref authorized by the user.
+Use `git snapshot`, `release inspect`, and the applicable normal, promotion,
+repair, or deployed-base hotfix plan before semantic release decisions. Invoke
+`release run`, `release promote`, `release retry`, `release repair`, or
+`release hotfix-run` only with current explicit authorization and the exact
+target/ref authorized by the user.
 
 When the project contract exposes Doctor and qualification operations, run
 `release doctor` for fast structured diagnosis, use `release reproduce` for one
@@ -260,9 +266,17 @@ release/deployment precondition. If the user intends uncommitted bytes to enter
 the candidate, obtain separate scope for finishing and committing those bytes
 before release preparation.
 
-After preparation freezes the source commit, determine release, retry, and
-deployment status only from the retained release or repair lineage, immutable
-tag, frozen artifacts, target transaction, and verification evidence. Treat
+Treat a request to hotfix one currently deployed target as authority to inspect
+that target's exact deployed tag, commit, successful deployment transaction,
+and immutable deployment evidence; prepare a minimal isolated hotfix from that
+tag; run its contracted target gates; and deploy the resulting new stable
+version to that same target. It does not authorize integration-branch feature
+bytes, another target, rollback, restore, or live migration. Revalidate the
+deployed base at preparation and again before tagging.
+
+After preparation freezes the source commit, determine release, hotfix, retry,
+and deployment status only from the retained release, repair, or hotfix
+lineage, immutable tag, frozen artifacts, target transaction, and verification evidence. Treat
 any later synchronization back to the integration branch as a separate
 post-release integration operation. Report its status separately; a dirty or
 moving control worktree may block that integration operation but must not
@@ -280,8 +294,8 @@ configuration restoration, application rollback, or a successful deployment
 tag.
 
 For the managed contract, keep Git locking, version reservation,
-`release/v<version>` and `repair/v<version>` worktrees, annotated stable tags,
-artifact manifests, target transactions, and fixed-tag retries inside
+`release/v<version>`, `repair/v<version>`, and `hotfix/v<version>` worktrees,
+annotated stable tags, artifact manifests, target transactions, and fixed-tag retries inside
 `release-workflow.py`. Project hooks may test, freeze artifacts, deploy, verify,
 or migrate, but must not recreate or bypass those identities. An artifact
 freeze hook must finish with the structured evidence required by
@@ -296,6 +310,13 @@ successful `deploy/<target>/<UTC timestamp>/v<version>` tag must point to the
 same release commit and record the selected artifact evidence.
 
 Classify a failed deployment before the next mutation. Use `release retry` only when source remains unchanged at the fixed release tag. If source must change, use `release repair-plan` and `release repair` to create the next patch release from the failed immutable tag. Do not substitute a new normal release from current `main`, merge current integration changes into the repair candidate, or infer permission to synchronize the repair back to `main`.
+
+When the defect is in a successfully deployed target whose tag is older than
+other published or reserved versions, use the deployed-base hotfix operations
+instead of repair. Resolve the base from target evidence rather than the
+highest tag, reserve the next global patch after every published and active
+version, and retain lower untagged reservations as superseded evidence. Never
+delete, rewrite, merge, or publish a superseded reservation as part of hotfix.
 
 When a pre-tag artifact build or freeze fails, inspect the resolved task
 contract and project profile for every declared artifact acquisition, build,

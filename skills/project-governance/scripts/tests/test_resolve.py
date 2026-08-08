@@ -351,6 +351,9 @@ tasks:
         self.assertIn("prepare", manifest["contract"]["operations"])
         self.assertIn("promote-plan", manifest["contract"]["operations"])
         self.assertIn("promote", manifest["contract"]["operations"])
+        self.assertIn("hotfix-inspect", manifest["contract"]["operations"])
+        self.assertIn("hotfix-prepare", manifest["contract"]["operations"])
+        self.assertIn("hotfix-run", manifest["contract"]["operations"])
 
     def test_missing_document_maintenance_task_uses_managed_contract(self) -> None:
         self.write_port_config()

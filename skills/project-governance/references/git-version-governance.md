@@ -1,3 +1,21 @@
+---
+mdq:
+  version: 1
+  dialect: gfm
+  records:
+    boundary:
+      source: heading
+      levels: [2]
+    key:
+      source: heading
+  fields:
+    title:
+      source: heading
+    raw:
+      source: body
+  tolerance:
+    incomplete: false
+---
 # Git Version Governance
 
 ## Define Ref Roles
@@ -69,13 +87,36 @@ Release or deployment authorization applies only to the current request. Do not 
 
 ## Create a Hotfix Lineage
 
-Start from the immutable affected release:
+Resolve the affected release from the selected target's current deployment
+manifest and successful deployment transaction. Cross-check its stable tag,
+peeled full commit, immutable deployment evidence, and target before creating a
+branch. Do not substitute the highest tag, current integration branch, package
+version, or operator recollection for this deployed identity.
 
-```bash
-git switch -c hotfix/v0.31.2 v0.31.2
-```
+Create `hotfix/v<new-version>` directly at the deployed tag. The new version
+must be the immediate patch after the greatest SemVer identity among all
+published stable tags and untagged `release/*`, `repair/*`, and `hotfix/*`
+reservations; it need not be the next patch of an older deployed base. This
+keeps release versions globally monotonic while application source remains the
+deployed bytes plus the authorized repair.
 
-Make and verify the smallest compatible fix on that branch. Give the repaired release a new version and tag according to project policy; never move `v0.31.2` to the repaired commit. Decide separately whether and how the fix returns to `main`, and preserve ancestry or an auditable cherry-pick record.
+Revalidate the deployed base during preparation and immediately before stable
+tag creation. Reject merge commits and integration-branch imports in the
+hotfix range. Require a committed repair after the version reservation, the
+project's hotfix scope gate, affected regression gates, immutable artifact
+freeze, target admission, deployment verification, and canary or equivalent
+acceptance evidence.
+
+When a hotfix reserves a version above an untagged lower release reservation,
+retain the lower branch and worktree as superseded evidence. Do not delete,
+rewrite, merge, or publish it. A subsequent normal release must start at a
+version higher than the hotfix and may use only integration history that has
+separately incorporated the repair.
+
+Never move the affected tag to the repaired commit. Decide separately whether
+and how the fix returns to the integration branch, and preserve ancestry or an
+auditable cherry-pick record. Integration conflict or delay must not downgrade
+a completed hotfix deployment.
 
 ## Audit History
 
