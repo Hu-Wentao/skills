@@ -1,13 +1,14 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including Tailscale installation and update readiness, Cloudflare Tunnel, DNS, and Access publication. Use when an agent needs repository-declared device IDs, hostnames, SSH aliases, Tailscale names or addresses, ports, service endpoints, topology or ownership, or when a project deployment needs inspection, planning, writes, verification, and rollback owned by the authoritative host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
 ---
 
 # Host Governance
 
 Use one control workflow for infrastructure shared by multiple projects. Keep
-application deployment ownership in the consuming project and shared network,
-ingress, DNS, and host ownership in the host infrastructure repository.
+application identity and build intent in the consuming project, and shared
+compute, CI, network, ingress, DNS, and host ownership in the host
+infrastructure repository.
 
 ## Query Shared Context
 
@@ -41,6 +42,34 @@ freshness. They are not live observations. Do not fetch or pull implicitly,
 probe networks, call provider APIs, or convert repository-declared values into
 runtime claims. Do not persist a derived inventory or return secret-bearing
 fields. Resolve `control` separately for live inspection or mutation.
+
+## Inspect Deployed Services
+
+When the task asks which services, containers, listeners, resource limits, or
+data paths exist on a host, use the project-owned read-only
+`service-inventory-inspect` control operation when it is configured. Pass one
+exact device ID at a time and use only the SSH alias declared by that device's
+manifest. Do not scan networks, guess addresses, install a collector, or
+execute arbitrary remote commands.
+
+When a safe snapshot already exists and the task asks for drift or sizing
+advice, use the project-owned read-only `service-inventory-report` operation.
+It may compare only against an explicitly declared per-device baseline; a
+missing baseline or missing historical metrics is a finding, not permission to
+infer desired services or resize a host.
+
+Treat the result as a dated runtime observation, not a new source of truth.
+Keep the safe JSON snapshot outside Git by default. Compare it with the
+device's declared service baseline only after resolving the project profile;
+promoting an observation into a repository declaration is a separate
+repository-write request.
+
+The inventory must be secret-safe: collect service names, managers, states,
+versions, listeners, persistence indicators, resource limits, and bounded
+capacity signals, but never environment variables, full command lines, logs,
+credentials, tokens, private keys, or container secret contents. Read the
+project-owned inventory reference when present for schema, platform support,
+redaction, and retention rules.
 
 ## Resolve Project Behavior
 
@@ -96,6 +125,9 @@ changing a project profile.
   rollback target.
 - Never expose or persist API tokens, auth keys, private keys, session data,
   environment dumps, or secret-bearing request bodies.
+- Never treat a live service inventory as a desired declaration or use a single
+  point-in-time sample as proof of long-term capacity. Report freshness and
+  missing historical evidence explicitly.
 - Snapshot the exact current resource and keep a tested recovery path before a
   shared configuration change.
 - Require one host-owned serialized transaction for each shared-resource
@@ -112,6 +144,10 @@ changing a project profile.
 - Do not report a Tailscale installation as complete until its effective update
   channel, automatic-update behavior, package reachability, and recovery path
   have been inspected and either verified or reported as an explicit gap.
+- Treat Jenkins installation, controller configuration, plugin state, agents,
+  credentials, shared job runtime, backups, and upgrades as host-owned state.
+  Preserve application identity and signing intent from the consuming project;
+  never make a mobile build green by adopting another application's identity.
 - Treat a Cloudflare public application as one coupled transaction spanning
   the origin, connector, tunnel ingress, proxied DNS, Access application, and
   Access policy. Never report a partially configured path as published or
@@ -128,13 +164,18 @@ changing a project profile.
 1. Resolve the project profile and authoritative host infrastructure root.
 2. Build a change matrix: owner, target, current state, desired state,
    executor, validation, rollback, and authorization state.
-3. Inspect all involved products and compute one ordered plan without writes.
+3. For service inventory, inspect only the exact requested devices and record
+   collection provenance, freshness, capability gaps, and redaction status.
+4. Inspect all involved products and compute one ordered plan without writes.
    Resolve contracted credential sources and verify exact API capability before
    proposing interactive browser or Dashboard authentication.
-4. Present material exposure, deletion, billing, downtime, and recovery
+5. Present material exposure, deletion, billing, downtime, and recovery
    effects before requesting any missing authority.
-5. Apply only authorized steps, using the relevant product reference:
+6. Apply only authorized steps, using the relevant product reference:
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
+   - Shared PostgreSQL service deployment or lifecycle: read [postgresql.md](references/postgresql.md).
+   - Jenkins installation, upgrades, security, nodes, credentials, jobs, or
+     Android/iOS packaging: read [jenkins.md](references/jenkins.md).
    - Tailscale installation, update readiness, policy, or node settings: read
      [tailscale.md](references/tailscale.md).
    - Cloudflare accounts, zones, DNS, or Terraform state: read
@@ -163,7 +204,12 @@ monolithic shared configuration.
 | Surface | Primary authority | Runtime authority |
 | --- | --- | --- |
 | Application port and health contract | Consuming project | Deployed application |
+| Application source, identity, build, and signing intent | Consuming project | Source and signing authorities |
+| Desired per-device service deployment baseline | Host infrastructure repository | Repository declaration and owning runtime |
+| Live service inventory and capacity observation | Runtime host | Bounded read-only collector |
 | Target host and service exposure | Host infrastructure repository | Target host and network |
+| Jenkins installation, controller, plugins, nodes, credentials, backups, and upgrades | Host infrastructure repository | Jenkins controller and agents |
+| Jenkins job definition and execution state | Host infrastructure repository | Jenkins controller and agents |
 | Caddy host mapping and shared ingress | Host infrastructure repository | Running Caddy instance |
 | Tailnet access intent | Host infrastructure repository | Saved Tailscale policy and nodes |
 | Cloudflare desired resources | Host infrastructure repository | Cloudflare API and IaC state |
