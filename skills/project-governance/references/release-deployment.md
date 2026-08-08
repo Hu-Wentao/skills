@@ -68,6 +68,10 @@ Interpret retry and repair scope from the verbs the user actually authorized:
   verified also authorizes the required next patch candidate and its named
   target gates. Do not ask again between diagnosis, repair, patch publication,
   fixed-artifact retry, and verification.
+- A request to hotfix one currently deployed target authorizes read-only
+  deployed-identity inspection, one isolated minimal repair from that exact
+  tag, the next global patch reservation, contracted hotfix gates, publication,
+  and verified deployment back to the same target.
 - Neither form authorizes a different target, tag mutation, rollback, restore,
   destructive migration, unrelated cleanup, or synchronization back to the
   integration branch.
@@ -122,6 +126,9 @@ frozen release. For a repair release, freeze the failed release tag and its
 peeled commit as the base identity, then follow the
 isolated repair rules below. For deploy-only work, use the exact
 user-authorized commit or immutable tag and do not mutate the control worktree.
+For a deployed-base hotfix, freeze the target's verified current stable tag,
+peeled commit, successful transaction, immutable deployment evidence digest,
+and the committed controller identity used to inspect and execute the flow.
 
 ## Separate Project Releases from Module Artifacts
 
@@ -162,6 +169,8 @@ before running checks, builds, version edits, or deployment commands.
   full release.
 - Use a retained `repair/v<version>` branch rooted at the failed immutable
   release tag for a repair release.
+- Use a retained `hotfix/v<version>` branch rooted at the target's verified
+  currently deployed stable tag for a deployed-base hotfix.
 - Run release checks, version edits, builds, and deployment from the isolated
   worktree.
 - Never use `stash`, `reset`, `clean`, or forced removal to prepare the user's
@@ -496,6 +505,56 @@ After a stable tag exists:
 Frequent stable patch tags therefore indicate that a required failure mode is
 escaping the pre-tag admission suite. Record and repair that test escape rather
 than weakening tag immutability or reusing a version.
+
+## Hotfix the Currently Deployed Release Without Advancing Main
+
+Use a deployed-base hotfix when one successfully deployed target contains a
+production defect and current integration history includes unrelated feature
+work. Do not reinterpret this case as a normal release or as a repair of the
+highest published tag.
+
+1. Run the project-configured read-only target inspector. Require it to
+   reconcile the live deployment manifest, completed deployment transaction,
+   stable tag, full commit, and immutable deployment evidence into one
+   content-identified result.
+2. Cross-check the reported tag and commit against local annotated release and
+   successful deployment evidence tags. Stop on missing, partial, unverified,
+   or conflicting identity.
+3. Freeze the committed controller identity separately from application
+   source. Current controller code may inspect and orchestrate historical
+   releases, but the candidate application source must start at the deployed
+   tag and must never import integration-branch application bytes.
+4. Reserve the immediate patch after the greatest version among all stable
+   tags and untagged release, repair, or hotfix reservations. Root a retained
+   `hotfix/v<version>` worktree at the deployed tag. Record lower untagged
+   reservations as superseded without deleting, rewriting, or merging them.
+5. Require a committed repair after version reservation and reject merge
+   commits in the hotfix range. Run a project-owned scope gate that fails
+   closed for migrations, release-controller changes, infrastructure,
+   dependency-lock changes, or any other change the project classifies as too
+   broad for hotfix.
+6. Run the project-owned affected regression gates. Reuse only immutable
+   deployed-base artifacts whose runtime inputs and digests are unchanged;
+   rebuild and freeze the affected closure under the new release identity.
+7. Re-run the target inspector immediately before tagging. If the target tag,
+   commit, transaction status, or evidence digest changed, stop and require a
+   new hotfix decision instead of deploying over a different base.
+8. Create the new annotated stable tag only after scope, gates, artifact
+   freeze, and target admission pass. Deploy and verify the same tag, commit,
+   artifact manifests, and target transaction. Fixed-tag retry rules apply
+   after publication.
+
+Hotfix does not authorize rollback, restore, live migration, another target,
+tag mutation, or synchronization back to the integration branch. Integrate the
+repair separately after production is verified. A superseded lower reservation
+cannot later publish its reserved version; preserve its work and create a new
+higher normal release after the repair enters integration history.
+
+If deployment fails after the hotfix tag exists, retry that fixed tag, commit,
+artifact manifest, and target through the controller identity frozen in the
+hotfix state. Do not fall back to release scripts embedded in the older
+application lineage and do not re-run source qualification or rebuild the
+artifact during retry.
 
 ## Repair a Frozen Release Without Advancing Main
 

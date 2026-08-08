@@ -29,11 +29,24 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         )
         (self.root / "hooks.py").write_text(
             "import json,os,sys\n"
+            "from pathlib import Path\n"
             "mode=sys.argv[1]\n"
+            "root=Path(os.environ['PROJECT_GOVERNANCE_REPOSITORY'])\n"
             "if mode == 'freeze':\n"
             " target=os.environ['PROJECT_GOVERNANCE_RELEASE_TARGET']\n"
+            " marker=root/'drift-on-freeze'\n"
+            " if marker.exists():\n"
+            "  deployed=json.loads((root/'deployed.json').read_text())\n"
+            "  deployed['evidenceDigest']='sha256:'+'b'*64\n"
+            "  (root/'deployed.json').write_text(json.dumps(deployed)+'\\n')\n"
+            "  marker.unlink()\n"
             " print(json.dumps({'schema':'project-governance.artifact-freeze.v1','artifacts':[{'name':'app','digest':'sha256:'+target}]}))\n"
-            "elif mode in {'gate','deploy','verify'}:\n"
+            "elif mode == 'inspect':\n"
+            " print((root/'deployed.json').read_text())\n"
+            "elif mode == 'deploy' and (root/'fail-deploy-once').exists():\n"
+            " (root/'fail-deploy-once').unlink()\n"
+            " raise SystemExit(3)\n"
+            "elif mode in {'scope','gate','deploy','verify'}:\n"
             " print(mode)\n"
             "else:\n"
             " raise SystemExit(2)\n",
@@ -51,13 +64,20 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
                     "artifact": {"freeze": [sys.executable, "hooks.py", "freeze"]},
                     "targets": {
                         "test": {
+                            "inspect": [sys.executable, "hooks.py", "inspect"],
                             "deploy": [sys.executable, "hooks.py", "deploy"],
                             "verify": [sys.executable, "hooks.py", "verify"],
                         },
                         "production": {
+                            "inspect": [sys.executable, "hooks.py", "inspect"],
                             "deploy": [sys.executable, "hooks.py", "deploy"],
                             "verify": [sys.executable, "hooks.py", "verify"],
                         }
+                    },
+                    "hotfix": {
+                        "scope": [sys.executable, "hooks.py", "scope"],
+                        "gates": [[sys.executable, "hooks.py", "gate"]],
+                        "freeze": [sys.executable, "hooks.py", "freeze"],
                     },
                 },
                 indent=2,
@@ -68,6 +88,8 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-m", "initial")
         self.main_commit = self.git("rev-parse", "HEAD")
+        self.git("tag", "-a", "v1.0.0", "-m", "Release v1.0.0")
+        self.record_deployed("test", "v1.0.0", self.main_commit)
 
     def tearDown(self) -> None:
         subprocess.run(
@@ -101,6 +123,36 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
 
     def events(self, result: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
         return [json.loads(line) for line in result.stdout.splitlines() if line.strip().startswith("{")]
+
+    def git_at(self, cwd: Path, *args: str) -> str:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            self.fail(result.stderr)
+        return result.stdout.strip()
+
+    def record_deployed(self, target: str, tag: str, commit: str, *, digest_char: str = "a") -> str:
+        evidence_digest = f"sha256:{digest_char * 64}"
+        (self.root / "deployed.json").write_text(
+            json.dumps(
+                {
+                    "schema": "project-governance.deployed-release.v1",
+                    "target": target,
+                    "tag": tag,
+                    "commit": commit,
+                    "deploymentStatus": "succeeded",
+                    "transactionStatus": "succeeded",
+                    "evidenceDigest": evidence_digest,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        deploy_tag = f"deploy/{target}/20260101T000000Z/{tag}"
+        if not self.git("tag", "--list", deploy_tag):
+            self.git("tag", "-a", deploy_tag, commit, "-m", f"Deploy {tag} to {target}")
+        return evidence_digest
 
     def test_prepare_does_not_report_control_worktree_status(self) -> None:
         (self.root / "package.json").write_text(
@@ -342,7 +394,6 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(self.events(result)[-1]["status"], "hooks_required")
 
     def test_repair_preparation_requires_immediate_next_patch(self) -> None:
-        self.git("tag", "-a", "v1.0.0", "-m", "Release v1.0.0")
         blocked = self.invoke(
             "release",
             "repair-prepare-plan",
@@ -355,6 +406,236 @@ class ManagedReleaseWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(blocked.returncode, 2)
         self.assertIn("INVALID_REPAIR_VERSION", blocked.stdout)
+
+    def test_hotfix_uses_deployed_base_and_supersedes_lower_reservation(self) -> None:
+        (self.root / "feature.txt").write_text("unreleased feature\n", encoding="utf-8")
+        (self.root / "package.json").write_text(
+            json.dumps({"name": "release-test", "version": "1.1.0"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.git("add", "feature.txt", "package.json")
+        self.git("commit", "-m", "feat: unreleased feature")
+        self.git("tag", "-a", "v1.1.0", "-m", "Release v1.1.0")
+        self.git("branch", "release/v1.2.0")
+        evidence_digest = f"sha256:{'a' * 64}"
+
+        inspected = self.invoke("release", "hotfix-inspect", "--target", "test")
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        inspection = self.events(inspected)[-1]
+        self.assertEqual(inspection["baseTag"], "v1.0.0")
+        self.assertEqual(inspection["baseCommit"], self.main_commit)
+
+        prepared = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-prepare",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.2.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        prepared_event = self.events(prepared)[-1]
+        self.assertEqual(prepared_event["sourceCommit"], self.main_commit)
+        self.assertEqual(prepared_event["supersededReservations"], ["release/v1.2.0"])
+        hotfix_worktree = Path(prepared_event["worktree"])
+        self.assertFalse((hotfix_worktree / "feature.txt").exists())
+        (hotfix_worktree / "fix.txt").write_text("production fix\n", encoding="utf-8")
+        self.git_at(hotfix_worktree, "add", "fix.txt")
+        self.git_at(hotfix_worktree, "commit", "-m", "fix: production defect")
+
+        released = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-run",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.2.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(released.returncode, 0, released.stderr)
+        completed = self.events(released)[-1]
+        self.assertEqual(completed["event"], "hotfix_completed")
+        self.assertEqual(completed["baseTag"], "v1.0.0")
+        self.assertEqual(self.git("rev-parse", "v1.2.1^{commit}"), self.git("rev-parse", "hotfix/v1.2.1"))
+        self.assertTrue(self.git("show-ref", "--verify", "refs/heads/release/v1.2.0"))
+
+    def test_hotfix_revalidates_target_identity_before_prepare(self) -> None:
+        old_digest = f"sha256:{'a' * 64}"
+        (self.root / "next.txt").write_text("next\n", encoding="utf-8")
+        self.git("add", "next.txt")
+        self.git("commit", "-m", "next release")
+        next_commit = self.git("rev-parse", "HEAD")
+        self.git("tag", "-a", "v1.0.1", "-m", "Release v1.0.1")
+        self.record_deployed("test", "v1.0.1", next_commit, digest_char="b")
+
+        blocked = self.invoke(
+            "release",
+            "hotfix-prepare-plan",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            old_digest,
+            "--version",
+            "1.0.2",
+            "--target",
+            "test",
+        )
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("HOTFIX_BASE_CHANGED", blocked.stdout)
+
+    def test_hotfix_run_requires_repair_commit_after_preparation(self) -> None:
+        evidence_digest = f"sha256:{'a' * 64}"
+        prepared = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-prepare",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        blocked = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-run",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("HOTFIX_REPAIR_COMMIT_MISSING", blocked.stdout)
+
+    def test_hotfix_revalidates_target_identity_immediately_before_tag(self) -> None:
+        evidence_digest = f"sha256:{'a' * 64}"
+        prepared = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-prepare",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        hotfix_worktree = Path(self.events(prepared)[-1]["worktree"])
+        (hotfix_worktree / "fix.txt").write_text("production fix\n", encoding="utf-8")
+        self.git_at(hotfix_worktree, "add", "fix.txt")
+        self.git_at(hotfix_worktree, "commit", "-m", "fix: production defect")
+        (self.root / "drift-on-freeze").write_text("change target evidence\n", encoding="utf-8")
+
+        blocked = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-run",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+
+        self.assertEqual(blocked.returncode, 2, blocked.stderr)
+        self.assertIn("HOTFIX_BASE_CHANGED", blocked.stdout)
+        self.assertFalse(self.git("tag", "--list", "v1.0.1"))
+
+    def test_hotfix_fixed_tag_retry_uses_frozen_current_controller(self) -> None:
+        evidence_digest = f"sha256:{'a' * 64}"
+        prepared = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-prepare",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        prepared_event = self.events(prepared)[-1]
+        hotfix_worktree = Path(prepared_event["worktree"])
+        (hotfix_worktree / "fix.txt").write_text("production fix\n", encoding="utf-8")
+        self.git_at(hotfix_worktree, "add", "fix.txt")
+        self.git_at(hotfix_worktree, "commit", "-m", "fix: production defect")
+        (self.root / "fail-deploy-once").write_text("fail once\n", encoding="utf-8")
+
+        failed = self.invoke(
+            "--authorized",
+            "release",
+            "hotfix-run",
+            "--base-tag",
+            "v1.0.0",
+            "--base-commit",
+            self.main_commit,
+            "--evidence-digest",
+            evidence_digest,
+            "--version",
+            "1.0.1",
+            "--target",
+            "test",
+        )
+        self.assertEqual(failed.returncode, 1, failed.stderr)
+        self.assertIn("DEPLOYMENT_FAILED", failed.stdout)
+        self.assertEqual(self.git("cat-file", "-t", "refs/tags/v1.0.1"), "tag")
+
+        retried = self.invoke(
+            "--authorized",
+            "release",
+            "retry",
+            "--tag",
+            "v1.0.1",
+            "--target",
+            "test",
+        )
+
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        event = self.events(retried)[-1]
+        self.assertEqual(event["event"], "release_retry_completed")
+        self.assertEqual(event["controllerCommit"], prepared_event["controllerCommit"])
 
 
 if __name__ == "__main__":

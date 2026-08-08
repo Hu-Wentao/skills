@@ -445,6 +445,18 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
         "required": True,
         "pattern": tag,
     }
+    base_commit = {
+        "flag": "--base-commit",
+        "type": "string",
+        "required": True,
+        "pattern": "^[0-9a-f]{40,64}$",
+    }
+    evidence_digest = {
+        "flag": "--evidence-digest",
+        "type": "string",
+        "required": True,
+        "pattern": "^sha256:[0-9a-f]{64}$",
+    }
     release_tag = {
         "flag": "--tag",
         "type": "string",
@@ -561,6 +573,57 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
                 "repair_prepared_and_version_reserved",
                 ["commit_minimal_repair", "authorized_repair_run"],
             ),
+            "hotfix-inspect": operation(
+                "hotfix-inspect",
+                "Resolve and cross-check the target's currently deployed stable tag, commit, successful transaction, and deployment evidence without changing state.",
+                "read_only",
+                {"target": target},
+                "hotfix_deployed_base_inspected",
+                ["hotfix_prepare_plan", "repair_target_evidence"],
+            ),
+            "hotfix-prepare-plan": operation(
+                "hotfix-prepare-plan",
+                "Plan a retained hotfix lineage from the exact currently deployed target identity while keeping integration source out of the candidate.",
+                "read_only",
+                {
+                    "base_tag": base_tag,
+                    "base_commit": base_commit,
+                    "evidence_digest": evidence_digest,
+                    "version": version,
+                    "target": target,
+                },
+                "hotfix_prepare_planned",
+                ["authorized_hotfix_prepare"],
+            ),
+            "hotfix-prepare": operation(
+                "hotfix-prepare",
+                "Revalidate the deployed base, reserve the next global patch, and create or resume its retained hotfix worktree without importing integration changes.",
+                "repository_write",
+                {
+                    "base_tag": base_tag,
+                    "base_commit": base_commit,
+                    "evidence_digest": evidence_digest,
+                    "version": version,
+                    "target": target,
+                    "resume": resume,
+                },
+                "hotfix_prepared_and_version_reserved",
+                ["commit_minimal_hotfix", "hotfix_plan"],
+            ),
+            "hotfix-plan": operation(
+                "hotfix-plan",
+                "Revalidate the exact deployed-base hotfix identity and report superseded lower reservations without changing state.",
+                "read_only",
+                {
+                    "base_tag": base_tag,
+                    "base_commit": base_commit,
+                    "evidence_digest": evidence_digest,
+                    "version": version,
+                    "target": target,
+                },
+                "hotfix_planned",
+                ["authorized_hotfix_run"],
+            ),
             "repair-plan": operation(
                 "repair-prepare-plan",
                 "Validate the immediate-next-patch repair identity and target without changing state.",
@@ -600,6 +663,20 @@ def managed_release_contract(repo_root: Path, skill_root: Path) -> dict[str, Any
                 {"base_tag": base_tag, "version": version, "target": target, "migration": migration},
                 "repair_release_workflow_completed",
                 ["report_repair_evidence", "retry_same_fixed_tag"],
+            ),
+            "hotfix-run": operation(
+                "hotfix-run",
+                "Revalidate the deployed base, apply the project hotfix scope and gates, freeze artifacts, tag the next global patch, deploy, and verify without reading integration application source.",
+                "external_write",
+                {
+                    "base_tag": base_tag,
+                    "base_commit": base_commit,
+                    "evidence_digest": evidence_digest,
+                    "version": version,
+                    "target": target,
+                },
+                "hotfix_workflow_completed",
+                ["report_hotfix_evidence", "retry_same_fixed_tag", "repair_next_patch"],
             ),
             "retry": operation(
                 "retry",

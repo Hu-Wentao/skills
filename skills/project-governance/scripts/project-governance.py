@@ -45,6 +45,12 @@ ALIASES = {
     ("release", "repair-prepare"): ("release-deployment", "repair-prepare"),
     ("release", "repair-plan"): ("release-deployment", "repair-plan"),
     ("release", "repair"): ("release-deployment", "repair"),
+    ("release", "hotfix-inspect"): ("release-deployment", "hotfix-inspect"),
+    ("release", "hotfix-prepare-plan"): ("release-deployment", "hotfix-prepare-plan"),
+    ("release", "hotfix-prepare"): ("release-deployment", "hotfix-prepare"),
+    ("release", "hotfix-plan"): ("release-deployment", "hotfix-plan"),
+    ("release", "hotfix-qualify"): ("release-deployment", "hotfix-qualify"),
+    ("release", "hotfix-run"): ("release-deployment", "hotfix-run"),
 }
 
 
