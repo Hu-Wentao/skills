@@ -1,0 +1,4 @@
+interface:
+  display_name: "Recall Resources"
+  short_description: "Recall resources and share upstream assessments"
+  default_prompt: "Use $recall-resources to find or capture reusable resources and shared open-source assessments relevant to this task."
