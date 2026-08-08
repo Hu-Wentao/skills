@@ -407,12 +407,28 @@ contracted operations:
 4. Reuse a successful gate only when its declared input digest, toolchain, and tool policy
    remain identical. After a repair, rerun the failed gate and its downstream
    dependencies rather than every unrelated gate.
-5. Run production-shape qualification before creating a stable tag. Bind its
+5. Unless the current user explicitly authorizes the skip described below, run
+   production-shape qualification before creating a stable tag. Bind its
    receipt to the exact commit, tree, target, artifact mode, source evidence,
    and immutable artifact manifests.
-6. Make publication/deployment consume that receipt. It may refresh short-lived
-   target admission but must not rediscover source, rebuild artifacts, or use
-   the live deployment as the first realistic integration test.
+6. Without that explicit skip, make publication/deployment consume the receipt.
+   It may refresh short-lived target admission but must not rediscover source,
+   rebuild artifacts, or use the live deployment as the first realistic
+   integration test.
+
+The current user may explicitly authorize skipping Doctor, qualification, or
+all validation for one exact release and target. Do not infer that authority
+from urgency, hotfix scope, or ordinary release/deployment authorization, and
+do not persist it for a later turn. When it is present, use only a contracted
+authorized skip path, record the omitted operations and evidence in the task
+state and final report, and allow publication without Doctor results or a
+qualification receipt when the contract declares that boundary. The skip does
+not authorize a moving source ref, mutable or rebuilt release artifact, tag
+mutation, a different target, bypass of deployment transaction admission, or a
+successful deployment claim without the executor's terminal health and exact
+identity evidence. If the project executor has no such path, treat that as a
+missing contract capability; do not reproduce the release or deployment as ad
+hoc shell commands.
 
 Persist a technical release-task identity when attempts can cross processes or
 worktrees. Track cumulative qualification duration and failure fingerprints,
@@ -488,9 +504,13 @@ and deployment-attempt records for intermediate evidence.
 Before creating the stable repair tag, require all project-declared source
 verification, focused and regression tests, representative legacy-schema
 migration rehearsal, candidate admission, artifact verification, and target
-preflight gates to pass. Run migration rehearsal against a sanitized copy or
-fixture that preserves the relevant production schema shape; never use the
-live database as a speculative candidate test.
+preflight gates to pass unless the current user explicitly authorized the
+contracted Doctor/qualification skip for this exact release and target. Under
+that exception, mark checks owned by those skipped operations as skipped
+instead of passed. Still require exact source, tag, artifact, target, and
+deployment-transaction identity. Run any non-skipped migration rehearsal
+against a sanitized copy or fixture that preserves the relevant production
+schema shape; never use the live database as a speculative candidate test.
 
 After a stable tag exists:
 
@@ -533,16 +553,19 @@ highest published tag.
    closed for migrations, release-controller changes, infrastructure,
    dependency-lock changes, or any other change the project classifies as too
    broad for hotfix.
-6. Run the project-owned affected regression gates. Reuse only immutable
-   deployed-base artifacts whose runtime inputs and digests are unchanged;
-   rebuild and freeze the affected closure under the new release identity.
+6. Run the project-owned affected regression gates unless the current user
+   explicitly authorizes the contracted Doctor/qualification skip for this
+   exact hotfix and target. Reuse only immutable deployed-base artifacts whose
+   runtime inputs and digests are unchanged; rebuild and freeze the affected
+   closure under the new release identity.
 7. Re-run the target inspector immediately before tagging. If the target tag,
    commit, transaction status, or evidence digest changed, stop and require a
    new hotfix decision instead of deploying over a different base.
-8. Create the new annotated stable tag only after scope, gates, artifact
-   freeze, and target admission pass. Deploy and verify the same tag, commit,
-   artifact manifests, and target transaction. Fixed-tag retry rules apply
-   after publication.
+8. Create the new annotated stable tag only after every non-skipped scope and
+   candidate gate passes and the artifact identity plus target admission are
+   fixed. Mark explicitly omitted Doctor/qualification checks as skipped, not
+   passed. Deploy and verify the same tag, commit, artifact manifests, and
+   target transaction. Fixed-tag retry rules apply after publication.
 
 Hotfix does not authorize rollback, restore, live migration, another target,
 tag mutation, or synchronization back to the integration branch. Integrate the

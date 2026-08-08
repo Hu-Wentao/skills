@@ -236,9 +236,20 @@ target/ref authorized by the user.
 
 When the project contract exposes Doctor and qualification operations, run
 `release doctor` for fast structured diagnosis, use `release reproduce` for one
-failed gate, and require `release qualify` before `release run`. Treat a valid
-qualification receipt as the pre-tag source/artifact admission boundary; do not
-use `release run` to discover builds or repeat unchanged deterministic failures.
+failed gate, and require `release qualify` before `release run` unless the
+current user explicitly authorizes skipping Doctor, qualification, or all
+validation for that exact release and target. Treat this exception as
+current-turn authorization only; never infer it from urgency, a hotfix request,
+or permission to release or deploy. Record every skipped operation in the task
+report. The contracted workflow must expose an explicit authorized skip path;
+never bypass the runner or handcraft a tag or deployment command when it does
+not. A skip may omit Doctor and qualification checks or their receipt, but it
+does not waive exact source and target identity, immutable tag and artifact
+identity, deployment transaction admission, or the executor's terminal health
+and identity evidence. Without explicit skip authorization, treat a valid
+qualification receipt as the pre-tag source/artifact admission boundary and do
+not use `release run` to discover builds or repeat unchanged deterministic
+failures.
 
 When a focused or candidate test resolves package exports that point to
 generated output, establish that output as an explicit test prerequisite in the
@@ -333,7 +344,7 @@ change target, or switch modes after artifact identity is frozen.
 
 Treat a missing project repair contract as a release-tooling capability defect, not automatically as a new authorization decision. When the current request already authorizes repairing the failed source and continuing the same target deployment, add the smallest repair contract, executor support, and focused tests on the isolated repair lineage, resolve the updated contract, and continue without asking for the same authority again. Otherwise stop and request only the missing repair authority. Never bypass the contract with a normal release.
 
-Keep a repair candidate untagged while source verification, representative migration rehearsal, candidate admission, or target preflight is failing. Record candidate commits, artifact digests, and attempt evidence instead of minting stable patch tags. Create the next immutable patch tag only after every pre-tag gate passes; retries of that tag never create another version.
+Keep a repair candidate untagged while a required, non-skipped source verification, representative migration rehearsal, candidate admission, or target preflight is failing. Record candidate commits, artifact digests, and attempt evidence instead of minting stable patch tags. An explicit current-turn Doctor/qualification skip marks only the covered operations and their checks as skipped; it does not mark them passed or waive release identity invariants. Create the next immutable patch tag only after every remaining required pre-tag gate passes; retries of that tag never create another version.
 
 Treat repository release and deployment executors as automation boundaries. Do not reproduce their internal build, migration, health, canary, or smoke steps. Resume only the same yielded process. Do not retry by default; when the current request explicitly authorizes continued deployment or bounded retry, retry only transient failures with the same exact tag, commit, artifact, and target under the project contract. Never auto-promote, auto-rollback, restore state, migrate live data, or select a different commit.
 
