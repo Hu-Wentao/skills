@@ -1,4 +1,0 @@
-interface:
-  display_name: "批量下载公众号数据"
-  short_description: "批量下载公众号文章、历史列表、原创统计与互动数据报表"
-  default_prompt: "使用 $batch-download-wechat-data 下载公众号文章、历史列表或增强互动数据。"
