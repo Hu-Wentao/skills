@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
 ---
 
 # Host Governance
@@ -172,6 +172,7 @@ changing a project profile.
 5. Present material exposure, deletion, billing, downtime, and recovery
    effects before requesting any missing authority.
 6. Apply only authorized steps, using the relevant product reference:
+   - Initial Linux server bootstrap: read [server-bootstrap.md](references/server-bootstrap.md).
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
    - Shared PostgreSQL service deployment or lifecycle: read [postgresql.md](references/postgresql.md).
    - Jenkins installation, upgrades, security, nodes, credentials, jobs, or
