@@ -149,6 +149,15 @@ changing a project profile.
   explicitly authorizes that exact provider action.
 - Never expose or persist API tokens, auth keys, private keys, session data,
   environment dumps, or secret-bearing request bodies.
+- When an authorized Tailscale installation uses interactive authentication,
+  capture the exact `https://login.tailscale.com/a/...` URL emitted by the
+  target and return it to the user as soon as it appears. Do not wait silently
+  for browser authorization, replace it with an Admin Console detour, or skip
+  dependent services merely because no auth key is available. Keep the
+  transaction in `awaiting-tailnet-auth`, never persist the URL, and resume
+  only after the user completes authentication and live node identity is
+  verified. Use only a project-contracted interactive operation when a v2
+  contract is active; a missing operation is an explicit contract blocker.
 - Never treat a live service inventory as a desired declaration or use a single
   point-in-time sample as proof of long-term capacity. Report freshness and
   missing historical evidence explicitly.

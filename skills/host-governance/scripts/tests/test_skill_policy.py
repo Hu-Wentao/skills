@@ -56,6 +56,22 @@ class SkillPolicyTest(unittest.TestCase):
         self.assertIn("`ssh.socket` override", reference)
         self.assertIn("Filesystem sandbox denial", reference)
 
+    def test_interactive_tailscale_login_url_is_returned_immediately(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (SKILL_ROOT / "references" / "server-bootstrap.md").read_text(
+            encoding="utf-8"
+        )
+        for text in (skill, reference):
+            self.assertIn("https://login.tailscale.com/a/...", text)
+            self.assertIn("awaiting-tailnet-auth", text)
+        self.assertIn("return it to the user as soon as it appears", skill)
+        self.assertIn("Return the URL to the user immediately", reference)
+        self.assertIn("missing operation is an explicit contract blocker", skill)
+        self.assertIn(
+            "If a v2 contract lacks interactive enrollment",
+            " ".join(reference.split()),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

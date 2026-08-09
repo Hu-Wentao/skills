@@ -104,10 +104,23 @@ authorized transaction.
 
 ## Optional Tailscale and Beszel
 
-- `--enable-tailscale` installs the official stable Linux package, requires
-  `TAILSCALE_AUTH_KEY` at runtime, disables route acceptance, and uses the
-  requested hostname and tag. Tailnet policy and device-tag changes remain a
-  separately authorized external transaction.
+- `--enable-tailscale` installs the official stable Linux package, disables
+  route acceptance, and uses the requested hostname and tag. Prefer a
+  contracted `TAILSCALE_AUTH_KEY` secret source for unattended provisioning.
+  When no auth key is available and the project contract provides an
+  interactive enrollment operation, run it on the exact target and capture
+  only the canonical `https://login.tailscale.com/a/...` URL from Tailscale's
+  output. Return the URL to the user immediately, even while the remote command
+  is still waiting, and report the intermediate state as
+  `awaiting-tailnet-auth`. Do not open an Admin Console as a substitute, ask the
+  user to paste an auth key into chat, or disable Tailscale and dependent
+  Beszel work without explicitly reporting that scope change. Never store the
+  login URL in Git, snapshots, journals, caches, or task artifacts. After the
+  user completes the URL flow, resume the same transaction and verify the live
+  node name, Tailscale IP, requested tag, route preferences, and update
+  readiness. Tailnet policy and device-tag changes remain a separately
+  authorized external transaction. If a v2 contract lacks interactive
+  enrollment, stop with that exact contract blocker instead of bypassing it.
 - `--enable-beszel` installs only the native Agent, requires the existing Hub
   public key, binds it to the live Tailscale IPv4 on TCP `45876`, and leaves
   automatic Agent updates disabled. Creating the Hub system record and proving
