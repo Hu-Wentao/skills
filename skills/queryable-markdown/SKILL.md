@@ -57,6 +57,18 @@ uv run "$SKILL_DIR/scripts/mdq.py" verify <document.md>
 
 With a valid contract, the CLI applies declared boundaries, keys, fields, recovery, query intents, quality limits, and index policy. Without one, it infers conservative temporary selectors in memory. Interpret `count`, payload size, confidence, source ranges, candidates, quality, and diagnostics together. A single giant record can be a failed query even when `count` is one.
 
+Use `query --output json` for the complete stable result envelope; it remains the default. Use `--output minimal` to reduce a clean unique match to its key, fields, line range, confidence, and informational diagnostic codes. Minimal output falls back to the complete JSON envelope when the result is absent, ambiguous, candidate-bearing, invalid, or has warning/error diagnostics.
+
+Use `--output raw` only when the contract declares a string field named `raw` and the caller needs that authored body without a JSON wrapper:
+
+```bash
+uv run "$SKILL_DIR/scripts/mdq.py" query <document.md> \
+  --id <exact-id> \
+  --output raw
+```
+
+Raw output succeeds only for one exact structured match with no alternate candidates or warning/error diagnostics. Otherwise it emits the complete diagnostic JSON envelope, adds `raw_output_unavailable`, and exits nonzero. Never use raw output when the caller needs source offsets, identity evidence, or diagnostics for an edit.
+
 For a deterministic collection query, scan one or more Markdown files or directories:
 
 ```bash

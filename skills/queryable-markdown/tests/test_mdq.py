@@ -36,7 +36,9 @@ mdq:
 
 
 class MdqCliTests(unittest.TestCase):
-    def run_cli(self, root: Path, *args: str, expected: int = 0) -> dict:
+    def run_cli_process(
+        self, root: Path, *args: str, expected: int = 0
+    ) -> subprocess.CompletedProcess[str]:
         completed = subprocess.run(
             ["uv", "run", str(SCRIPT), *args],
             cwd=root,
@@ -48,6 +50,10 @@ class MdqCliTests(unittest.TestCase):
         self.assertEqual(
             completed.returncode, expected, completed.stderr + completed.stdout
         )
+        return completed
+
+    def run_cli(self, root: Path, *args: str, expected: int = 0) -> dict:
+        completed = self.run_cli_process(root, *args, expected=expected)
         return json.loads(completed.stdout)
 
     def document(self, root: Path, content: str) -> Path:
@@ -78,6 +84,132 @@ The detail refers to REQ-2.
             self.assertEqual(exact["status"], "matched")
             self.assertEqual(exact["count"], 1)
             self.assertEqual(prose["status"], "not_found")
+
+    def test_query_output_modes_preserve_json_and_compact_clean_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                profile(fields="  raw:\n    source: body")
+                + "\n## REQ-1: Login\n\nStatus: draft\n\nDetails.\n",
+            )
+
+            default_process = self.run_cli_process(
+                root, "query", str(path), "--id", "REQ-1"
+            )
+            explicit_process = self.run_cli_process(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "json",
+            )
+            default = json.loads(default_process.stdout)
+            explicit = json.loads(explicit_process.stdout)
+            minimal = self.run_cli(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "minimal",
+            )
+            raw = self.run_cli_process(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "raw",
+            )
+
+            self.assertEqual(default_process.stdout, explicit_process.stdout)
+            self.assertEqual(default, explicit)
+            self.assertEqual(minimal["status"], "matched")
+            self.assertEqual(minimal["count"], 1)
+            self.assertEqual(minimal["key"], "REQ-1")
+            self.assertEqual(minimal["fields"]["raw"], "Status: draft\n\nDetails.")
+            self.assertNotIn("records", minimal)
+            self.assertNotIn("byte_start", minimal)
+            self.assertEqual(raw.stdout, "Status: draft\n\nDetails.\n")
+
+    def test_raw_output_refuses_missing_raw_and_ambiguous_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            missing_raw_path = self.document(
+                root,
+                profile() + "\n## REQ-1: Login\n",
+            )
+            missing_raw = self.run_cli(
+                root,
+                "query",
+                str(missing_raw_path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "raw",
+                expected=5,
+            )
+            self.assertIn(
+                "raw_output_unavailable",
+                {item["code"] for item in missing_raw["diagnostics"]},
+            )
+
+            ambiguous_path = self.document(
+                root,
+                profile(fields="  raw:\n    source: body")
+                + "\n## REQ-1: First\n\nFirst body.\n\n## REQ-1: Second\n\nSecond body.\n",
+            )
+            ambiguous_raw = self.run_cli(
+                root,
+                "query",
+                str(ambiguous_path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "raw",
+                expected=5,
+            )
+            self.assertEqual(ambiguous_raw["status"], "ambiguous")
+            self.assertEqual(ambiguous_raw["count"], 2)
+            self.assertIn(
+                "raw_output_unavailable",
+                {item["code"] for item in ambiguous_raw["diagnostics"]},
+            )
+            ambiguous_minimal = self.run_cli(
+                root,
+                "query",
+                str(ambiguous_path),
+                "--id",
+                "REQ-1",
+                "--output",
+                "minimal",
+            )
+            self.assertIn("records", ambiguous_minimal)
+            self.assertNotIn("key", ambiguous_minimal)
+
+            warning_path = self.document(
+                root,
+                profile(fields="  raw:\n    source: body")
+                + "\n### REQ-2: Drifted\n\nDrifted body.\n",
+            )
+            warning_raw = self.run_cli(
+                root,
+                "query",
+                str(warning_path),
+                "--id",
+                "REQ-2",
+                "--output",
+                "raw",
+                expected=5,
+            )
+            warning_codes = {item["code"] for item in warning_raw["diagnostics"]}
+            self.assertIn("heading_level_drift", warning_codes)
+            self.assertIn("raw_output_unavailable", warning_codes)
 
     def test_commented_out_heading_is_not_a_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

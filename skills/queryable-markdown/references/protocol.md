@@ -334,6 +334,10 @@ Commands emit JSON. A query result should include:
 }
 ```
 
+The exact `query` command accepts `--output json|minimal|raw`. `json` is the default and preserves the complete result contract above. `minimal` is a success projection, not a different matching algorithm: for one exact match with no candidates or warning/error diagnostics it emits `status`, `count`, `key`, `fields`, `line_start`, `line_end`, `confidence`, and any informational diagnostic codes. It falls back to the complete JSON envelope for every other result so ambiguity and failure evidence remain intact.
+
+`raw` emits the matched record's declared string `fields.raw` followed by a newline. It succeeds only when exactly one structured record matches, no alternate candidates exist, and no warning/error diagnostic would be hidden. It never derives source text from byte ranges, substitutes another field, truncates a match, or selects the first ambiguous record. When raw output is unavailable, emit the complete JSON envelope with an added `raw_output_unavailable` error and exit nonzero. File, encoding, and invalid-profile failures remain complete diagnostic JSON regardless of the selected output format.
+
 Line numbers are one-based and `line_end` is inclusive. Byte ranges are zero-based UTF-8 offsets with an exclusive `byte_end`.
 
 Use top-level status values `matched`, `not_found`, `ambiguous`, or `invalid`. `count` counts structured matches only. Put evidence below confidence `0.6` in `candidates` and do not count it as a match.
@@ -358,10 +362,11 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 - `query_contract_missing`, `unknown_query`, `query_input_mismatch`
 - `query_cardinality_exceeded`, `query_record_span_exceeded`, `query_record_payload_exceeded`, `query_total_payload_exceeded`
 - `query_unstructured_result`, `query_confidence_below_minimum`
+- `raw_output_unavailable`
 - `query_contract_repair_planned`, `query_contract_repaired`, `query_contract_repair_ambiguous`, `query_contract_repair_unavailable`
 - `query_contract_locked`, `query_contract_scope_denied`, `query_contract_key_loss`
 
-Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, or failed writes.
+Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, failed writes, or an explicitly requested raw projection that cannot safely be produced.
 
 A collection query uses `schema: mdq.collection.v1` and includes the canonical common root, applied globs, scanned and matched document counts, bounded records and candidates, per-document summaries, collection diagnostics, and a `truncated` flag. Its status is `matched`, `not_found`, `partial`, or `invalid`.
 

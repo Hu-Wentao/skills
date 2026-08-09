@@ -140,6 +140,85 @@ def emit(payload: dict[str, Any]) -> None:
     sys.stdout.write("\n")
 
 
+def actionable_diagnostics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    items = list(payload.get("diagnostics", []))
+    for record in payload.get("records", []):
+        items.extend(record.get("diagnostics", []))
+    return [
+        item
+        for item in items
+        if item.get("severity") in {"warning", "error"}
+    ]
+
+
+def minimal_query_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    records = payload.get("records", [])
+    if (
+        payload.get("status") != "matched"
+        or payload.get("count") != 1
+        or len(records) != 1
+        or payload.get("candidates")
+        or actionable_diagnostics(payload)
+    ):
+        return None
+    record = records[0]
+    minimal: dict[str, Any] = {
+        "status": "matched",
+        "count": 1,
+        "key": record.get("key"),
+        "fields": record.get("fields", {}),
+        "line_start": record.get("line_start"),
+        "line_end": record.get("line_end"),
+        "confidence": record.get("confidence"),
+    }
+    diagnostic_codes = [
+        item.get("code")
+        for item in payload.get("diagnostics", [])
+        if item.get("code")
+    ]
+    if diagnostic_codes:
+        minimal["diagnostics"] = diagnostic_codes
+    return minimal
+
+
+def emit_query_result(payload: dict[str, Any], output: str) -> int | None:
+    if output == "json":
+        emit(payload)
+        return None
+    if output == "minimal":
+        emit(minimal_query_payload(payload) or payload)
+        return None
+
+    records = payload.get("records", [])
+    reason: str | None = None
+    if (
+        payload.get("status") != "matched"
+        or payload.get("count") != 1
+        or len(records) != 1
+    ):
+        reason = "raw output requires exactly one matched record"
+    elif payload.get("candidates"):
+        reason = "raw output refuses to hide alternate candidate evidence"
+    elif actionable_diagnostics(payload):
+        reason = "raw output refuses to hide warning or error diagnostics"
+    else:
+        raw = records[0].get("fields", {}).get("raw")
+        if not isinstance(raw, str):
+            reason = "raw output requires the matched record to declare a string field named 'raw'"
+        else:
+            sys.stdout.write(raw)
+            if not raw.endswith("\n"):
+                sys.stdout.write("\n")
+            return None
+
+    failure = dict(payload)
+    failure["diagnostics"] = list(payload.get("diagnostics", [])) + [
+        diagnostic("raw_output_unavailable", "error", reason)
+    ]
+    emit(failure)
+    return 5
+
+
 def normalized_json(value: Any) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -3278,14 +3357,15 @@ def command_query(args: argparse.Namespace) -> int:
     )
     if document.profile is None:
         if error_diagnostics(document.diagnostics):
-            emit(
+            emit_query_result(
                 {
                     "status": "invalid",
                     "count": 0,
                     "records": [],
                     "candidates": [],
                     "diagnostics": document.diagnostics,
-                }
+                },
+                args.output,
             )
             return 3
         selectors = temporary_selector_arguments(args)
@@ -3318,26 +3398,28 @@ def command_query(args: argparse.Namespace) -> int:
                     f"no exact record key matched {requested!r}; body mentions are candidates only",
                 )
             )
-        emit(
+        output_status = emit_query_result(
             {
                 "status": status_for(structured),
                 "count": len(structured),
                 "records": structured,
                 "candidates": candidates,
                 "diagnostics": diagnostics,
-            }
+            },
+            args.output,
         )
-        return 0
+        return output_status or 0
     records, diagnostics = records_for_query(document)
     if error_diagnostics(diagnostics):
-        emit(
+        emit_query_result(
             {
                 "status": "invalid",
                 "count": 0,
                 "records": [],
                 "candidates": [],
                 "diagnostics": diagnostics,
-            }
+            },
+            args.output,
         )
         return 3
     temporary = (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX)
@@ -3454,16 +3536,17 @@ def command_query(args: argparse.Namespace) -> int:
         diagnostics.append(
             diagnostic("no_match", "info", f"no exact record key matched {requested!r}")
         )
-    emit(
+    output_status = emit_query_result(
         {
             "status": status_for(structured),
             "count": len(structured),
             "records": structured,
             "candidates": candidates,
             "diagnostics": diagnostics,
-        }
+        },
+        args.output,
     )
-    return 0
+    return output_status or 0
 
 
 def searchable_values(record: dict[str, Any], field_name: str | None) -> list[str]:
@@ -5454,6 +5537,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     query_parser.add_argument("document")
     query_parser.add_argument("--id", required=True, help="exact record key")
+    query_parser.add_argument(
+        "--output",
+        choices=("raw", "minimal", "json"),
+        default="json",
+        help="success output format (default: json; failures retain diagnostic JSON)",
+    )
     add_temporary_selector_options(query_parser)
     query_parser.set_defaults(handler=command_query)
 
