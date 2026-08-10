@@ -192,6 +192,12 @@ node <skill-root>/scripts/validate-governance.mjs --root <project-root>
 
 Document maintenance requires `queryable-markdown` and treats a missing or invalid persistent contract on governed requirements, baselines, plans, dependency evaluations, defects, archives, coverage, verification, or traceability documents as structural drift. Mechanical validation may also find broken links, identifiers, lifecycle mappings, or verification references. AI still decides semantics, priority, completion, and authority. Inventorying all Markdown does not make ordinary README, package, or operations documents governed records.
 
+The managed maintenance profile also treats repository-embedded `*.bff.md`
+artifacts as governed architecture/API contracts wherever their runtime owner
+places them. Include them in persistent-mdq validation, governed source
+snapshots, plans, and verification while continuing to exclude dependencies,
+build output, caches, vendored trees, and ordinary source-adjacent Markdown.
+
 ## Govern Domain Knowledge
 
 Use one stable MDQ-backed concept protocol with the smallest profile that fits:

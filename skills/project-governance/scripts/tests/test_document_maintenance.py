@@ -136,6 +136,28 @@ class DocumentMaintenanceTest(unittest.TestCase):
         self.assertTrue(report["batches"])
         self.assertTrue(report["source_snapshot"])
 
+    def test_inspect_governs_embedded_bff_contracts_outside_docs(self) -> None:
+        bff = self.root / "lib/app/home/home.bff.md"
+        bff.parent.mkdir(parents=True)
+        bff.write_text(
+            "---\nbff_meta:\n  schema: bff-md-meta/v8\n---\n# Home BFF\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_script("inspect", "--kind", "contracts")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["counts"]["governed_files"], 2)
+        self.assertEqual(report["counts"]["inventory_files"], 2)
+        self.assertTrue(
+            any(
+                issue["file"] == "lib/app/home/home.bff.md"
+                and "persistent_contract_required" in issue["message"]
+                for issue in report["issues"]
+            )
+        )
+
     def test_verify_fails_closed_while_structural_drift_remains(self) -> None:
         plans = self.docs / "plans"
         plans.mkdir()

@@ -43,6 +43,7 @@ GOVERNED_PATTERNS = (
     "*verification*.md",
     "*traceability*.md",
 )
+REPOSITORY_GOVERNED_SUFFIXES = (".bff.md",)
 LIFECYCLE_TARGETS = (
     "requirements.md",
     "plans",
@@ -113,12 +114,20 @@ def markdown_inventory(root: Path, scope: str, docs: Path) -> list[Path]:
     return sorted(inventory)
 
 
-def governed_files(docs: Path) -> list[Path]:
-    if not docs.is_dir():
-        return []
+def governed_files(root: Path, docs: Path) -> list[Path]:
+    """Return docs-owned records plus embedded repository contract artifacts."""
+
     selected: set[Path] = set()
-    for pattern in GOVERNED_PATTERNS:
-        selected.update(path.resolve() for path in docs.glob(pattern) if path.is_file())
+    if docs.is_dir():
+        for pattern in GOVERNED_PATTERNS:
+            selected.update(
+                path.resolve() for path in docs.glob(pattern) if path.is_file()
+            )
+    selected.update(
+        path
+        for path in markdown_inventory(root, "all-markdown", docs)
+        if path.name.endswith(REPOSITORY_GOVERNED_SUFFIXES)
+    )
     return sorted(selected)
 
 
@@ -339,8 +348,12 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if mdq_script is None:
         raise MaintenanceError("queryable-markdown mdq.py is required")
 
-    inventory = markdown_inventory(root, args.scope, docs)
-    governed = governed_files(docs)
+    governed = governed_files(root, docs)
+    inventory = (
+        markdown_inventory(root, args.scope, docs)
+        if args.scope == "all-markdown"
+        else governed
+    )
     snapshot_id, snapshot_entries = source_snapshot(inventory, root)
     audit = run_audit(root, docs, skill_root, mdq_script)
     lifecycle_records, lifecycle_diagnostics = lifecycle_state(root, docs, mdq_script)

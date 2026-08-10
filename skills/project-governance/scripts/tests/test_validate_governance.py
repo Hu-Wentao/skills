@@ -188,6 +188,56 @@ Focused verification owns the invariant.
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_rejects_embedded_bff_without_persistent_contract(self) -> None:
+        bff = self.root / "lib/app/home/home.bff.md"
+        bff.parent.mkdir(parents=True)
+        bff.write_text(
+            "---\nbff_meta:\n  schema: bff-md-meta/v8\n---\n# Home BFF\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_validator()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("[persistent_contract_required]", result.stdout)
+        self.assertIn("lib/app/home/home.bff.md:1", result.stdout)
+
+    def test_accepts_mdq_backed_embedded_bff(self) -> None:
+        bff = self.root / "lib/app/home/home.bff.md"
+        bff.parent.mkdir(parents=True)
+        bff.write_text(
+            """---
+bff_meta:
+  schema: bff-md-meta/v8
+mdq:
+  version: 2
+  dialect: gfm
+  records:
+    boundary:
+      source: table-row
+      under_heading: API Query Records
+      columns: [API ID, Integration Status]
+    key:
+      source: column
+      column: API ID
+  fields:
+    integration_status: {source: column, column: Integration Status}
+---
+# Home BFF
+
+## API Query Records
+
+| API ID | Integration Status |
+| --- | --- |
+| ui:home:get:/home | integrated |
+""",
+            encoding="utf-8",
+        )
+
+        result = self.run_validator()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

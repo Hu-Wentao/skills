@@ -38,20 +38,25 @@ function resolveMdqScript(configured) {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function validatePersistentMdqContracts(docs, mdqScript) {
-  const globs = [
-    "requirements.md",
-    "requirements/**/*.md",
-    "baseline/**/*.md",
-    "plans/**/*.md",
-    "evaluations/**/*.md",
-    "defects/**/*.md",
-    "archive/**/*.md",
-    "*coverage*.md",
-    "*verification*.md",
-    "*traceability*.md",
-  ];
-  const command = ["run", mdqScript, "scan", docs, "--require-contract", "--limit", "1"];
+const excludedDirectoryNames = new Set([
+  ".git",
+  ".next",
+  ".nuxt",
+  ".output",
+  ".turbo",
+  ".venv",
+  "__pycache__",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "target",
+  "vendor",
+]);
+
+function runMdqScan(paths, mdqScript, globs = []) {
+  if (paths.length === 0) return { report: null, error: null };
+  const command = ["run", mdqScript, "scan", ...paths, "--require-contract", "--limit", "1"];
   for (const pattern of globs) command.push("--glob", pattern);
   const completed = spawnSync("uv", command, {
     encoding: "utf8",
@@ -72,6 +77,53 @@ function validatePersistentMdqContracts(docs, mdqScript) {
       error: `persistent mdq validation returned invalid JSON: ${error.message}${detail ? `; ${detail}` : ""}`,
     };
   }
+}
+
+function repositoryBffFiles(root, docs) {
+  const files = [];
+  function visit(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (excludedDirectoryNames.has(entry.name)) continue;
+        if (entry.name === ".cache" && basename(directory) === ".agents") continue;
+        visit(path);
+      } else if (entry.isFile() && entry.name.endsWith(".bff.md")) {
+        const fromDocs = relative(docs, path);
+        if (fromDocs === "" || (!fromDocs.startsWith("..") && !isAbsolute(fromDocs))) {
+          continue;
+        }
+        files.push(path);
+      }
+    }
+  }
+  if (existsSync(root) && statSync(root).isDirectory()) visit(root);
+  return files.sort();
+}
+
+function validatePersistentMdqContracts(root, docs, mdqScript) {
+  const globs = [
+    "requirements.md",
+    "requirements/**/*.md",
+    "baseline/**/*.md",
+    "plans/**/*.md",
+    "evaluations/**/*.md",
+    "defects/**/*.md",
+    "archive/**/*.md",
+    "*coverage*.md",
+    "*verification*.md",
+    "*traceability*.md",
+  ];
+  const scans = [];
+  if (existsSync(docs) && statSync(docs).isDirectory()) {
+    scans.push(runMdqScan([docs], mdqScript, globs));
+  }
+  const embeddedContracts = repositoryBffFiles(root, docs);
+  if (embeddedContracts.length > 0) {
+    scans.push(runMdqScan(embeddedContracts, mdqScript));
+  }
+  return scans;
 }
 
 function markdownFiles(directory) {
@@ -151,11 +203,13 @@ function main() {
       level: "error",
       message: "queryable-markdown mdq.py is required to validate governed Markdown contracts",
     });
-  } else if (existsSync(docs) && statSync(docs).isDirectory()) {
-    const { report, error } = validatePersistentMdqContracts(docs, mdqScript);
-    if (error) {
-      issues.push({ level: "error", message: error });
-    } else {
+  } else {
+    for (const { report, error } of validatePersistentMdqContracts(root, docs, mdqScript)) {
+      if (error) {
+        issues.push({ level: "error", message: error });
+        continue;
+      }
+      if (!report) continue;
       for (const item of report.diagnostics ?? []) {
         if (
           item.severity !== "error"

@@ -36,6 +36,15 @@ baselines, plans, dependency evaluations, defects, archives, coverage,
 verification, and traceability documents. Preserve repository-owned governed
 roots when they differ from the defaults.
 
+Also govern repository-embedded architecture and API contract artifacts even
+when their owning runtime convention places them outside `docs/`. The managed
+profile recognizes `*.bff.md` throughout the project while excluding Git
+metadata, dependencies, generated output, caches, and vendored trees. Treat
+this suffix as an explicit contract convention, not as a reason to govern
+ordinary Markdown beside source code. Embedded contracts participate in the
+same persistent-mdq, source-snapshot, plan, and verify gates as docs-owned
+records.
+
 ## Use the Maintenance Operations
 
 - Use `inspect` to collect the current inventory, deterministic structural
