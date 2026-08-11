@@ -4,6 +4,7 @@
 
 - Preserve Authority
 - Gather Evidence
+- Capture the Global Resource Card
 - Select the Storage Contract
 - Write the Shared Upstream Assessment
 - Partition Claims Before Writing Locally
@@ -20,9 +21,9 @@ Treat a request to evaluate a technology for an active writable project as
 authorization to create or revise the smallest governed evidence records
 defined below, unless the user explicitly requests a chat-only/read-only result
 or forbids writes. When compatible shared storage is available, that authority
-covers one reusable upstream assessment there and one project-fit record in the
-active project. It does not cover unrelated resource-memory content. Complete
-both records before the final response. Upstream inspection remains read-only,
+covers one global resource-card favorite, one reusable upstream assessment, and
+one project-fit record in the active project. Complete all three records before
+the final response. Upstream inspection remains read-only,
 and this default does not authorize changes to a Plan, Baseline, manifest,
 lockfile, code, infrastructure, release, or deployment. If no active writable
 project exists, return the evaluation without inventing a documentation
@@ -47,20 +48,43 @@ destination or writing a shared assessment.
    capability, tooling, or a possible replacement. Do not infer adoption from
    conceptual overlap.
 
+## Capture the Global Resource Card
+
+When compatible `recall-resources` storage is available, preserve the evaluated
+open-source project's basic facts in the global resource catalog before writing
+the project-fit record:
+
+1. Inspect the exact normalized repository URL with `show --url <repository-url> --json`.
+2. If no exact catalog card exists, call `add` once with the neutral title,
+   `open-source-project` type, normalized URL, concise reusable summary,
+   reusable selection scenario, material reusable constraint, and the evidence-backed
+   `verified` or `unverified` review status. Do not infer a personal usage
+   evaluation.
+3. Query it again and require exactly one result. If it already exists, preserve
+   the card rather than creating a duplicate or overwriting its collection metadata.
+
+The global card is not a shared assessment: it holds only concise general
+discovery metadata. Do not put project fit, disposition, integration cost, or a
+detailed upstream feature/security inventory in it. Do not rebuild the derived
+index unless immediate recall is needed.
+
 ## Select the Storage Contract
 
 Do not infer integration support from an installed directory or skill name.
 When `recall-resources` is present in the active skill catalog:
 
 1. Read that skill and invoke its bundled wrapper with `capabilities --json`.
-2. Require schema `resource-memory.capabilities.v1` and
+2. Require schema `resource-memory.capabilities.v1`,
+   `capabilities.resource_catalog.version >= 1`, and
    `capabilities.shared_open_source_assessment.version >= 1`.
-3. If compatible, run `evaluation get --url <repository-url> --json` before
+3. If compatible, capture or reuse the global resource card as above, then run
+   `evaluation get --url <repository-url> --json` before
    writing. Reuse the stable ID; upsert only the newly completed general
    assessment and capture the returned `revision` and normalized source URL.
 4. If the skill is absent, capability output is incompatible, or the operation
-   fails before a shared write, use the complete local fallback below. Do not
-   create a partial `TECH-FIT-*` record without a valid shared ID and revision.
+   fails before the global-card and shared-assessment writes, use the complete
+   local fallback below. Do not create a partial `TECH-FIT-*` record without a
+   valid shared ID and revision.
 
 Skill availability does not broaden evaluation authority, and an evaluation
 does not authorize indexing if immediate semantic recall was not requested or
