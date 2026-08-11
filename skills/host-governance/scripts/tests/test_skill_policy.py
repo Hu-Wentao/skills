@@ -11,6 +11,21 @@ SKILL_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SkillPolicyTest(unittest.TestCase):
+    def test_github_actions_runner_identity_path_and_service_are_durable(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (
+            SKILL_ROOT / "references" / "github-actions-runner.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("github-actions-runner.md", skill)
+        for phrase in (
+            "dedicated unprivileged user named `actions`",
+            "`/opt/actions-runner`",
+            "Do not run\n`config.sh` with `sudo`, as root",
+            "./svc.sh install actions",
+            "./svc.sh start",
+        ):
+            self.assertIn(phrase, reference)
+
     def test_bootstrap_terminal_states_and_non_completion_are_durable(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         reference = (SKILL_ROOT / "references" / "server-bootstrap.md").read_text(
