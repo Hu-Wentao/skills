@@ -11,6 +11,24 @@ SKILL_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SkillPolicyTest(unittest.TestCase):
+    def test_docker_install_transaction_and_privilege_boundaries_are_durable(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (SKILL_ROOT / "references" / "docker-install.md").read_text(
+            encoding="utf-8"
+        )
+        normalized_reference = " ".join(reference.split())
+        self.assertIn("docker-install.md", skill)
+        self.assertIn("root-equivalent access", skill)
+        for phrase in (
+            "project-owned `host-governance.config.v2` control",
+            "no TCP Docker API listener or firewall change",
+            "Never pipe a remote install script to a shell",
+            "Remove the test container and remove its image only",
+            "Never compensate with broad package purge",
+            "Compare effective TCP listeners and firewall exposure",
+        ):
+            self.assertIn(phrase, normalized_reference)
+
     def test_github_actions_runner_identity_path_and_service_are_durable(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         reference = (

@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, CI runner configuration, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
 ---
 
 # Host Governance
@@ -177,6 +177,10 @@ changing a project profile.
 - Do not report a Tailscale installation as complete until its effective update
   channel, automatic-update behavior, package reachability, and recovery path
   have been inspected and either verified or reported as an explicit gap.
+- Do not report a Docker installation as complete until package ownership,
+  daemon and Compose readiness, cgroup mode, smoke-test cleanup, effective
+  listeners, firewall exposure, and recovery state have been verified. Treat
+  Docker group membership as root-equivalent access requiring separate intent.
 - Treat Jenkins installation, controller configuration, plugin state, agents,
   credentials, shared job runtime, backups, and upgrades as host-owned state.
   Preserve application identity and signing intent from the consuming project;
@@ -209,6 +213,7 @@ changing a project profile.
    effects before requesting any missing authority.
 6. Apply only authorized steps, using the relevant product reference:
    - Initial Linux server bootstrap: read [server-bootstrap.md](references/server-bootstrap.md).
+   - Docker Engine or Compose installation: read [docker-install.md](references/docker-install.md).
    - GitHub Actions self-hosted runner installation or lifecycle: read
      [github-actions-runner.md](references/github-actions-runner.md).
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
@@ -261,6 +266,7 @@ monolithic shared configuration.
 | Desired per-device service deployment baseline | Host infrastructure repository | Repository declaration and owning runtime |
 | Live service inventory and capacity observation | Runtime host | Bounded read-only collector |
 | Target host and service exposure | Host infrastructure repository | Target host and network |
+| Docker package source, daemon lifecycle, and host-level container runtime | Host infrastructure repository | Package manager, systemd, and Docker daemon |
 | Jenkins installation, controller, plugins, nodes, credentials, backups, and upgrades | Host infrastructure repository | Jenkins controller and agents |
 | Jenkins job definition and execution state | Host infrastructure repository | Jenkins controller and agents |
 | Caddy host mapping and shared ingress | Host infrastructure repository | Running Caddy instance |
