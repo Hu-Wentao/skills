@@ -20,7 +20,7 @@ Do not start with headings, tables, or markers. First identify:
 - its stable, source-located key;
 - high-frequency exact and field queries;
 - the fields each query should return;
-- expected cardinality and maximum result size;
+- expected match semantics and maximum result size;
 - fields that must be safely writable;
 - primary read and write actors.
 
@@ -57,7 +57,6 @@ queries:
       operator: eq
     select: [title, coverage, e2e_scenarios]
     expect:
-      max_matches: 1
       max_record_lines: 1
       max_record_bytes: 16384
       structured: true
@@ -67,14 +66,13 @@ Use `source: key` for identity. Use `source: field` with a declared `field` for 
 
 Quality limits have distinct meanings:
 
-- `max_matches`: maximum valid cardinality;
 - `max_record_lines`: maximum source span for one result;
 - `max_record_bytes`: maximum source bytes for one result;
 - `max_total_bytes`: maximum source bytes across all results;
 - `structured`: require source-located record identity rather than candidate evidence;
 - `min_confidence`: minimum structural confidence.
 
-Do not repair a cardinality violation with output truncation. `limit: 1`, first-match selection, or a smaller projection can reduce output but cannot resolve ambiguous identity. Projection repairs payload size only; selector or boundary repairs precision.
+Do not repair ambiguous identity with output truncation. `limit: 1`, first-match selection, or a smaller projection can reduce output but cannot resolve duplicate keys. Projection repairs payload size only; selector or boundary repairs precision.
 
 ## 4. Verify a New or Converted Document
 
@@ -103,7 +101,7 @@ Use these repair classes in order:
 | Failure | Evidence | Candidate repair |
 | --- | --- | --- |
 | Exact ID missing but unique table column contains it | Consistent header, unique patterned values, one matching table | Refine to `table-row` boundary and `column` key |
-| Too many matches across all fields | One declared field produces a unique smaller result satisfying expectations | Persist that field selector |
+| Total payload is too large because a broad field matches irrelevant records | One declared field produces a smaller result satisfying the same input semantics and expectations | Persist that field selector |
 | One match covers a giant wrapper | Stable nested headings, markers, or table rows | Refine the record boundary |
 | Payload too large but identity and boundary are correct | Query consumes fewer declared fields | Narrow `select` only |
 | Duplicate exact keys | Multiple source identities | Do not choose one; require a deterministic scope or user decision |

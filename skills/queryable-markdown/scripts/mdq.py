@@ -824,23 +824,29 @@ def _validate_queries(
                 )
             )
         else:
-            allowed = {
-                "max_matches",
+            active_limits = {
                 "max_record_lines",
                 "max_record_bytes",
                 "max_total_bytes",
+            }
+            allowed = active_limits | {
+                "max_matches",
                 "structured",
                 "min_confidence",
             }
             _unknown_keys(expect, allowed, f"{where}.expect", diagnostics)
-            for key in allowed & {
-                "max_matches",
-                "max_record_lines",
-                "max_record_bytes",
-                "max_total_bytes",
-            }:
+            for key in active_limits | {"max_matches"}:
                 if key in expect:
                     _positive_int(expect[key], f"{where}.expect.{key}", diagnostics)
+            if "max_matches" in expect:
+                diagnostics.append(
+                    diagnostic(
+                        "query_max_matches_deprecated",
+                        "info",
+                        f"{where}.expect.max_matches is ignored; "
+                        "use payload limits for result-size budgets",
+                    )
+                )
             if "structured" in expect and not isinstance(expect["structured"], bool):
                 diagnostics.append(
                     diagnostic(
@@ -1917,7 +1923,6 @@ def table_profile(
                 "match": {"source": "key", "operator": "eq"},
                 "select": selected,
                 "expect": {
-                    "max_matches": 1,
                     "max_record_lines": 1,
                     "max_record_bytes": 16384,
                     "structured": True,
@@ -3614,7 +3619,6 @@ def query_quality(
     }
     violations: list[dict[str, Any]] = []
     comparisons = {
-        "max_matches": (metrics["matches"], "query_cardinality_exceeded"),
         "max_record_lines": (metrics["max_record_lines"], "query_record_span_exceeded"),
         "max_record_bytes": (
             metrics["max_record_bytes"],

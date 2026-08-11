@@ -1589,6 +1589,10 @@ mdq:
             )
             self.assertEqual(named["quality"]["status"], "passed")
             self.assertEqual(set(named["records"][0]["fields"]), {"title", "coverage"})
+            self.assertIn(
+                "query_max_matches_deprecated",
+                {item["code"] for item in named["diagnostics"]},
+            )
             verified = self.run_cli(root, "verify", str(path))
             self.assertTrue(verified["valid"])
 
@@ -1698,7 +1702,7 @@ mdq:
                 {item["code"] for item in result["diagnostics"]},
             )
 
-    def test_optimize_refines_an_overbroad_named_query_to_one_field(self) -> None:
+    def test_optimize_refines_a_payload_heavy_named_query_to_one_field(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             path = self.document(
@@ -1719,7 +1723,7 @@ mdq:
     by_status:
       match: {source: field, field: raw, operator: contains}
       select: [status]
-      expect: {max_matches: 1, structured: true}
+      expect: {max_total_bytes: 80, structured: true}
   maintenance:
     query_contract: {mode: auto, allow: [queries], max_changes_per_run: 1}
 ---

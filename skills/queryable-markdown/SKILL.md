@@ -38,7 +38,7 @@ Creating a new contracted document, converting an existing document, editing aut
 - Return missing values as `null`. Never invent IDs, titles, fields, closing sections, repaired prose, or business decisions.
 - Return every duplicate or ambiguous match with diagnostics. Never silently choose the first result or edit an ambiguous target.
 - Prefer exact IDs and declared fields. Use text search only for candidate discovery.
-- Treat excessive count, oversized record spans, oversized payloads, low confidence, and candidate-only evidence as separate query-quality failures. Never simulate precision by truncating results or choosing the first match.
+- Treat oversized record spans, oversized payloads, low confidence, and candidate-only evidence as separate query-quality failures. Never simulate precision by truncating results or choosing the first match.
 - Preflight every selected document before a batch write. If any selected document is invalid or any write location is unsafe, write none of them.
 - Treat successful parsing and validation as structural evidence, not proof that authored content is correct or complete.
 - Keep document mechanics separate from domain authority. When requirements, baselines, plans, archives, or other governed sources are involved, let the applicable governance workflow decide their semantics.
@@ -111,7 +111,7 @@ Read [protocol.md](references/protocol.md) and [query-design-and-repair.md](refe
 For a new document:
 
 1. Name the repeated domain entity before choosing Markdown syntax. A document title is not the record when the body contains repeated requirements, tickets, scenarios, or other independently queried entities.
-2. Define the stable key, the minimum reusable query intents, expected result cardinality, bounded projection, payload limits, and source-located writable fields.
+2. Define the stable key, the minimum reusable query intents, match semantics, bounded projection, payload limits, and source-located writable fields.
 3. Choose the representation from the access pattern: for new AI-generated or AI-maintained content, default to heading records with nested sections or labels; use `table-row` and `column` only for existing, explicitly requested, or essential flat GFM matrices.
 4. Create the profile and authored records together. Do not add speculative fields or one-off query values.
 5. Run `validate`, `diagnose`, and `verify`; query known first, middle, last, absent, and prose-only identities. Do not hand off a contract that exposes one wrapper record around multiple stable inner identities.
@@ -171,7 +171,7 @@ uv run "$SKILL_DIR/scripts/mdq.py" set <first.md> <second.md> \
 
 Inspect before changing profile rules, markers, or index policy. Keep the contract minimal and declarative. Preserve an existing valid YAML Front Matter block and its `---` delimiters; never create a second frontmatter block or silently convert another header format without authorization.
 
-When an exact query misses a unique table-row identity, a named query exceeds its declared cardinality, or one returned record exceeds its span or payload budget, preview one deterministic repair:
+When an exact query misses a unique table-row identity or a named query exceeds its record-span or payload budget, preview one deterministic repair:
 
 ```bash
 uv run "$SKILL_DIR/scripts/mdq.py" optimize <document.md> --id <exact-id>

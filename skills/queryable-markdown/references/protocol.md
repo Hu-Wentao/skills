@@ -44,7 +44,7 @@ A contracted document moves through these structural states:
 - **drifted**: a valid profile exists but authored structure requires supported recovery or produces warnings;
 - **invalid**: a declared profile is conflicting, unsafe, malformed, or unsupported and cannot govern reliable edits.
 
-Creating a new contracted document writes the requested authored records and the smallest query-first contract that addresses them. Define the repeated entity, stable key, reusable queries, expected cardinality, bounded projection, and result-size limits before choosing the Markdown representation. Converting an existing document describes its current stable structure; it must not normalize or rewrite business content merely to simplify the profile.
+Creating a new contracted document writes the requested authored records and the smallest query-first contract that addresses them. Define the repeated entity, stable key, reusable queries, match semantics, bounded projection, and result-size limits before choosing the Markdown representation. Converting an existing document describes its current stable structure; it must not normalize or rewrite business content merely to simplify the profile.
 
 Before an authored-record edit, require `valid` or a deliberately accepted `drifted` state whose warnings do not affect the target identity or boundary. Never edit an authored record under an `invalid` contract. Repair first only when repair is authorized.
 
@@ -150,7 +150,6 @@ mdq:
       match: {source: key, operator: eq}
       select: [title, coverage, scenarios]
       expect:
-        max_matches: 1
         max_record_lines: 1
         max_record_bytes: 16384
         structured: true
@@ -225,9 +224,9 @@ Version 2 query intents contain:
 - `match.field`: Required when the source is `field`; name one declared field.
 - `match.operator`: `eq` for exact case-sensitive equality or `contains` for case-insensitive literal substring matching.
 - `select`: Optional non-empty list of declared fields returned by the named query. Projection does not change source-span quality measurements.
-- `expect`: Optional quality mapping with positive integer `max_matches`, `max_record_lines`, `max_record_bytes`, or `max_total_bytes`; boolean `structured`; and numeric `min_confidence` from 0 through 1.
+- `expect`: Optional quality mapping with positive integer `max_record_lines`, `max_record_bytes`, or `max_total_bytes`; boolean `structured`; and numeric `min_confidence` from 0 through 1.
 
-Run a named query with `run` and statically check current selectivity with `verify`. A named query returning zero records may be a legitimate absence. Quality limits reject excessive matches or payloads; they never require a fabricated match.
+Run a named query with `run` and statically check current result sizes with `verify`. A named query returning zero records may be a legitimate absence. Quality limits reject oversized records or payloads; they never require a fabricated match.
 
 ### `maintenance.query_contract`
 
@@ -360,8 +359,9 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 - `batch_path_conflict`, `source_changed`, `mutation_apply_failed`
 - `table_identity_candidate`, `record_granularity_mismatch`, `table_header_duplicate`, `table_row_multiline`, `table_row_width_mismatch`
 - `query_contract_missing`, `unknown_query`, `query_input_mismatch`
-- `query_cardinality_exceeded`, `query_record_span_exceeded`, `query_record_payload_exceeded`, `query_total_payload_exceeded`
+- `query_record_span_exceeded`, `query_record_payload_exceeded`, `query_total_payload_exceeded`
 - `query_unstructured_result`, `query_confidence_below_minimum`
+- `query_max_matches_deprecated`
 - `raw_output_unavailable`
 - `query_contract_repair_planned`, `query_contract_repaired`, `query_contract_repair_ambiguous`, `query_contract_repair_unavailable`
 - `query_contract_locked`, `query_contract_scope_denied`, `query_contract_key_loss`
@@ -399,4 +399,5 @@ When `index` is absent, parse without writing. Resolve a relative index path aga
 - Label-field mutation values are non-empty single-line text without surrounding whitespace. The v1 field result remains text, so writing `false` returns the string `"false"` rather than a typed YAML boolean.
 - Do not store prose embeddings or external service credentials in the profile or sidecar.
 - Keep the protocol versioned. New engines must preserve v1 extraction. Old engines fail closed on v2 profiles because they reject unknown versions and selectors; never downgrade or reinterpret a v2 table contract as v1.
+- Accept a positive legacy v2 `expect.max_matches` value for migration, ignore it during quality evaluation, and emit `query_max_matches_deprecated`. New or rewritten contracts must omit it; duplicate exact keys remain structural `duplicate_key` ambiguity rather than a query-quality budget.
 - An optimizer may replace only the source-located top-level `mdq:` block. Preserve every other Front Matter key and every authored body byte, compare the source hash immediately before apply, reparse the proposed bytes in memory, preserve existing structured keys, and refuse ambiguous candidate schemas.
