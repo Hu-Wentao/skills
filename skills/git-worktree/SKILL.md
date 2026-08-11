@@ -96,7 +96,8 @@ updated. After marking, run `owner-status` again and obey its ownership-aware
 - `user_owned` work ends as a handoff unless the user separately requests a
   merge or cleanup.
 - `agent_temporary` work remains incomplete while `delivery.status` is
-  `integration_required` or `target_validation_and_cleanup_required`.
+  `integration_required`, `automatic_merge_blocked`, or
+  `target_validation_and_cleanup_required`.
 - For `agent_temporary`, merge the exact completed HEAD to the recorded target,
   passing both exact HEADs from the latest `owner-status`; validate the merged
   target; and remove the temporary worktree with `--require-merged-into` and
@@ -123,6 +124,20 @@ Git operation; cleaning that state makes it current again. A later commit makes
 the ref stale automatically. During maintenance, treat only a current
 completion ref as the owner's explicit handoff; an absent, blocked, or stale
 ref does not prove that the task is active or finished.
+
+## Block Automatic Merge
+
+Create or remove a repository-local merge block with:
+
+```bash
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> block-auto-merge --branch <branch> --expected-head <exact-head>
+uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> unblock-auto-merge --branch <branch> --expected-marker-head <marked-head>
+```
+
+The marker `refs/agents/no-auto-merge/<branch>` blocks `maintenance-run`,
+direct `merge`, and temporary-worktree delivery until explicitly removed. It
+remains effective after the branch advances. It does not block evidence-based
+deletion or raw Git; branch deletion through this CLI removes the marker.
 
 ## Maintain Branches and Worktrees
 
@@ -161,6 +176,7 @@ its completed clean worktree is removed. It reports:
 - detached, missing, locked, and prunable state;
 - merge, rebase, cherry-pick, revert, or bisect state;
 - owner completion ref status and whether it matches the exact branch HEAD;
+- no-auto-merge ref status and its marked HEAD;
 - protected branch status and decision-specific requirements.
 
 For every selected candidate, inspect its commits, diff, current target code,
@@ -170,8 +186,8 @@ available. Assign exactly one decision within its reported `decision_scope`:
 - **merge**: required behavior remains valuable and compatible. Preserve any
   branchless or uncommitted work first, validate it, merge it, and clean up only
   after validation succeeds.
-- **retain**: work is active, incomplete, dirty, locked, protected,
-  semantically unresolved, or otherwise unsafe to integrate or remove.
+- **retain**: work is active, incomplete, dirty, locked, protected, marked
+  no-auto-merge, semantically unresolved, or otherwise unsafe to integrate.
 - **delete**: committed behavior is contained, patch-equivalent, demonstrably
   superseded, or has no remaining value. Record the evidence and exact commit.
 
@@ -392,8 +408,8 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <target-worktree> merg
   [--expected-target-head <audited-target-head>]
 ```
 
-The merge uses `git merge --no-ff --no-edit` and checks every affected
-worktree. Interpret authorization narrowly:
+The merge uses `git merge --no-ff --no-edit`, checks every affected worktree,
+and refuses a source with a no-auto-merge marker. Interpret authorization narrowly:
 
 - **Merge `<branch>`**: stop if either affected worktree is dirty.
 - **Commit and merge `<branch>`**: inspect and commit only source-worktree
@@ -467,6 +483,7 @@ Report:
   exact HEAD, ownership kind, delivery status, target merge commit, removed
   temporary worktree, and the created/current completion ref, or the exact
   reason delivery did not finish;
+- no-auto-merge refs observed, created, removed, or blocking delivery;
 - breaking and compatibility effects.
 
 ## Resource

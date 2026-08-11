@@ -51,6 +51,7 @@ class BranchAudit:
     patch_unique_commits: int
     patch_equivalent_to_target: bool
     protected: bool
+    auto_merge_block: dict[str, object]
     worktrees: tuple[dict[str, object], ...]
 
 
@@ -63,12 +64,15 @@ OPERATION_MARKERS = {
 }
 
 COMPLETION_REF_PREFIX = "refs/agents/completed/"
+AUTO_MERGE_BLOCK_REF_PREFIX = "refs/agents/no-auto-merge/"
 TEMPORARY_REF_PREFIX = "refs/agents/temporary/"
 TEMPORARY_TARGET_REF_PREFIX = "refs/agents/temporary-target/"
 MAINTENANCE_PLAN_SCHEMA_VERSION = 1
 MUTATING_COMMANDS = frozenset(
     {
         "mark-complete",
+        "block-auto-merge",
+        "unblock-auto-merge",
         "maintenance-run",
         "create",
         "merge",
@@ -210,6 +214,10 @@ def completion_ref_name(branch: str) -> str:
     return f"{COMPLETION_REF_PREFIX}{branch}"
 
 
+def auto_merge_block_ref_name(branch: str) -> str:
+    return f"{AUTO_MERGE_BLOCK_REF_PREFIX}{branch}"
+
+
 def temporary_ref_name(branch: str) -> str:
     return f"{TEMPORARY_REF_PREFIX}{branch}"
 
@@ -290,6 +298,34 @@ def completion_evidence(
             else "absent"
         ),
     }
+
+
+def auto_merge_block_evidence(
+    repo: Path, branch: str | None, head: str
+) -> dict[str, object]:
+    if branch is None:
+        return {
+            "present": False,
+            "ref": None,
+            "marked_head": None,
+            "matches_head": False,
+        }
+    ref = auto_merge_block_ref_name(branch)
+    marked_head = ref_object_id(repo, ref)
+    return {
+        "present": marked_head is not None,
+        "ref": ref,
+        "marked_head": marked_head,
+        "matches_head": marked_head == head,
+    }
+
+
+def clear_auto_merge_block_ref(repo: Path, branch: str) -> bool:
+    ref = auto_merge_block_ref_name(branch)
+    object_id = ref_object_id(repo, ref)
+    if object_id is None:
+        return False
+    return run_git(repo, "update-ref", "-d", ref, object_id, check=False).returncode == 0
 
 
 def clear_completion_ref(repo: Path, branch: str) -> bool:
@@ -698,6 +734,7 @@ def branch_audits(repo: Path, target: str) -> list[BranchAudit]:
                     and unique == 0
                 ),
                 protected=protected_branch(branch),
+                auto_merge_block=auto_merge_block_evidence(repo, branch, commit),
                 worktrees=worktree_evidence(repo, branch),
             )
         )
@@ -714,6 +751,7 @@ def decision_evidence(
     worktrees: Sequence[dict[str, object]],
     protected: bool,
     completion: dict[str, object],
+    auto_merge_block: dict[str, object],
     preservation_refs: Sequence[str] = (),
 ) -> dict[str, object]:
     dirty = any(bool(item["dirty"]) for item in worktrees)
@@ -747,6 +785,11 @@ def decision_evidence(
     if uninspectable:
         retention_reasons.append("uninspectable_worktree")
     mutation_blocked = bool(retention_reasons)
+    automatic_merge_blocked = bool(
+        kind == "branch" and auto_merge_block["present"]
+    )
+    if automatic_merge_blocked:
+        retention_reasons.append("automatic_merge_blocked")
 
     if mutation_blocked:
         decision_scope = (
@@ -798,6 +841,13 @@ def decision_evidence(
         possible = [item for item in possible if item != "delete"]
         if "retain" not in possible:
             possible.append("retain")
+    if automatic_merge_blocked:
+        requirements.append(
+            "clear the no-auto-merge ref before any skill-managed merge"
+        )
+        possible = [item for item in possible if item != "merge"]
+        if "retain" not in possible:
+            possible.append("retain")
 
     return {
         "decision_scope": decision_scope,
@@ -809,7 +859,10 @@ def decision_evidence(
         "missing": missing,
         "uninspectable": uninspectable,
         "mutation_blocked": mutation_blocked,
-        "default_decision": "retain" if mutation_blocked else None,
+        "automatic_merge_blocked": automatic_merge_blocked,
+        "default_decision": (
+            "retain" if mutation_blocked or automatic_merge_blocked else None
+        ),
         "retention_reasons": retention_reasons,
         "owner_handoff_completed": completion["status"] == "current",
         "preservation_refs": list(preservation_refs),
@@ -841,6 +894,7 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
         ]
         protected = protected_branch(branch)
         completion = completion_evidence(repo, branch, head, snapshots)
+        auto_merge_block = auto_merge_block_evidence(repo, branch, head)
         items.append(
             {
                 "candidate_id": f"branch:{branch}",
@@ -852,8 +906,14 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 "relation": relation,
                 "worktrees": snapshots,
                 "completion": completion,
+                "auto_merge_block": auto_merge_block,
                 "decision_evidence": decision_evidence(
-                    "branch", relation, snapshots, protected, completion
+                    "branch",
+                    relation,
+                    snapshots,
+                    protected,
+                    completion,
+                    auto_merge_block,
                 ),
             }
         )
@@ -875,6 +935,9 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
         completion = completion_evidence(
             repo, worktree.branch, worktree.head, snapshots
         )
+        auto_merge_block = auto_merge_block_evidence(
+            repo, worktree.branch, worktree.head
+        )
         items.append(
             {
                 "candidate_id": f"worktree:{worktree.path}",
@@ -887,12 +950,14 @@ def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
                 "relation": relation,
                 "worktrees": snapshots,
                 "completion": completion,
+                "auto_merge_block": auto_merge_block,
                 "decision_evidence": decision_evidence(
                     "worktree",
                     relation,
                     snapshots,
                     protected,
                     completion,
+                    auto_merge_block,
                     preservation_refs,
                 ),
             }
@@ -950,6 +1015,7 @@ def candidate_stability_evidence(candidate: dict[str, object]) -> dict[str, obje
         "head": candidate["head"],
         "worktrees": candidate["worktrees"],
         "completion": candidate["completion"],
+        "auto_merge_block": candidate["auto_merge_block"],
         "preservation_refs": candidate["decision_evidence"]["preservation_refs"],
         "rescue_required": candidate["decision_evidence"]["rescue_required"],
     }
@@ -1046,6 +1112,11 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
         worktree.head or "",
         [snapshot],
     )
+    auto_merge_block = auto_merge_block_evidence(
+        repo,
+        None if worktree.main or worktree.detached else worktree.branch,
+        worktree.head or "",
+    )
     ownership = worktree_ownership(
         repo,
         None if worktree.main or worktree.detached else worktree.branch,
@@ -1087,6 +1158,8 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
                             if completion["status"] != "current"
                             else "target_validation_and_cleanup_required"
                             if contained
+                            else "automatic_merge_blocked"
+                            if auto_merge_block["present"]
                             else "integration_required"
                         ),
                         "target_head": target_head,
@@ -1102,6 +1175,7 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
             "target_validation_and_cleanup_required": (
                 "validate_target_then_remove_temporary_worktree"
             ),
+            "automatic_merge_blocked": "clear_auto_merge_block_or_handoff",
         }[str(delivery["status"])]
     elif completion["status"] != "current":
         next_action = "mark_complete_after_semantic_completion"
@@ -1113,6 +1187,7 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
             "git_common_dir": str(git_common_dir(repo)),
             "worktree": snapshot,
             "completion": completion,
+            "auto_merge_block": auto_merge_block,
             "ownership": ownership,
             "delivery": delivery,
             "completion_eligible": not blockers,
@@ -1148,6 +1223,51 @@ def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
             "completion_ref": ref,
             "head": head,
             "previous_completion_head": previous,
+            "remote_refs_untouched": True,
+        }
+    )
+
+
+def command_block_auto_merge(repo: Path, args: argparse.Namespace) -> None:
+    branch = args.branch
+    if not local_branch_exists(repo, branch):
+        raise WorkflowError(f"Local branch does not exist: {branch}")
+    head = run_git(repo, "rev-parse", f"{branch}^{{commit}}").stdout.strip()
+    verify_expected_head(head, args.expected_head, f"Branch '{branch}'")
+    ref = auto_merge_block_ref_name(branch)
+    previous = ref_object_id(repo, ref)
+    null_object_id = "0" * len(head)
+    run_git(repo, "update-ref", ref, head, previous or null_object_id)
+    emit(
+        {
+            "action": "automatic_merge_blocked",
+            "branch": branch,
+            "head": head,
+            "no_auto_merge_ref": ref,
+            "previous_marked_head": previous,
+            "remote_refs_untouched": True,
+        }
+    )
+
+
+def command_unblock_auto_merge(repo: Path, args: argparse.Namespace) -> None:
+    branch = args.branch
+    ref = auto_merge_block_ref_name(branch)
+    marked_head = ref_object_id(repo, ref)
+    if marked_head is None:
+        raise WorkflowError(f"Automatic merge is not blocked for branch '{branch}'.")
+    if marked_head != args.expected_marker_head:
+        raise WorkflowError(
+            f"No-auto-merge marker changed: expected {args.expected_marker_head}, "
+            f"found {marked_head}."
+        )
+    run_git(repo, "update-ref", "-d", ref, marked_head)
+    emit(
+        {
+            "action": "automatic_merge_unblocked",
+            "branch": branch,
+            "marked_head": marked_head,
+            "no_auto_merge_ref": ref,
             "remote_refs_untouched": True,
         }
     )
@@ -1192,7 +1312,10 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
     ]
     for candidate in selected:
         evidence = candidate["decision_evidence"]
-        if evidence["default_decision"] != "retain":
+        if (
+            evidence["default_decision"] != "retain"
+            or not evidence["mutation_blocked"]
+        ):
             continue
         for worktree in candidate["worktrees"]:
             retained_worktrees[str(worktree["path"])] = {
@@ -1336,6 +1459,15 @@ def validate_maintenance_plan(
                 f"Decision for {candidate_id} requires a non-empty reason."
             )
         candidate = candidates[candidate_id]
+        if (
+            decision == "merge"
+            and candidate["kind"] == "branch"
+            and candidate["auto_merge_block"]["present"]
+        ):
+            raise WorkflowError(
+                f"Automatic merge is blocked for {candidate_id} by "
+                f"{candidate['auto_merge_block']['ref']}."
+            )
         possible = candidate["decision_evidence"]["possible_decisions"]
         if decision not in possible:
             raise WorkflowError(
@@ -1720,6 +1852,12 @@ def command_merge(repo: Path, args: argparse.Namespace) -> dict[str, object]:
             raise WorkflowError(f"Local branch does not exist: {branch}")
     source_head = run_git(repo, "rev-parse", f"{source}^{{commit}}").stdout.strip()
     target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
+    auto_merge_block = auto_merge_block_evidence(repo, source, source_head)
+    if auto_merge_block["present"]:
+        raise WorkflowError(
+            f"Automatic merge is blocked for branch '{source}' by "
+            f"{auto_merge_block['ref']}; run unblock-auto-merge first."
+        )
     source_ownership = worktree_ownership(repo, source)
     if source_ownership["kind"] == "agent_temporary":
         if not source_ownership["valid"]:
@@ -2099,6 +2237,7 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> dict[str, obj
 
     run_git(repo, "branch", "-d" if merged else "-D", "--", branch)
     completion_ref_removed = clear_completion_ref(repo, branch)
+    auto_merge_block_ref_removed = clear_auto_merge_block_ref(repo, branch)
     temporary_refs_removed = clear_temporary_worktree_refs(repo, branch)
     return emit_command_result(
         args,
@@ -2107,6 +2246,7 @@ def command_branch_delete(repo: Path, args: argparse.Namespace) -> dict[str, obj
             "branch": branch,
             "commit": commit,
             "completion_ref_removed": completion_ref_removed,
+            "no_auto_merge_ref_removed": auto_merge_block_ref_removed,
             "temporary_ownership_removed": temporary_refs_removed,
             "merged_into_target": merged,
             "reason": args.reason,
@@ -2140,6 +2280,22 @@ def build_parser() -> argparse.ArgumentParser:
     mark_complete.add_argument("--branch")
     mark_complete.add_argument("--expected-head", required=True)
     mark_complete.set_defaults(handler=command_mark_complete)
+
+    block_auto_merge = commands.add_parser(
+        "block-auto-merge",
+        help="Block skill-managed merge of one local branch",
+    )
+    block_auto_merge.add_argument("--branch", required=True)
+    block_auto_merge.add_argument("--expected-head", required=True)
+    block_auto_merge.set_defaults(handler=command_block_auto_merge)
+
+    unblock_auto_merge = commands.add_parser(
+        "unblock-auto-merge",
+        help="Remove one local branch's automatic-merge block",
+    )
+    unblock_auto_merge.add_argument("--branch", required=True)
+    unblock_auto_merge.add_argument("--expected-marker-head", required=True)
+    unblock_auto_merge.set_defaults(handler=command_unblock_auto_merge)
 
     maintenance_audit = commands.add_parser(
         "maintenance-audit",

@@ -195,6 +195,162 @@ class GitWorktreeCliTests(unittest.TestCase):
             run(["git", "branch", "--show-current"], self.repo).stdout.strip(), "main"
         )
 
+    def test_no_auto_merge_ref_blocks_until_explicitly_removed(self) -> None:
+        worktree = self.create("feat/manual-integration")
+        self.commit_file(worktree, "first.txt", "first\n")
+        marked_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        marker = json.loads(
+            self.cli(
+                "block-auto-merge",
+                "--branch",
+                "feat/manual-integration",
+                "--expected-head",
+                marked_head,
+            ).stdout
+        )
+        self.assertEqual(
+            marker["no_auto_merge_ref"],
+            "refs/agents/no-auto-merge/feat/manual-integration",
+        )
+
+        self.commit_file(worktree, "second.txt", "second\n")
+        audit = self.maintenance_audit()
+        candidate = next(
+            item
+            for item in audit["candidates"]
+            if item["candidate_id"] == "branch:feat/manual-integration"
+        )
+        self.assertTrue(candidate["auto_merge_block"]["present"])
+        self.assertEqual(candidate["auto_merge_block"]["marked_head"], marked_head)
+        self.assertFalse(candidate["auto_merge_block"]["matches_head"])
+        self.assertNotIn("merge", candidate["decision_evidence"]["possible_decisions"])
+        self.assertEqual(candidate["decision_evidence"]["default_decision"], "retain")
+        branch_audit = json.loads(
+            self.cli("branch-audit", "--recent-count", "1").stdout
+        )
+        self.assertTrue(branch_audit["branches"][0]["auto_merge_block"]["present"])
+
+        blocked = self.cli(
+            "merge", "--source", "feat/manual-integration", check=False
+        )
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("unblock-auto-merge", blocked.stderr)
+
+        stale_unblock = self.cli(
+            "unblock-auto-merge",
+            "--branch",
+            "feat/manual-integration",
+            "--expected-marker-head",
+            "0" * 40,
+            check=False,
+        )
+        self.assertEqual(stale_unblock.returncode, 2)
+        self.assertIn("marker changed", stale_unblock.stderr)
+
+        self.cli(
+            "unblock-auto-merge",
+            "--branch",
+            "feat/manual-integration",
+            "--expected-marker-head",
+            marked_head,
+        )
+        merged = json.loads(
+            self.cli("merge", "--source", "feat/manual-integration").stdout
+        )
+        self.assertEqual(merged["source"], "feat/manual-integration")
+
+    def test_maintenance_plan_tracks_and_enforces_no_auto_merge_ref(self) -> None:
+        worktree = self.create("feat/audited-manual-integration")
+        self.commit_file(worktree, "feature.txt", "feature\n")
+        head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        audit = self.maintenance_audit()
+        old_plan = self.maintenance_plan(
+            audit,
+            {
+                "branch:feat/audited-manual-integration": (
+                    "merge",
+                    "feature is complete",
+                ),
+                f"worktree:{worktree}": ("retain", "keep through validation"),
+            },
+        )
+        self.cli(
+            "block-auto-merge",
+            "--branch",
+            "feat/audited-manual-integration",
+            "--expected-head",
+            head,
+        )
+
+        stale = self.run_maintenance_plan(old_plan, check=False)
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("snapshot changed", stale.stderr)
+
+        fresh = self.maintenance_audit()
+        forged_plan = self.maintenance_plan(
+            fresh,
+            {
+                "branch:feat/audited-manual-integration": (
+                    "merge",
+                    "try to bypass the marker",
+                ),
+                f"worktree:{worktree}": ("retain", "keep through validation"),
+            },
+        )
+        rejected = self.run_maintenance_plan(forged_plan, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Automatic merge is blocked", rejected.stderr)
+
+    def test_temporary_delivery_reports_no_auto_merge_block(self) -> None:
+        worktree = self.create("feat/temporary-manual-integration", temporary=True)
+        self.commit_file(worktree, "temporary.txt", "temporary\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+        target_head = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
+        self.cli(
+            "mark-complete",
+            "--branch",
+            "feat/temporary-manual-integration",
+            "--expected-head",
+            source_head,
+        )
+        self.cli(
+            "block-auto-merge",
+            "--branch",
+            "feat/temporary-manual-integration",
+            "--expected-head",
+            source_head,
+        )
+
+        status = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-status",
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(status["delivery"]["status"], "automatic_merge_blocked")
+        self.assertEqual(status["next_action"], "clear_auto_merge_block_or_handoff")
+
+        blocked = self.cli(
+            "merge",
+            "--source",
+            "feat/temporary-manual-integration",
+            "--target",
+            "main",
+            "--expected-source-head",
+            source_head,
+            "--expected-target-head",
+            target_head,
+            check=False,
+        )
+        self.assertEqual(blocked.returncode, 2)
+        self.assertIn("Automatic merge is blocked", blocked.stderr)
+
     def test_mark_complete_requires_exact_clean_branch_head(self) -> None:
         worktree = self.create("feat/completion-handoff")
         self.commit_file(worktree, "complete.txt", "complete\n")
@@ -960,6 +1116,13 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.commit_file(worktree, "obsolete.txt", "obsolete\n")
         source_commit = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
         target_commit = run(["git", "rev-parse", "HEAD"], self.repo).stdout.strip()
+        self.cli(
+            "block-auto-merge",
+            "--branch",
+            "obsolete",
+            "--expected-head",
+            source_commit,
+        )
 
         rejected = self.cli(
             "branch-delete",
@@ -1002,6 +1165,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         )
         self.assertFalse(deleted["merged_into_target"])
         self.assertEqual(deleted["commit"], source_commit)
+        self.assertTrue(deleted["no_auto_merge_ref_removed"])
         self.assertFalse(worktree.exists())
         self.assertNotIn(
             "obsolete",
