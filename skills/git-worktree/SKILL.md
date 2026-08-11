@@ -127,7 +127,8 @@ ref does not prove that the task is active or finished.
 
 ## Block Automatic Merge
 
-Create or remove a repository-local merge block with:
+Treat “禁止 `<branch>` 自动合并” and equivalent declarations as authorization
+to create the repository-local merge block. Create or remove it with:
 
 ```bash
 uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> block-auto-merge --branch <branch> --expected-head <exact-head>
@@ -136,8 +137,10 @@ uv run python "$SKILL_DIR/scripts/git_worktree.py" --repo <path> unblock-auto-me
 
 The marker `refs/agents/no-auto-merge/<branch>` blocks `maintenance-run`,
 direct `merge`, and temporary-worktree delivery until explicitly removed. It
-remains effective after the branch advances. It does not block evidence-based
-deletion or raw Git; branch deletion through this CLI removes the marker.
+remains effective after the branch advances. During maintenance, assign only
+`retain` to the branch and its attached worktrees, leave them unchanged, and
+still report the overall maintenance completed. A separate exact deletion or
+raw Git command remains available; branch deletion through this CLI removes it.
 
 ## Maintain Branches and Worktrees
 
@@ -483,7 +486,8 @@ Report:
   exact HEAD, ownership kind, delivery status, target merge commit, removed
   temporary worktree, and the created/current completion ref, or the exact
   reason delivery did not finish;
-- no-auto-merge refs observed, created, removed, or blocking delivery;
+- no-auto-merge refs observed, created, or removed; after maintenance, state
+  that all branches were maintained and list marked branches retained unchanged;
 - breaking and compatibility effects.
 
 ## Resource

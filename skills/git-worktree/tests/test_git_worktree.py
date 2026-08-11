@@ -223,8 +223,17 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertTrue(candidate["auto_merge_block"]["present"])
         self.assertEqual(candidate["auto_merge_block"]["marked_head"], marked_head)
         self.assertFalse(candidate["auto_merge_block"]["matches_head"])
-        self.assertNotIn("merge", candidate["decision_evidence"]["possible_decisions"])
+        self.assertEqual(candidate["decision_evidence"]["possible_decisions"], ["retain"])
         self.assertEqual(candidate["decision_evidence"]["default_decision"], "retain")
+        worktree_candidate = next(
+            item
+            for item in audit["candidates"]
+            if item["candidate_id"] == f"worktree:{worktree}"
+        )
+        self.assertEqual(
+            worktree_candidate["decision_evidence"]["possible_decisions"],
+            ["retain"],
+        )
         branch_audit = json.loads(
             self.cli("branch-audit", "--recent-count", "1").stdout
         )
@@ -287,6 +296,10 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertIn("snapshot changed", stale.stderr)
 
         fresh = self.maintenance_audit()
+        self.assertEqual(
+            fresh["retained_no_auto_merge_branches"][0]["branch"],
+            "feat/audited-manual-integration",
+        )
         forged_plan = self.maintenance_plan(
             fresh,
             {
@@ -300,6 +313,64 @@ class GitWorktreeCliTests(unittest.TestCase):
         rejected = self.run_maintenance_plan(forged_plan, check=False)
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("Automatic merge is blocked", rejected.stderr)
+
+        delete_worktree_plan = self.maintenance_plan(
+            fresh,
+            {
+                "branch:feat/audited-manual-integration": (
+                    "retain",
+                    "leave the marked branch unchanged",
+                ),
+                f"worktree:{worktree}": (
+                    "delete",
+                    "try to remove the marked worktree",
+                ),
+            },
+        )
+        delete_rejected = self.run_maintenance_plan(
+            delete_worktree_plan, check=False
+        )
+        self.assertEqual(delete_rejected.returncode, 2)
+        self.assertIn("is not allowed", delete_rejected.stderr)
+
+        retain_plan = self.maintenance_plan(
+            fresh,
+            {
+                "branch:feat/audited-manual-integration": (
+                    "retain",
+                    "leave the marked branch unchanged",
+                ),
+                f"worktree:{worktree}": (
+                    "retain",
+                    "leave the marked worktree unchanged",
+                ),
+            },
+        )
+        completed = json.loads(self.run_maintenance_plan(retain_plan).stdout)
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(
+            completed["retained_no_auto_merge_branches"][0]["branch"],
+            "feat/audited-manual-integration",
+        )
+        self.assertTrue(worktree.exists())
+        self.assertEqual(
+            run(
+                ["git", "rev-parse", "feat/audited-manual-integration"],
+                self.repo,
+            ).stdout.strip(),
+            head,
+        )
+        self.assertEqual(
+            run(
+                [
+                    "git",
+                    "rev-parse",
+                    "refs/agents/no-auto-merge/feat/audited-manual-integration",
+                ],
+                self.repo,
+            ).stdout.strip(),
+            head,
+        )
 
     def test_temporary_delivery_reports_no_auto_merge_block(self) -> None:
         worktree = self.create("feat/temporary-manual-integration", temporary=True)

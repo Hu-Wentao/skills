@@ -785,9 +785,7 @@ def decision_evidence(
     if uninspectable:
         retention_reasons.append("uninspectable_worktree")
     mutation_blocked = bool(retention_reasons)
-    automatic_merge_blocked = bool(
-        kind == "branch" and auto_merge_block["present"]
-    )
+    automatic_merge_blocked = bool(auto_merge_block["present"])
     if automatic_merge_blocked:
         retention_reasons.append("automatic_merge_blocked")
 
@@ -843,11 +841,10 @@ def decision_evidence(
             possible.append("retain")
     if automatic_merge_blocked:
         requirements.append(
-            "clear the no-auto-merge ref before any skill-managed merge"
+            "retain this branch and its attached worktrees unchanged during "
+            "maintenance; clear the no-auto-merge ref before integration"
         )
-        possible = [item for item in possible if item != "merge"]
-        if "retain" not in possible:
-            possible.append("retain")
+        possible = ["retain"]
 
     return {
         "decision_scope": decision_scope,
@@ -1370,6 +1367,17 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
             ],
             "orphan_completion_refs": snapshot["orphan_completion_refs"],
             "rescue_required_worktrees": rescue_required_worktrees,
+            "retained_no_auto_merge_branches": [
+                {
+                    "branch": candidate["branch"],
+                    "candidate_id": candidate["candidate_id"],
+                    "head": candidate["head"],
+                    "ref": candidate["auto_merge_block"]["ref"],
+                }
+                for candidate in selected
+                if candidate["kind"] == "branch"
+                and candidate["auto_merge_block"]["present"]
+            ],
             "retained_active_or_dirty_worktrees": sorted(
                 retained_worktrees.values(), key=lambda item: str(item["path"])
             ),
@@ -1715,6 +1723,22 @@ def command_maintenance_run(repo: Path, args: argparse.Namespace) -> None:
                 "target": final_snapshot["target"],
                 "terminal_decisions": results,
                 "removed_orphan_completion_refs": removed_orphan_refs,
+                "retained_no_auto_merge_branches": [
+                    {
+                        "branch": initial_candidates[candidate_id]["branch"],
+                        "candidate_id": candidate_id,
+                        "head": initial_candidates[candidate_id]["head"],
+                        "ref": initial_candidates[candidate_id][
+                            "auto_merge_block"
+                        ]["ref"],
+                    }
+                    for candidate_id, decision in sorted(decisions.items())
+                    if initial_candidates[candidate_id]["kind"] == "branch"
+                    and initial_candidates[candidate_id]["auto_merge_block"][
+                        "present"
+                    ]
+                    and decision["decision"] == "retain"
+                ],
                 "remaining_candidates": [
                     candidate["candidate_id"]
                     for candidate in final_snapshot["candidates"]
