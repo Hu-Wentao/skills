@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, or inspection, planning, writes, verification, and rollback owned by the host infrastructure repository.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
 ---
 
 # Host Governance
@@ -103,6 +103,22 @@ leave shared host infrastructure unchanged.
 
 Read [project_config.md](references/project_config.md) before creating or
 changing a project profile.
+
+## Productize Requested Procedures
+
+When the user asks to make a procedure a host-governance function, read
+[procedure-productization.md](references/procedure-productization.md). Treat
+the request as authorization to capture the successful method, implement a
+deterministic project-owned controller, parameterize reviewed variations, add
+contracted operations and tests, and use that controller for the current task.
+Do not stop after documenting the procedure or leave the next invocation to
+reconstruct shell commands.
+
+On later invocations, resolve and execute the existing contracted controller
+first. Inspect or extend it only when the requested option is not represented,
+the target platform is unsupported, or live evidence shows the contract is
+stale. Never replace a reusable function with an ad hoc remote command merely
+because the one-off command would be shorter.
 
 ## Establish Authority
 
@@ -212,6 +228,8 @@ changing a project profile.
 5. Present material exposure, deletion, billing, downtime, and recovery
    effects before requesting any missing authority.
 6. Apply only authorized steps, using the relevant product reference:
+   - A procedure requested as a reusable host-governance function: read
+     [procedure-productization.md](references/procedure-productization.md).
    - Initial Linux server bootstrap: read [server-bootstrap.md](references/server-bootstrap.md).
    - Docker Engine or Compose installation: read [docker-install.md](references/docker-install.md).
    - GitHub Actions self-hosted runner installation or lifecycle: read

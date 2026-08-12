@@ -1,4 +1,4 @@
 interface:
   display_name: "Host Governance"
-  short_description: "Bootstrap, install Docker, inventory, and govern shared hosts"
-  default_prompt: "Use $host-governance to bootstrap or inspect a shared host, install Docker through a governed transaction, and coordinate service, network, DNS, and access changes for this project."
+  short_description: "Productize procedures and govern shared hosts"
+  default_prompt: "Use $host-governance to operate shared hosts and turn requested procedures into parameterized, tested, contracted functions that future calls execute directly."

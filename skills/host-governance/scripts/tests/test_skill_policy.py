@@ -11,6 +11,30 @@ SKILL_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SkillPolicyTest(unittest.TestCase):
+    def test_requested_procedures_become_reusable_contracted_functions(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (
+            SKILL_ROOT / "references" / "procedure-productization.md"
+        ).read_text(encoding="utf-8")
+        normalized_skill = " ".join(skill.split())
+        normalized_reference = " ".join(reference.split())
+        for phrase in (
+            "implement a deterministic project-owned controller",
+            "use that controller for the current task",
+            "resolve and execute the existing contracted controller first",
+            "Never replace a reusable function with an ad hoc remote command",
+        ):
+            self.assertIn(phrase, normalized_skill)
+        for phrase in (
+            "future invocations execute directly",
+            "stable method",
+            "Turn real, reviewed variations into typed contract parameters",
+            "Never create a generic arbitrary-command, arbitrary-package, or shell-fragment executor",
+            "Use the newly contracted controller to complete the current request",
+            "A successful no-op plan and verify is the correct fast path",
+        ):
+            self.assertIn(phrase, normalized_reference)
+
     def test_docker_install_transaction_and_privilege_boundaries_are_durable(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         reference = (SKILL_ROOT / "references" / "docker-install.md").read_text(
