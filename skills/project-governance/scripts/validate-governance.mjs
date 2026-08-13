@@ -235,6 +235,7 @@ function main() {
   const headingPattern = /^#{2,6}\s+(REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3,})\b/gm;
   const defectIdPattern = /^DEF-\d{8}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
   const requiredDefectFields = ["id", "status", "date", "requirements", "recurrence", "prior-defects"];
+  const allowedDefectStatuses = ["pending_repair", "implemented", "superseded"];
   const requiredDefectHeadings = [
     "Observed and Expected",
     "Failure Family",
@@ -304,7 +305,7 @@ function main() {
           else defectRecords.set(id, { file });
         }
         const status = frontmatter.get("status");
-        if (status && !["implemented", "superseded"].includes(status)) issues.push({ level: "error", file, line: 1, message: `unsupported defect status: ${status}` });
+        if (status && !allowedDefectStatuses.includes(status)) issues.push({ level: "error", file, line: 1, message: `unsupported defect status: ${status}` });
         const recurrence = frontmatter.get("recurrence");
         if (recurrence && !["first", "suspected", "confirmed"].includes(recurrence)) issues.push({ level: "error", file, line: 1, message: `unsupported defect recurrence: ${recurrence}` });
         const date = frontmatter.get("date");

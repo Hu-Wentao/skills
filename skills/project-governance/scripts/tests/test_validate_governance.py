@@ -63,7 +63,14 @@ class GovernanceValidatorTest(unittest.TestCase):
             check=False,
         )
 
-    def write_defect(self, identifier: str, *, prior: str = "none", include_compatibility: bool = True) -> None:
+    def write_defect(
+        self,
+        identifier: str,
+        *,
+        status: str = "implemented",
+        prior: str = "none",
+        include_compatibility: bool = True,
+    ) -> None:
         compatibility = "\n## Compatibility\n\nNo breaking changes.\n" if include_compatibility else ""
         (self.docs / "defects" / f"{identifier}.md").write_text(
             f"""---
@@ -81,7 +88,7 @@ mdq:
   tolerance:
     incomplete: true
 id: {identifier}
-status: implemented
+status: {status}
 date: 2026-07-16
 requirements: REQ-TEST-001
 recurrence: first
@@ -118,6 +125,18 @@ Focused verification owns the invariant.
         result = self.run_validator()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("1 defect records: 0 error(s), 0 warning(s)", result.stdout)
+
+    def test_accepts_pending_repair_defect_record(self) -> None:
+        self.write_defect("DEF-20260716-example", status="pending_repair")
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 defect records: 0 error(s), 0 warning(s)", result.stdout)
+
+    def test_rejects_unknown_defect_status(self) -> None:
+        self.write_defect("DEF-20260716-example", status="unknown")
+        result = self.run_validator()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unsupported defect status: unknown", result.stdout)
 
     def test_rejects_missing_heading_and_unknown_prior_defect(self) -> None:
         self.write_defect("DEF-20260716-example", prior="DEF-20260715-missing", include_compatibility=False)
