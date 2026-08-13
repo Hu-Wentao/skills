@@ -356,7 +356,20 @@ Treat repository release and deployment executors as automation boundaries. Do n
 
 ## Govern Defects
 
-Run `defect collect` before writing ad hoc Git, SQLite, Docker, SSH, or application probes when the project contract supports the evidence scope. Read the returned evidence envelope, then use [defect-governance.md](references/defect-governance.md) to classify recurrence, systemic cause, ownership, repair shape, next-unseen-case behavior, and test escape.
+Before choosing probes, repair-history artifacts, or tests, classify the repair
+from L1 through L4 by observable impact, crossed boundaries, and product risk as
+defined in [defect-governance.md](references/defect-governance.md). Start with
+the minimum evidence and verification for that tier. Escalate only when an
+explicit trigger is present; file count, generated files, or a defect label do
+not justify broader testing or documentation by themselves.
+
+Run `defect collect` before writing ad hoc Git, SQLite, Docker, SSH, or
+application probes when the project contract supports evidence that is
+actually needed for the selected tier. Do not collect broad evidence merely
+because the task is called a defect. Read any returned evidence envelope, then
+use [defect-governance.md](references/defect-governance.md) to classify
+recurrence, systemic cause, ownership, repair shape, next-unseen-case behavior,
+and test escape to the depth justified by the tier.
 
 Keep diagnosis read-only unless implementation is explicitly authorized. Persist repair history only through the project-approved owner.
 

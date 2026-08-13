@@ -17,9 +17,42 @@ Use this workflow for one defect diagnosis, an implementation-ready repair plan,
 6. Classify the result as product defect, expected configuration or policy result, external dependency failure, invalid or damaged data, infrastructure or test failure, or insufficient observability.
 7. Claim a product root cause only when evidence explains both the observed behavior and why the relevant code path produced it.
 
+## Calibrate Repair and Verification
+
+Classify the repair by the highest applicable impact and risk tier before
+selecting history depth, evidence collection, documentation, or tests:
+
+| Tier | Repair scope | Minimum verification support |
+| --- | --- | --- |
+| `L1` local presentation | Copy, style, formatting, or one field binding without new business logic or a runtime contract change | Relevant formatting or static check plus the nearest component, snapshot, or widget regression when behavior can regress |
+| `L2` module behavior | Mapping, date generation, dictionary display, validation, or local state inside one owned module | `L1` support plus focused unit, module, service, view-model, or widget tests that own the changed invariant |
+| `L3` boundary or contract | Runtime API, DTO, BFF semantics, persistence, navigation, generated interface, or cross-module behavior | `L2` support plus the affected contract or generation check and the narrowest related integration test |
+| `L4` high risk | Authentication, authorization, money, destructive data handling, migration, release or deployment control, or platform resource safety | `L3` support plus the key E2E, platform, migration rehearsal, or operational check required by the specific risk |
+
+Choose the tier from user-visible impact, the boundary crossed, compatibility,
+data, security, and operational risk. Do not choose it from line count, file
+count, code generation, or the presence of a governed document. Correcting only
+a description or example in a contract document does not create an `L3`
+runtime contract change; validate that document in addition to the actual code
+tier.
+
+Start with the smallest deterministic check that owns the invariant. Add a
+higher layer only when a shared consumer or runtime boundary is affected, a
+generated artifact participates in the behavior, a focused check exposes a
+broader regression, recurrence is suspected or confirmed, or the resolved
+project contract explicitly requires that check for the affected surface. Do
+not run a full suite, E2E, every-platform test, or create a standalone defect
+document by default for `L1` or `L2` work. If an unrelated check fails, report
+it separately and do not expand the repair unless evidence connects it to the
+change.
+
 ## Detect Recurrence
 
-Treat repository history as diagnostic evidence, not optional background.
+Treat repository history as diagnostic evidence and scale the search to the
+selected tier. For an apparently first-occurrence `L1` or `L2` repair, start
+with the affected file or symbol and direct issue or commit matches. Expand to
+repository-wide, release, or architectural history for `L3` or `L4`, a
+recurrence signal, responsibility drift, or an unresolved root cause.
 
 1. Define a failure-family signature from the decision point or symbol, error mechanism, external trigger, and repair shape. Do not distinguish incidents only by the newest parameter, enum member, input value, or message.
 2. Inspect relevant file and symbol history, blame context, introducing commits, later migrations, archived plans, earlier fixes, and regression tests. Search especially when a proposed repair adds another allowlist or enum member, mapping, branch, retry, fallback, or compatibility exception.
@@ -41,13 +74,14 @@ If the next input would require another local patch, the repair has not removed 
 
 ## Analyze Test Escape
 
-Perform this section whenever a new product defect is established.
+Perform this section whenever a new product defect is established, but bound it
+to the selected tier and the layer that owns the invariant.
 
 1. Inspect relevant unit and integration tests, fixtures, mocks, and actual assertions. Do not infer coverage from filenames or a green run.
-2. Inspect the applicable E2E or cross-service scenario, harness, seeded state, and acceptance assertions.
-3. Explain focused and E2E escape separately: absent scenario, unexecuted branch, unrealistic mock, incomplete state combination, weak assertion, swallowed failure, environment divergence, or missing traceability.
+2. Inspect E2E or cross-service scenarios only for `L3` or `L4`, when that layer owns the invariant, or when focused evidence indicates a cross-boundary escape.
+3. Explain escape only for layers actually in scope: absent scenario, unexecuted branch, unrealistic mock, incomplete state combination, weak assertion, swallowed failure, environment divergence, or missing traceability.
 4. Name the smallest test layer that should own the invariant. Prefer a class-level or property-style regression over a test recognizing only the latest concrete example.
-5. When E2E is not the correct owner, explain why and identify the focused, UI, browser, or operational layer that is.
+5. State why broader layers were not required when that choice would otherwise be ambiguous; do not manufacture an E2E gap for a focused invariant.
 
 ## Design the Repair
 
@@ -59,9 +93,12 @@ Perform this section whenever a new product defect is established.
 
 ## Maintain Repair History
 
-Before editing an established product defect, identify the project-approved repair-history owner and include it in the repair scope. A commit body, issue, pull request, or repository defect ledger is sufficient only when project instructions approve that owner. If the project requires a governed defect document, treat that document as a completion gate; a commit body cannot replace it.
+Before editing an established product defect, identify the project-approved repair-history owner and include it in the repair scope. A commit body, issue, pull request, or repository defect ledger is sufficient only when project instructions approve that owner. For a first-occurrence `L1` or `L2` repair, prefer an existing commit, pull request, or task record; do not create a standalone governed defect document unless project instructions explicitly require one. If the project requires such a document, treat it as a completion gate; a commit body cannot replace it.
 
-For every established product defect, produce a compact record with:
+For a first-occurrence `L1` or `L2` repair, keep the record to observed versus
+expected behavior, the repaired invariant, affected scope, verification, and
+compatibility. For `L3`, `L4`, suspected or confirmed recurrence, or a
+project-required defect ledger, produce a compact record with:
 
 - failure family and decision point;
 - observed behavior and affected scope;
@@ -86,4 +123,9 @@ When a project uses a repository defect ledger, prefer one compact file per defe
 
 ## Deliver
 
-Lead with the diagnosis or highest-signal recurring family. Report evidence, confidence, classification, recurrence, proximate and systemic cause, ownership verdict, repair plan when requested, history record, next-unseen-case result, validation, breaking changes, compatibility, and unresolved blockers. When a new product defect is established, make `Test escape analysis` the final analytical section.
+Lead with the diagnosis or highest-signal recurring family. Report the selected
+tier, evidence, confidence, applicable cause and recurrence findings, repair
+plan when requested, verification at that tier, escalation triggers, breaking
+changes, compatibility, and unresolved blockers. Include test escape analysis
+only to the depth actually inspected; do not make a simple repair report carry
+fields that are immaterial at its tier.
