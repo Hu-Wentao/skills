@@ -211,6 +211,7 @@ tasks:
             "port-allocation",
             "resource-diagnosis",
             "release-deployment",
+            "test-case-development",
         ):
             first = self.run_resolver("--task", task)
             second = self.run_resolver("--task", task)
@@ -407,6 +408,32 @@ tasks:
                 "enum"
             ],
             ["lite", "catalog", "bounded"],
+        )
+
+    def test_missing_test_case_task_uses_managed_read_only_contract(self) -> None:
+        self.write_port_config()
+        result = self.run_resolver(
+            "--task", "test-case-development", "--format", "json"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["workflow"]["mode"], "managed")
+        self.assertEqual(
+            manifest["workflow"]["configuration"], "project_config_required"
+        )
+        self.assertEqual(
+            manifest["contract"]["id"],
+            "project-governance.test-case-development.managed.v1",
+        )
+        self.assertEqual(
+            set(manifest["contract"]["operations"]),
+            {"inspect", "plan", "verify"},
+        )
+        self.assertTrue(
+            all(
+                operation["mutability"] == "read_only"
+                for operation in manifest["contract"]["operations"].values()
+            )
         )
 
     def test_v3_rejects_missing_executor(self) -> None:

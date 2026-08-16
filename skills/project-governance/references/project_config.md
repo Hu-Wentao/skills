@@ -22,14 +22,16 @@ mdq:
 
 This skill consumes optional repository-owned configuration for
 `defect-feedback-lifecycle`, `defect-diagnosis`, `defect-history-review`,
-`document-audit`, `document-maintenance`, `release-deployment`, and
-`port-allocation` through the configuration mechanism supplied by `skillcraft`.
+`document-audit`, `document-maintenance`, `domain-knowledge`,
+`release-deployment`, `test-case-development`, and `port-allocation` through
+the configuration mechanism supplied by `skillcraft`.
 The mechanism belongs to `skillcraft`; it is not a Project Governance domain
 or a Project-Skill Governance capability.
 
 ```text
 .agents/skills-config/project-governance/
 ├── config.yaml
+├── test-case-workflow.json
 └── <profile>.md
 ```
 
@@ -100,6 +102,44 @@ project-neutral contract with `inspect`, `plan`, `maintain`, and `verify`.
 Project configuration is required only when the repository needs different
 governed roots, status vocabularies, or deterministic document commands. The
 legacy `document-audit` task may remain configured during migration.
+
+When `test-case-development` is not configured in `config.yaml`, the skill also
+supplies a managed read-only contract with `inspect`, `plan`, and `verify`.
+Catalog paths and schema mappings live in the independent sidecar below, so a
+project does not need to adopt the PPISS-bearing v3 configuration merely to use
+test cases. The `requirement_authority` field is an explicit project decision,
+not a value inferred from requirement-like strings inside the catalog.
+
+```json
+{
+  "schema": "project-governance.test-case-workflow.v1",
+  "profile": "example-project",
+  "catalogs": {
+    "app": {
+      "path": "docs/verification/app-test-cases.csv",
+      "format": "csv",
+      "encoding": "utf-8",
+      "governance_document": "docs/verification/app-test-cases.md",
+      "eligible_document_statuses": ["active"],
+      "requirement_authority": "resolved",
+      "columns": {
+        "id": "CaseID",
+        "requirement": "Requirement",
+        "title": "Title",
+        "steps": "Steps",
+        "expected": "Expected",
+        "result": "Test Result"
+      }
+    }
+  }
+}
+```
+
+Required column roles are `id`, `requirement`, `title`, `steps`, `expected`,
+and `result`. Optional roles are `priority`, `preconditions`, `actual`,
+`execution_count`, `test_date`, `tester`, and `evidence`. Catalog and governance
+document paths must resolve to existing files inside the repository. The
+managed operations never write CSV results.
 
 Run the resolver adjacent to the installed skill and pass the target repository
 with `--cwd`. For v3 it validates the selected JSON task contract, returns a

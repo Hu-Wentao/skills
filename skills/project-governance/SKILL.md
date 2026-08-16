@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for plan or specification implementation in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, and archives; third-party technology assessment or replacement; verification, branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, host or Compose CPU/memory/OOM/disk incidents, resource pressure, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan and test-case development handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for implementation from a plan, specification, or governed test case in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, archives, test-case catalogs, and verification traceability; third-party technology assessment or replacement; branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, host or Compose CPU/memory/OOM/disk incidents, resource pressure, repair history, feedback rewards, or reconciliation between governance sources and implementation."
 ---
 
 # Project Governance
@@ -12,8 +12,8 @@ description: "Bootstrap, review, and maintain project architecture, governed doc
 3. Keep universal policy in this skill, project facts in repository configuration, deterministic operations in tested scripts, and runtime output in ignored caches.
 4. Preserve current terminology and authority unless the user approves a migration.
 5. Treat release, deployment, publishing, rollback, live migration, reward, and destructive authority as current-turn permissions only.
-6. When the user asks to implement a plan, specification, or implementation
-   prompt, use `git-worktree` `owner-status` on the current directory before
+6. When the user asks to implement a plan, specification, governed test case,
+   or implementation prompt, use `git-worktree` `owner-status` on the current directory before
    editing. Treat an eligible non-main worktree as this conversation's owner
    task even when the worktree existed before the conversation or was created
    outside this turn. Create an internally chosen isolation worktree with
@@ -84,6 +84,11 @@ Supported domain knowledge aliases are `domain inspect`, `domain get`,
 The managed contract defaults to `docs/domain-concepts.md` and the `lite`
 profile when a project has not registered its own `domain-knowledge` task.
 
+Supported test-case development aliases are `testcases inspect`, `testcases
+plan`, and `testcases verify`. The managed task stays read-only and requires a
+project-owned `test-case-workflow.json` before a catalog can drive
+implementation.
+
 When a repository does not register a `release-deployment` task, resolve the
 skill-owned managed contract. Do not treat a similarly named repository script
 as a substitute. Managed `inspect` and `bootstrap-plan` remain read-only;
@@ -117,6 +122,7 @@ Legacy v1/v2 profiles remain readable during migration. They return composed ins
 - For requirements, baselines, plans, archives, lifecycle, or verification ownership, read [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md) as needed.
 - For project-wide documentation inventory, missing or invalid `mdq` contracts, stale lifecycle state, link and index drift, or authorized documentation cleanup, resolve `document-maintenance` and read [document-maintenance.md](references/document-maintenance.md).
 - For ubiquitous language, stable concept identifiers, aliases, bounded-context ownership, glossaries, or semantic relationships, resolve `domain-knowledge` and read [domain-knowledge.md](references/domain-knowledge.md). Keep requirements, baselines, plans, code, and tests authoritative for their own facts.
+- For development or verification from a project test-case catalog, resolve `test-case-development` and read [test-case-development.md](references/test-case-development.md). Keep requirements, accepted baselines, contracts, and explicit product decisions above test cases in the authority order.
 - For defects, recurrence, root cause, repair design, history, and test escape, resolve `defect-diagnosis` or `defect-history-review`; read [defect-governance.md](references/defect-governance.md) for semantic judgment.
 - For feedback triage, reward approval, repair-to-release handoff, or closure, resolve `defect-feedback-lifecycle`; read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md) at authority transitions.
 - For host or Compose availability, CPU, memory, OOM, disk, restart, exit, capacity, or resource-pressure diagnosis, resolve `resource-diagnosis`; read [resource-diagnostics.md](references/resource-diagnostics.md) and use the project-owned collector profile.
@@ -160,6 +166,7 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
   authorized and separately reported operation.
 - Do not classify a defect root cause, recurrence, ownership, requirement status, priority, or breaking-change acceptance from a script result alone.
 - Do not turn passing checks into automatic proof of product semantics or deployment success.
+- Do not let a test case create requirements, override a higher-authority source, activate lifecycle state, or authorize release. Treat `draft_unreviewed`, unresolved requirement authority, or semantic conflict as `decision_required` for test-case-driven implementation.
 - Stop for a decision when resolution would change user outcomes, permissions, data guarantees, compatibility, accepted Git history, or release identity.
 
 ## Govern Documents
@@ -219,6 +226,25 @@ apply only the approved semantic edits, then run `domain verify`. A missing
 default concept document is `not_configured`, not a failure for an existing
 project. Scripts verify structure and relationships, while AI and project
 stakeholders decide meanings, context boundaries, and accepted terminology.
+
+## Govern Test-Case Development
+
+Use `testcases inspect` to resolve the project-owned catalog, governance status,
+column mapping, stable IDs, and source snapshot. Use `testcases plan` for one
+impact-selected case before implementation. Proceed only when the operation
+returns `implementation_preflight_ready` and semantic comparison with the
+applicable requirements, baselines, contracts, code, and executable tests finds
+no conflict. Structural readiness never replaces that AI and stakeholder
+judgment.
+
+Use the normal worktree-owned implementation workflow after the case passes the
+gate. Assign the smallest verification owner described in
+[verification-traceability.md](references/verification-traceability.md), run
+the affected checks, then use `testcases verify` to read the latest result
+snapshot. PASS is evidence for the selected behavior and environment only; it
+does not complete the requirement, plan, product, or release. Result recording
+is a separately authorized project write and is intentionally outside the
+managed contract.
 
 ## Govern Git, Releases, and Deployment
 

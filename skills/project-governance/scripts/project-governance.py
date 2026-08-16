@@ -29,6 +29,9 @@ ALIASES = {
     ("domain", "maintain"): ("domain-knowledge", "maintain"),
     ("domain", "verify"): ("domain-knowledge", "verify"),
     ("git", "snapshot"): ("git-snapshot", "snapshot"),
+    ("testcases", "inspect"): ("test-case-development", "inspect"),
+    ("testcases", "plan"): ("test-case-development", "plan"),
+    ("testcases", "verify"): ("test-case-development", "verify"),
     ("release", "sync-main-plan"): ("release-deployment", "sync-main-plan"),
     ("release", "sync-main"): ("release-deployment", "sync-main"),
     ("release", "inspect"): ("release-deployment", "inspect"),
@@ -185,7 +188,16 @@ def main() -> int:
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument(
         "domain",
-        choices=("defect", "docs", "domain", "git", "release", "resource", "execute"),
+        choices=(
+            "defect",
+            "docs",
+            "domain",
+            "git",
+            "release",
+            "resource",
+            "testcases",
+            "execute",
+        ),
     )
     parser.add_argument("action", nargs="?")
     parser.add_argument("--task")

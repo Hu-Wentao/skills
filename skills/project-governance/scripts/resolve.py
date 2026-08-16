@@ -14,7 +14,7 @@ from typing import Any
 
 
 SKILL_NAME = "project-governance"
-RESOLVER_VERSION = "10"
+RESOLVER_VERSION = "11"
 DEFAULT_BASES = {
     "defect-feedback-lifecycle": "references/defect-feedback-lifecycle.md",
     "defect-diagnosis": "references/defect-governance.md",
@@ -26,6 +26,7 @@ DEFAULT_BASES = {
     "port-allocation": "references/port-allocation.md",
     "resource-diagnosis": "references/resource-diagnostics.md",
     "release-deployment": "references/release-deployment.md",
+    "test-case-development": "references/test-case-development.md",
 }
 PORT_INSTANCES = {
     "local_dev": 0,
@@ -979,6 +980,106 @@ def managed_domain_knowledge_contract(
     )
 
 
+def managed_test_case_development_contract(
+    repo_root: Path, skill_root: Path
+) -> dict[str, Any]:
+    """Return the project-neutral read-only test-case development contract."""
+
+    script = str(skill_root / "scripts" / "test-case-workflow.py")
+    catalog = {
+        "flag": "--catalog",
+        "type": "string",
+        "required": True,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    }
+    case_id = {
+        "flag": "--case-id",
+        "type": "string",
+        "required": True,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    }
+
+    def operation(
+        name: str,
+        description: str,
+        parameters: dict[str, Any],
+        success: str,
+        incomplete: str,
+        next_states: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "description": description,
+            "command": [
+                sys.executable,
+                script,
+                name,
+                "--root",
+                str(repo_root),
+            ],
+            "mutability": "read_only",
+            "authorization": "none",
+            "parameters": parameters,
+            "output_schema": "project-governance.test-case-development.v1",
+            "exit_codes": {
+                "0": success,
+                "1": incomplete,
+                "2": "test_case_development_failed",
+            },
+            "next_states": next_states,
+        }
+
+    raw = {
+        "schema": "project-governance.task-contract.v1",
+        "id": "project-governance.test-case-development.managed.v1",
+        "task": "test-case-development",
+        "operations": {
+            "inspect": operation(
+                "inspect",
+                "Inspect one governed test-case catalog or selected stable case without changing project state.",
+                {
+                    "catalog": catalog,
+                    "case_id": {
+                        **case_id,
+                        "required": False,
+                    },
+                    "limit": {
+                        "flag": "--limit",
+                        "type": "integer",
+                        "required": False,
+                        "default": 0,
+                    },
+                },
+                "test_case_catalog_inspected",
+                "test_case_catalog_not_configured",
+                ["test_case_development_plan", "resolve_test_case_authority"],
+            ),
+            "plan": operation(
+                "plan",
+                "Preflight one stable test case as an implementation input while preserving higher product authority.",
+                {"catalog": catalog, "case_id": case_id},
+                "test_case_implementation_preflight_ready",
+                "test_case_decision_required",
+                ["semantic_review", "implement_impact_selected_behavior"],
+            ),
+            "verify": operation(
+                "verify",
+                "Read the selected case's result snapshot without inferring requirement or release completion.",
+                {"catalog": catalog, "case_id": case_id},
+                "test_case_verification_evidence_available",
+                "test_case_verification_incomplete",
+                ["report_verification_evidence", "resolve_verification_gap"],
+            ),
+        },
+    }
+    return normalize_contract(
+        raw,
+        task="test-case-development",
+        repo_root=repo_root,
+        skill_root=skill_root,
+        field="managed test-case development contract",
+    )
+
+
 def normalize_port_config(value: Any) -> dict[str, Any]:
     ports = require_mapping(value, "ports")
     require_exact_keys(
@@ -1127,6 +1228,7 @@ def resolve_task(
     managed_release = False
     managed_document_maintenance = False
     managed_domain_knowledge = False
+    managed_test_case_development = False
     if config:
         schema = config.get("schema")
         if schema == f"{SKILL_NAME}.config.v1":
@@ -1163,10 +1265,12 @@ def resolve_task(
             "release-deployment",
             "document-maintenance",
             "domain-knowledge",
+            "test-case-development",
         }:
             managed_release = task == "release-deployment"
             managed_document_maintenance = task == "document-maintenance"
             managed_domain_knowledge = task == "domain-knowledge"
+            managed_test_case_development = task == "test-case-development"
             task_config = {}
         else:
             task_config = require_mapping(raw_task_config, f"tasks.{task}")
@@ -1184,6 +1288,7 @@ def resolve_task(
         managed_release = task == "release-deployment"
         managed_document_maintenance = task == "document-maintenance"
         managed_domain_knowledge = task == "domain-knowledge"
+        managed_test_case_development = task == "test-case-development"
 
     base_value = str(task_config.get("base", DEFAULT_BASES[task]))
     base_path = resolve_path(base_value, skill_root, f"tasks.{task}.base")
@@ -1204,6 +1309,7 @@ def resolve_task(
         sources["profile"] = display_path(profile_path, repo_root)
 
     contract: dict[str, Any] | None = None
+    test_case_config_text = ""
     if managed_release:
         contract = managed_release_contract(repo_root, skill_root)
         release_config_path = config_root / "release-workflow.json"
@@ -1228,6 +1334,21 @@ def resolve_task(
         workflow = {
             "mode": "managed",
             "configuration": "project_defaults",
+        }
+    elif managed_test_case_development:
+        contract = managed_test_case_development_contract(repo_root, skill_root)
+        release_config_text = ""
+        test_case_config_path = config_root / "test-case-workflow.json"
+        if test_case_config_path.is_file():
+            test_case_config_text = test_case_config_path.read_text(encoding="utf-8")
+            sources["test_case_config"] = display_path(
+                test_case_config_path, repo_root
+            )
+        workflow = {
+            "mode": "managed",
+            "configuration": (
+                "present" if test_case_config_text else "project_config_required"
+            ),
         }
     elif config_schema == f"{SKILL_NAME}.config.v3":
         contract_path = resolve_path(
@@ -1274,6 +1395,7 @@ def resolve_task(
             "ports": port_config,
             "config": config_text,
             "release_config": release_config_text,
+            "test_case_config": test_case_config_text,
         }
         digest = hashlib.sha256(
             json.dumps(hash_input, sort_keys=True).encode("utf-8")

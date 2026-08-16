@@ -291,6 +291,57 @@ tasks:
         self.assertEqual(allowed_report["state"], "maintenance_scope_ready")
         self.assertTrue(allowed_report["ready_to_create"])
 
+    def test_testcases_plan_alias_preserves_higher_authority_gate(self) -> None:
+        docs = self.root / "docs" / "verification"
+        docs.mkdir(parents=True)
+        (docs / "cases.md").write_text(
+            "---\nstatus: active\n---\n# Cases\n", encoding="utf-8"
+        )
+        (docs / "cases.csv").write_text(
+            "CaseID,Requirement,Title,Steps,Expected,Result\n"
+            "TC-001,REQ-001,Valid login,Log in,Home is visible,\n",
+            encoding="utf-8",
+        )
+        config_root = (
+            self.root / ".agents" / "skills-config" / "project-governance"
+        )
+        (config_root / "test-case-workflow.json").write_text(
+            json.dumps(
+                {
+                    "schema": "project-governance.test-case-workflow.v1",
+                    "profile": "test",
+                    "catalogs": {
+                        "app": {
+                            "path": "docs/verification/cases.csv",
+                            "format": "csv",
+                            "encoding": "utf-8",
+                            "governance_document": "docs/verification/cases.md",
+                            "eligible_document_statuses": ["active"],
+                            "requirement_authority": "resolved",
+                            "columns": {
+                                "id": "CaseID",
+                                "requirement": "Requirement",
+                                "title": "Title",
+                                "steps": "Steps",
+                                "expected": "Expected",
+                                "result": "Result",
+                            },
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.invoke(
+            "testcases", "plan", "--catalog", "app", "--case-id", "TC-001"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["state"], "implementation_preflight_ready")
+        self.assertFalse(report["policy"]["test_cases_define_product_semantics"])
+
 
 if __name__ == "__main__":
     unittest.main()
