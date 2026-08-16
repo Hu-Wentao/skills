@@ -121,8 +121,10 @@ Keep route exclusion, proxy bypass, and rule policy as separate concepts:
 - `tun-excluded-routes` bypasses the packet tunnel. Do not place
   `100.64.0.0/10` or the Tailscale IPv6 range `fd7a:115c:a1e0::/48` there when
   the tunnel is expected to reach the tailnet. On macOS, an exclusion can
-  materialize as a route through a physical interface such as `en0`, defeating
-  either the official or embedded Tailscale path.
+  materialize as a route through a physical interface such as `en0` and can
+  divert unmatched or fallback traffic. Treat that route as a risk signal, not
+  standalone proof that an embedded `TAILSCALE` action was bypassed; verify the
+  effective rule modifiers and end-to-end result.
 - `skip-proxy` skips an application's proxy interface and hands traffic to its
   TUN processing. It does not necessarily mean plain Internet `DIRECT`.
   Therefore, a proxy app that documents these semantics can keep
@@ -147,6 +149,21 @@ DOMAIN,admin.example.internal,TAILSCALE
 IP-CIDR,100.64.0.0/10,TAILSCALE,no-resolve
 ```
 
+In Shadowrocket's rule editor, explicitly enable **No Resolve** for every
+`IP-CIDR` rule that dispatches to the embedded `TAILSCALE` module. This UI
+checkbox emits the `no-resolve` modifier; the policy name alone is not enough.
+Verify the compiled rule contains the complete form shown above. A log result
+such as `IP-CIDR,100.107.15.35/10,TAILSCALE,` proves that `TAILSCALE` was
+selected but also reveals that `no-resolve` is absent. In observed failures,
+that omission allowed hostname resolution to occur before the embedded route
+handoff, followed by `tailscale route unavailable`, local proxy `503`, or
+browser `ERR_CONNECTION_CLOSED`; enabling **No Resolve** restored the path.
+
+Prefer a canonical network prefix in the rule: use `100.64.0.0/10` for the
+whole Tailscale IPv4 range or an exact `/32` for one node. Do not use a node
+address with `/10`, such as `100.107.15.35/10`, even if the application masks
+it to the same network; the noncanonical form obscures the intended scope.
+
 Remove or override any competing
 `IP-CIDR,100.64.0.0/10,DIRECT,no-resolve` rule. Keep
 `100.64.0.0/10` out of `tun-excluded-routes`; retaining it in `skip-proxy` is
@@ -170,8 +187,10 @@ independently and preserve timestamps:
    HTTP or SOCKS proxy. A clean direct series with intermittent proxy failures
    localizes the incident to the client proxy or tunnel path.
 3. Inspect `route -n get <tailscale-ip>` and the full route table. The selected
-   route must terminate at the intended Tailscale or embedded tunnel, not a
-   physical interface created by an exclusion.
+   route should terminate at the intended Tailscale or embedded tunnel. When an
+   embedded policy intercepts before operating-system routing, correlate a
+   physical-interface route with the compiled `TAILSCALE,no-resolve` rule and
+   actual request log instead of declaring the route causal by itself.
 4. Compare public or authoritative DNS with the system resolver. A packet
    tunnel can return a synthetic address from a Fake-IP range such as
    `198.18.0.0/15`; this is not a root cause by itself. Verify the tunnel's
@@ -206,7 +225,10 @@ Repeatedly saving partial changes can extend the outage window.
 
 After recovery, verify all of the following:
 
-- the effective route no longer sends tailnet ranges to a physical interface;
+- every Shadowrocket `IP-CIDR` rule targeting embedded Tailscale includes the
+  effective `no-resolve` modifier, not only a `TAILSCALE` policy label;
+- tailnet traffic reaches the intended owner; any physical-interface route is
+  either removed or proven not to apply to the matched embedded flow;
 - compiled rules select the intended `TAILSCALE` or operating-system `DIRECT`
   owner for both exact domains and addresses;
 - direct, browser, CLI, and explicitly proxied paths behave as designed across
