@@ -2,7 +2,7 @@
 
 Use this reference for client installation and update readiness, tailnet grants,
 ACLs, policy tests, device tags, Tailscale SSH, routes, exit nodes, Funnel, app
-connectors, and node preferences.
+connectors, node preferences, and same-device VPN or proxy coexistence.
 
 ## Delegate when possible
 
@@ -89,6 +89,141 @@ An in-band client upgrade can briefly drop the same Tailscale path used to
 manage the host. Keep the previous install artifact or version available,
 preserve an out-of-band console, and use a detached host-local install job when
 a controller pushes an update over Tailscale.
+
+## Diagnose same-device VPN and proxy conflicts
+
+Treat intermittent access from a device running another VPN, packet tunnel, or
+local HTTP/SOCKS proxy as a client dataplane incident until evidence proves a
+host failure. Tailscale cannot reliably coexist with every VPN-style product,
+and some operating systems limit how multiple network extensions register
+routes or DNS handlers.
+
+Before changing either endpoint:
+
+1. Record the operating system, Tailscale version, proxy or VPN application
+   version, enabled network extensions, and current connection state.
+2. Identify which single component is intended to own tailnet traffic: the
+   official Tailscale client or an embedded Tailscale module in the proxy app.
+   Prefer one active owner. If both products are installed, prove that only the
+   chosen owner is connected rather than assuming installation implies use.
+3. Capture the effective route table, compiled rule result, active proxy
+   environment, application proxy settings, and relevant tunnel logs. Redact
+   auth keys, node credentials, proxy credentials, headers, and private request
+   content.
+4. Do not infer that both Tailscale implementations were active solely from a
+   UDP `41641` bind conflict. A tunnel reload or stale socket handoff can produce
+   the same symptom; correlate it with process state and timestamps.
+
+### Assign `100.64.0.0/10` to the intended owner
+
+Keep route exclusion, proxy bypass, and rule policy as separate concepts:
+
+- `tun-excluded-routes` bypasses the packet tunnel. Do not place
+  `100.64.0.0/10` or the Tailscale IPv6 range `fd7a:115c:a1e0::/48` there when
+  the tunnel is expected to reach the tailnet. On macOS, an exclusion can
+  materialize as a route through a physical interface such as `en0`, defeating
+  either the official or embedded Tailscale path.
+- `skip-proxy` skips an application's proxy interface and hands traffic to its
+  TUN processing. It does not necessarily mean plain Internet `DIRECT`.
+  Therefore, a proxy app that documents these semantics can keep
+  `100.64.0.0/10` in `skip-proxy` while removing it from
+  `tun-excluded-routes`.
+- `DIRECT` and an embedded `TAILSCALE` policy are not interchangeable. Select
+  them according to the actual tailnet owner.
+
+When the official Tailscale client owns the tailnet and the other application
+is only a proxy, bypass that proxy for exact tailnet domains and addresses. Use
+the proxy application's `DIRECT` policy where that means returning traffic to
+the operating-system route table, and add exact custom tailnet hostnames and IP
+addresses to CLI `NO_PROXY` configuration. Remove unnecessary HTTP/SOCKS
+`ProxyCommand` directives from direct Tailscale SSH aliases.
+
+When Shadowrocket's embedded Tailscale module owns the tailnet, route both the
+address range and any custom hostname that resolves to a Tailscale address to
+its `TAILSCALE` policy. A minimal rule shape is:
+
+```text
+DOMAIN,admin.example.internal,TAILSCALE
+IP-CIDR,100.64.0.0/10,TAILSCALE,no-resolve
+```
+
+Remove or override any competing
+`IP-CIDR,100.64.0.0/10,DIRECT,no-resolve` rule. Keep
+`100.64.0.0/10` out of `tun-excluded-routes`; retaining it in `skip-proxy` is
+compatible with Shadowrocket's documented distinction between proxy bypass and
+TUN route exclusion. Treat these names and rule actions as version-specific:
+inspect the active version's compiled configuration and logs after every
+change.
+
+### Isolate the failing layer
+
+Use repeated probes instead of a single successful request. Test these paths
+independently and preserve timestamps:
+
+1. On the server, probe the loopback upstream and the listener bound to the
+   server's Tailscale address. Confirm the expected listener, certificate,
+   reverse-proxy status, and application response. A redirect such as HTTP
+   `307` can be a healthy application response when it matches the service
+   contract.
+2. On the client, bypass explicit proxies and pin the hostname to its real
+   Tailscale address. Then repeat the same request through the configured local
+   HTTP or SOCKS proxy. A clean direct series with intermittent proxy failures
+   localizes the incident to the client proxy or tunnel path.
+3. Inspect `route -n get <tailscale-ip>` and the full route table. The selected
+   route must terminate at the intended Tailscale or embedded tunnel, not a
+   physical interface created by an exclusion.
+4. Compare public or authoritative DNS with the system resolver. A packet
+   tunnel can return a synthetic address from a Fake-IP range such as
+   `198.18.0.0/15`; this is not a root cause by itself. Verify the tunnel's
+   internal mapping, matched rule, and final real destination.
+5. Inspect shell `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`
+   behavior separately from browser traffic. Also inspect SSH configuration
+   for an explicit local proxy command. Browser success does not prove a CLI
+   request avoided a local proxy, and the reverse is also true.
+
+Correlate failures with client logs. High-value signatures include:
+
+- network-setting reassertion or tunnel reload followed by embedded Tailscale
+  stop/start events;
+- repeated `tailscale route unavailable` or equivalent route-readiness errors;
+- UDP `41641` bind failure followed by fallback to an ephemeral port;
+- `magicsock`, STUN, UDP-path, control-plane reconnect, or DERP transition
+  failures; and
+- local proxy `CONNECT` or SOCKS timeouts for a tailnet destination.
+
+These signatures indicate a client tunnel handoff, routing, or proxy problem;
+they do not prove that the remote service is down. If server-side loopback and
+Tailscale-listener probes remain clean during the same window, do not repair or
+redeploy the host merely to address the client symptom.
+
+### Recover and verify
+
+Change supported UI or plain-text configuration rather than editing an
+application's compiled database. Saving network settings can reload an
+embedded Tailscale module, so make one coherent change, restart the owning
+application once when required, and wait for route readiness before testing.
+Repeatedly saving partial changes can extend the outage window.
+
+After recovery, verify all of the following:
+
+- the effective route no longer sends tailnet ranges to a physical interface;
+- compiled rules select the intended `TAILSCALE` or operating-system `DIRECT`
+  owner for both exact domains and addresses;
+- direct, browser, CLI, and explicitly proxied paths behave as designed across
+  repeated requests;
+- no prolonged route-unavailable, socket-handoff, or proxy timeout sequence
+  appears after the final reload; and
+- custom hostnames still resolve to the intended Tailscale address when checked
+  outside any Fake-IP resolver.
+
+Consult Tailscale's
+[software interoperability](https://tailscale.com/docs/reference/interoperability)
+and [DERP routing troubleshooting](https://tailscale.com/docs/reference/troubleshooting/network-configuration/derp-routing)
+guidance for current platform behavior. For Shadowrocket-specific settings,
+verify the active release against its community-maintained
+[configuration wiki](https://github.com/LOWERTOP/Shadowrocket/wiki), especially
+the documented difference between `skip-proxy`, `tun-excluded-routes`, and the
+embedded Tailscale module.
 
 ## Plan and apply
 
