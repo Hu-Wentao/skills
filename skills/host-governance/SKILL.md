@@ -177,6 +177,11 @@ because the one-off command would be shorter.
 - Never treat a live service inventory as a desired declaration or use a single
   point-in-time sample as proof of long-term capacity. Report freshness and
   missing historical evidence explicitly.
+- Never recommend or apply fixed PostgreSQL memory, connection, checkpoint, or
+  WAL settings without first running the hardware-aware sizing workflow in
+  [postgresql.md](references/postgresql.md). A shared host defaults to the
+  conservative eligible option; balanced and dedicated options require their
+  declared evidence and may not be selected merely because startup succeeds.
 - Snapshot the exact current resource and keep a tested recovery path before a
   shared configuration change.
 - Require one host-owned serialized transaction for each shared-resource
@@ -235,7 +240,9 @@ because the one-off command would be shorter.
    - GitHub Actions self-hosted runner installation or lifecycle: read
      [github-actions-runner.md](references/github-actions-runner.md).
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
-   - Shared PostgreSQL service deployment or lifecycle: read [postgresql.md](references/postgresql.md).
+   - Shared PostgreSQL service deployment, sizing, parameter changes, or lifecycle:
+     read [postgresql.md](references/postgresql.md) and run
+     `scripts/postgres_sizing.py` before rendering configuration.
    - Jenkins installation, upgrades, security, nodes, credentials, jobs, or
      Android/iOS packaging: read [jenkins.md](references/jenkins.md).
    - Tailscale installation, update readiness, policy, or node settings: read

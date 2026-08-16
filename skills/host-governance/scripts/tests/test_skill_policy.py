@@ -129,6 +129,30 @@ class SkillPolicyTest(unittest.TestCase):
             " ".join(reference.split()),
         )
 
+    def test_postgres_parameters_require_hardware_aware_sizing(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (SKILL_ROOT / "references" / "postgresql.md").read_text(
+            encoding="utf-8"
+        )
+        script = (SKILL_ROOT / "scripts" / "postgres_sizing.py").read_text(
+            encoding="utf-8"
+        )
+        normalized_skill = " ".join(skill.split())
+        for phrase in (
+            "Never recommend or apply fixed PostgreSQL",
+            "scripts/postgres_sizing.py",
+            "shared host defaults to the conservative eligible option",
+        ):
+            self.assertIn(phrase, normalized_skill)
+        for phrase in (
+            "effective_cache_size` only as a planner estimate",
+            "Derive `work_mem`",
+            "max_wal_size` as a soft limit",
+            "Reject a pool larger than the hardware option",
+        ):
+            self.assertIn(phrase, reference)
+        self.assertIn("host-governance.postgres-sizing.v1", script)
+
 
 if __name__ == "__main__":
     unittest.main()
