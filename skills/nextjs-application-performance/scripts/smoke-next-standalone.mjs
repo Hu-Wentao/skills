@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { auditStandaloneRoot, formatFailures, loadStandaloneContract } from "./audit-standalone-closure.mjs";
 
 const OUTPUT_LIMIT = 64 * 1024;
+const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+const MAX_REQUEST_TIMEOUT_MS = 120_000;
 
 function parseArgs(argv) {
   const options = { manifest: "", app: "", standaloneRoot: "", json: false };
@@ -48,10 +50,18 @@ async function stopChild(child) {
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
-async function fetchStatus(url) {
-  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5000) });
+async function fetchStatus(url, timeoutMs) {
+  const response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
   await response.body?.cancel();
   return response.status;
+}
+
+function requestTimeout(value, fallback, label) {
+  const timeoutMs = value ?? fallback;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_REQUEST_TIMEOUT_MS) {
+    throw new Error(`${label} must be an integer from 1 through ${MAX_REQUEST_TIMEOUT_MS}`);
+  }
+  return timeoutMs;
 }
 
 export async function smokeStandalone({ app, standaloneRoot }) {
@@ -69,6 +79,11 @@ export async function smokeStandalone({ app, standaloneRoot }) {
   if (!Array.isArray(runtime.routes) || runtime.routes.length === 0) {
     throw new Error(`${app.id}.runtime.routes must be non-empty`);
   }
+  const routeTimeoutMs = requestTimeout(
+    runtime.routeTimeoutMs,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+    `${app.id}.runtime.routeTimeoutMs`,
+  );
   const port = runtime.port ?? await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   let output = "";
@@ -93,7 +108,11 @@ export async function smokeStandalone({ app, standaloneRoot }) {
   try {
     while (Date.now() < deadline && !earlyExit) {
       try {
-        readyStatus = await fetchStatus(`${origin}${runtime.readyPath}`);
+        const remainingMs = Math.max(1, deadline - Date.now());
+        readyStatus = await fetchStatus(
+          `${origin}${runtime.readyPath}`,
+          Math.min(DEFAULT_REQUEST_TIMEOUT_MS, remainingMs),
+        );
         if ((runtime.readyStatuses ?? [200]).includes(readyStatus)) break;
       } catch {
         // Server startup is polled until the configured deadline.
@@ -112,13 +131,27 @@ export async function smokeStandalone({ app, standaloneRoot }) {
         throw new Error(`${app.id}.runtime.routes entries require path and statuses`);
       }
       let status;
+      const startedAt = Date.now();
       try {
-        status = await fetchStatus(`${origin}${route.path}`);
+        status = await fetchStatus(`${origin}${route.path}`, routeTimeoutMs);
       } catch (error) {
-        routes.push({ path: route.path, status: null, passed: false, error: error.message });
+        routes.push({
+          path: route.path,
+          status: null,
+          passed: false,
+          timeoutMs: routeTimeoutMs,
+          durationMs: Date.now() - startedAt,
+          error: error.message,
+        });
         continue;
       }
-      routes.push({ path: route.path, status, passed: route.statuses.includes(status) });
+      routes.push({
+        path: route.path,
+        status,
+        passed: route.statuses.includes(status),
+        timeoutMs: routeTimeoutMs,
+        durationMs: Date.now() - startedAt,
+      });
     }
     return {
       schema: "nextjs-standalone-smoke.v1",

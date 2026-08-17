@@ -123,6 +123,13 @@ the declared readiness route, and fetch every declared route with its exact
 allowed status. Smoke proves startup and selected route loading; it does not
 replace authentication, database, or browser E2E coverage.
 
+The optional runtime-level `routeTimeoutMs` applies to each declared smoke
+route and must be an integer from 1 through 120000; it defaults to 5000. Use a
+larger bounded value only when a cold production route is expected to remain
+correct under declared build contention. The structured result records the
+deadline and observed duration, so this artifact-availability gate does not
+silently become a page-performance SLO or an unbounded wait.
+
 ## Constrained Cold Build Evidence
 
 Run the build probe inside the actual cgroup v2 container. The probe refuses

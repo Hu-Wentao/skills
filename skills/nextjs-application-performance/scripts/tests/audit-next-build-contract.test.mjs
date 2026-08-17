@@ -237,6 +237,32 @@ test("runtime smoke starts the isolated standalone tree and checks declared rout
   assert.equal(result.status, "passed", JSON.stringify(result, null, 2));
 });
 
+test("runtime smoke enforces the project-declared route deadline", async (t) => {
+  const root = setupFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const traces = path.join(root, "standalone/traces");
+  fs.mkdirSync(traces);
+  fs.writeFileSync(path.join(traces, "server.js.nft.json"), '{"version":1,"files":["../server.js"]}\n');
+  fs.rmSync(path.join(root, "standalone/missing-dependency.cjs"));
+  fs.writeFileSync(path.join(root, "standalone/server.js"), `
+    import http from "node:http";
+    http.createServer((request, response) => {
+      const finish = () => { response.statusCode = 200; response.end("fixture"); };
+      if (request.url === "/slow") setTimeout(finish, 100);
+      else finish();
+    }).listen(Number(process.env.PORT), process.env.HOSTNAME);
+  `);
+  const app = manifestFor(root).apps[0];
+  app.runtime.routeTimeoutMs = 25;
+  app.runtime.routes = [{ path: "/slow", statuses: [200] }];
+  const result = await smokeStandalone({ app, standaloneRoot: path.join(root, "standalone") });
+  assert.equal(result.status, "failed", JSON.stringify(result, null, 2));
+  assert.equal(result.reason, "route_failed");
+  assert.equal(result.routes[0].timeoutMs, 25);
+  assert.equal(result.routes[0].status, null);
+  assert.match(result.routes[0].error, /timeout|aborted/iu);
+});
+
 test("build exit classification distinguishes cgroup OOM, V8 heap OOM, and bare 137", () => {
   assert.equal(classifyBuildExit({ code: 137, signal: null, output: "", oomDelta: 1, oomKillDelta: 1 }), "cgroup_oom");
   assert.equal(classifyBuildExit({ code: 134, signal: null, output: "FATAL ERROR: Reached heap limit", oomDelta: 0, oomKillDelta: 0 }), "v8_heap_oom");
