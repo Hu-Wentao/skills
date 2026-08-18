@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, and Access. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, Access, WAF/Rulesets, and selective Cloudflare HTTP 403 diagnosis. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, Cloudflare security-event or WAF diagnosis, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
 ---
 
 # Host Governance
@@ -247,7 +247,7 @@ because the one-off command would be shorter.
      Android/iOS packaging: read [jenkins.md](references/jenkins.md).
    - Tailscale installation, update readiness, policy, or node settings: read
      [tailscale.md](references/tailscale.md).
-   - Cloudflare accounts, zones, DNS, or Terraform state: read
+   - Cloudflare accounts, zones, DNS, WAF/Rulesets, selective edge blocks, or Terraform state: read
      [cloudflare.md](references/cloudflare.md).
    - Cloudflare Tunnel public hostnames and Access protection: read
      [cloudflare-tunnel.md](references/cloudflare-tunnel.md).

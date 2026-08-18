@@ -31,6 +31,39 @@ also read [cloudflare-tunnel.md](cloudflare-tunnel.md) from the skill root.
 5. Keep state isolation aligned with the repository's account/zone/product
    ownership boundaries.
 
+## Selective edge 403 and WAF Rulesets
+
+When one SDK, User-Agent, path, or header is blocked while an equivalent request
+passes, establish a bounded differential probe first. Keep the hostname, path,
+method, body shape, and authorization constant; vary only the suspected request
+attribute. Record only status, `cf-ray`, and a redacted response classification.
+Do not place a bearer token or request body in shell history, Git, logs, or the
+final report.
+
+Use a separate Account-scoped `Account Analytics Read` Token for the Security
+Events GraphQL dataset; Zone WAF inspection/write needs the corresponding
+scoped Zone WAF permissions. Security Events can be sampled or delayed: an
+absent Ray ID is not proof that no product blocked the request. Use the
+Dashboard event for the exact Ray ID to obtain Source, Action, product/service,
+Rule ID, and rule message before a security write. Do not infer the blocking
+product from an aggregate event that merely shares a User-Agent and time window.
+
+For a proven managed-WAF block, create a Skip rule only after reading the
+current Cloudflare Rulesets documentation and current custom entry point. Keep
+its expression bounded to the exact host, path, and client signature, and skip
+only the proven phase. At the Zone Rulesets API endpoint,
+`http_request_firewall_custom` requires `kind: "zone"`; do not copy a Terraform
+provider `kind` value into a raw API request without verifying the API response.
+If a custom entry point already exists, import and reconcile it instead of
+creating over it.
+
+Never broaden a failed Skip rule into `allow`, extra phases, other products, or
+an all-path/client exception. Skip cannot bypass Bot Fight Mode. Re-read the
+created ruleset and run the original blocked signature immediately. If it is
+still edge-blocked, roll back only the ruleset/rule created by that transaction,
+then re-read the entry point. Treat an empty HTTP `204` response to a successful
+Rulesets API DELETE as success only after this re-read.
+
 ## High-risk domains
 
 Domain registration, transfer, renewal, contact changes, billing changes, zone
