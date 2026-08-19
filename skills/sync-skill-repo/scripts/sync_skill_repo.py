@@ -42,6 +42,14 @@ class Target:
     lock_path: Path | None
 
 
+@dataclass(frozen=True)
+class InstallationScope:
+    name: str
+    project_root: Path
+    lock_path: Path
+    expected_skill: Path
+
+
 def default_registry_path() -> Path:
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     return codex_home.expanduser() / "skill-source-repositories.json"
@@ -614,8 +622,180 @@ def _shared_global_skills_root() -> Path:
     return Path.home() / ".agents" / "skills"
 
 
+def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
+    if not lock_path.is_file():
+        return False
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        skills = data["skills"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise SyncError(f"Cannot inspect skill lock {lock_path}: {exc}") from exc
+    if not isinstance(skills, dict):
+        raise SyncError(f"Skill lock has no skills object: {lock_path}")
+    return skill_name in skills
+
+
+def _absolute_path(path: Path) -> Path:
+    return Path(os.path.abspath(path.expanduser()))
+
+
+def _same_location(left: Path, right: Path) -> bool:
+    left_absolute = _absolute_path(left)
+    right_absolute = _absolute_path(right)
+    if left_absolute == right_absolute:
+        return True
+    return (
+        left_absolute.name == right_absolute.name
+        and left_absolute.parent.resolve() == right_absolute.parent.resolve()
+    )
+
+
+def _project_root_from_installed_path(
+    installed_skill: Path, skill_name: str
+) -> Path | None:
+    if installed_skill.name != skill_name:
+        return None
+    skills_root = installed_skill.parent
+    agents_root = skills_root.parent
+    if skills_root.name != "skills" or agents_root.name != ".agents":
+        return None
+    return _absolute_path(agents_root.parent)
+
+
+def _active_installation(
+    skill_dir: Path, lock_path: Path, skill_name: str
+) -> bool:
+    return skill_dir.is_dir() and _lock_tracks_skill(lock_path, skill_name)
+
+
+def resolve_installation_scope(
+    installed_skill: Path,
+    skill_name: str,
+    requested_scope: str,
+    project_root: Path | None,
+    lock_override: Path | None,
+    *,
+    require_tracked: bool,
+    allow_no_project_context: bool = False,
+) -> InstallationScope:
+    installed_skill = _absolute_path(installed_skill)
+    global_skills_root = _absolute_path(_shared_global_skills_root())
+    global_skill = global_skills_root / skill_name
+    global_lock = global_skills_root.parent / ".skill-lock.json"
+
+    path_project_root = _project_root_from_installed_path(installed_skill, skill_name)
+    if installed_skill == global_skill:
+        inferred_scope = "global"
+    elif path_project_root is not None:
+        inferred_scope = "project"
+    else:
+        raise SyncError(
+            "Cannot infer installation scope from path; expected "
+            f"{global_skill} or <project>/.agents/skills/{skill_name}, not "
+            f"{installed_skill}"
+        )
+
+    if requested_scope not in {"auto", inferred_scope}:
+        raise SyncError(
+            f"Requested {requested_scope} scope conflicts with installed path "
+            f"for {inferred_scope} scope: {installed_skill}"
+        )
+
+    context_root = _absolute_path(project_root) if project_root else None
+    if (
+        inferred_scope == "global"
+        and context_root is None
+        and not allow_no_project_context
+    ):
+        raise SyncError(
+            "Global installation requires --project-root for duplicate detection "
+            "or explicit --no-project-context for a purely global operation"
+        )
+    if inferred_scope == "project":
+        assert path_project_root is not None
+        if context_root is not None and not _same_location(
+            context_root, path_project_root
+        ):
+            raise SyncError(
+                f"Project root {context_root} does not own installed skill "
+                f"{installed_skill}"
+            )
+        context_root = _absolute_path(path_project_root)
+
+    project_skill: Path | None = None
+    canonical_project_lock: Path | None = None
+    if context_root is not None:
+        project_skill = context_root / ".agents" / "skills" / skill_name
+        canonical_project_lock = context_root / "skills-lock.json"
+
+    if inferred_scope == "project":
+        assert context_root is not None
+        expected_skill = context_root / ".agents" / "skills" / skill_name
+        canonical_lock = context_root / "skills-lock.json"
+        working_root = context_root
+    else:
+        expected_skill = global_skill
+        canonical_lock = global_lock
+        working_root = context_root or global_skills_root
+
+    if lock_override is not None and not _same_location(
+        lock_override, canonical_lock
+    ):
+        raise SyncError(
+            f"Lock {lock_override.expanduser()} does not belong to "
+            f"{inferred_scope} installation {expected_skill}; expected "
+            f"{canonical_lock}"
+        )
+
+    project_lock = canonical_project_lock
+    selected_global_lock = global_lock
+    project_active = bool(
+        project_skill is not None
+        and project_lock is not None
+        and _active_installation(project_skill, project_lock, skill_name)
+    )
+    global_active = _active_installation(
+        global_skill, selected_global_lock, skill_name
+    )
+    if project_active and global_active:
+        assert project_skill is not None and project_lock is not None
+        raise SyncError(
+            f"Conflicting project and global installations for {skill_name}: "
+            f"{project_skill} ({project_lock}) and {global_skill} "
+            f"({selected_global_lock}). Remove one scope before install or refresh."
+        )
+    if not require_tracked and (
+        (inferred_scope == "project" and global_active)
+        or (inferred_scope == "global" and project_active)
+    ):
+        opposite_scope = "global" if inferred_scope == "project" else "project"
+        raise SyncError(
+            f"Cannot create {inferred_scope} installation for {skill_name}; an "
+            f"active {opposite_scope} installation already exists. Remove the "
+            "unintended scope first."
+        )
+
+    selected_lock = canonical_lock
+    if not _same_location(installed_skill, expected_skill):
+        raise SyncError(
+            f"Expected {inferred_scope} installation at {expected_skill}, "
+            f"not {installed_skill}"
+        )
+    if require_tracked and not _lock_tracks_skill(selected_lock, skill_name):
+        raise SyncError(
+            f"{inferred_scope.capitalize()} refresh requires {skill_name} in "
+            f"{selected_lock}"
+        )
+    return InstallationScope(
+        inferred_scope,
+        working_root,
+        selected_lock,
+        _absolute_path(expected_skill),
+    )
+
+
 def install_skill(args: argparse.Namespace) -> None:
-    installed_skill = Path(args.skill_dir).expanduser().resolve()
+    installed_skill = _absolute_path(Path(args.skill_dir))
     source_skill = Path(args.source_skill_dir).expanduser().resolve()
     skill_name = read_skill_name(source_skill)
     pnpm = shutil.which("pnpm")
@@ -626,37 +806,16 @@ def install_skill(args: argparse.Namespace) -> None:
     if args.agent == "*":
         raise SyncError("Install requires one explicit agent; '*' is not allowed")
 
-    if args.scope == "project":
-        if not args.project_root:
-            raise SyncError("Project installation requires --project-root")
-        project_root = Path(args.project_root).expanduser().resolve()
-        scope_arguments: list[str] = []
-        lock_path = (
-            Path(args.lock).expanduser().resolve()
-            if args.lock
-            else project_root / "skills-lock.json"
-        )
-        expected_skill = project_root / ".agents" / "skills" / skill_name
-    else:
-        global_skills_root = _shared_global_skills_root()
-        project_root = (
-            Path(args.project_root).expanduser().resolve()
-            if args.project_root
-            else global_skills_root
-        )
-        scope_arguments = ["--global"]
-        lock_path = (
-            Path(args.lock).expanduser().resolve()
-            if args.lock
-            else global_skills_root.parent / ".skill-lock.json"
-        )
-        expected_skill = global_skills_root / skill_name
-
-    if installed_skill != expected_skill.resolve():
-        raise SyncError(
-            f"Expected {args.scope} installation at {expected_skill.resolve()}, "
-            f"not {installed_skill}"
-        )
+    scope = resolve_installation_scope(
+        installed_skill,
+        skill_name,
+        args.scope,
+        Path(args.project_root) if args.project_root else None,
+        Path(args.lock) if args.lock else None,
+        require_tracked=False,
+        allow_no_project_context=getattr(args, "no_project_context", False),
+    )
+    scope_arguments = [] if scope.name == "project" else ["--global"]
 
     command = [
         pnpm,
@@ -673,16 +832,16 @@ def install_skill(args: argparse.Namespace) -> None:
     ]
     _run_installer_with_retry(
         command,
-        cwd=project_root,
+        cwd=scope.project_root,
         attempts=args.attempts,
         retry_delay=args.retry_delay,
         action=f"Installed {skill_name} for agent {args.agent}",
     )
-    _verify_installed_skill(source_skill, installed_skill, lock_path)
+    _verify_installed_skill(source_skill, installed_skill, scope.lock_path)
 
 
 def refresh_skill(args: argparse.Namespace) -> None:
-    installed_skill = Path(args.skill_dir).expanduser().resolve()
+    installed_skill = _absolute_path(Path(args.skill_dir))
     source_skill = Path(args.source_skill_dir).expanduser().resolve()
     skill_name = read_skill_name(installed_skill)
     if read_skill_name(source_skill) != skill_name:
@@ -693,36 +852,26 @@ def refresh_skill(args: argparse.Namespace) -> None:
         raise SyncError(
             "pnpm is not available; load the repository's configured nvm runtime first"
         )
-    if args.scope == "project":
-        project_root = (
-            Path(args.project_root).expanduser().resolve()
-            if args.project_root
-            else git_root(installed_skill)
-        )
-        scope_flag = "-p"
-        lock_path = (
-            Path(args.lock).expanduser().resolve()
-            if args.lock
-            else project_root / "skills-lock.json"
-        )
-    else:
-        project_root = (
-            Path(args.project_root).expanduser().resolve()
-            if args.project_root
-            else installed_skill.parent
-        )
-        scope_flag = "-g"
-        lock_path = Path(args.lock).expanduser().resolve() if args.lock else None
+    scope = resolve_installation_scope(
+        installed_skill,
+        skill_name,
+        args.scope,
+        Path(args.project_root) if args.project_root else None,
+        Path(args.lock) if args.lock else None,
+        require_tracked=True,
+        allow_no_project_context=getattr(args, "no_project_context", False),
+    )
+    scope_flag = "-p" if scope.name == "project" else "-g"
 
     command = [pnpm, "dlx", "skills", "update", skill_name, scope_flag, "-y"]
     _run_installer_with_retry(
         command,
-        cwd=project_root,
+        cwd=scope.project_root,
         attempts=args.attempts,
         retry_delay=args.retry_delay,
         action=f"Refreshed {skill_name} with scoped command",
     )
-    _verify_installed_skill(source_skill, installed_skill, lock_path)
+    _verify_installed_skill(source_skill, installed_skill, scope.lock_path)
 
 
 def sync_skill(args: argparse.Namespace) -> None:
@@ -871,8 +1020,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="pushed source skill directory used for exact comparison",
     )
-    refresh.add_argument("--scope", choices=("project", "global"), required=True)
+    refresh.add_argument(
+        "--scope", choices=("auto", "project", "global"), default="auto"
+    )
     refresh.add_argument("--project-root")
+    refresh.add_argument("--no-project-context", action="store_true")
     refresh.add_argument("--lock")
     refresh.add_argument("--attempts", type=_positive_int, default=3)
     refresh.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
@@ -887,9 +1039,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="pushed source skill directory used for exact comparison",
     )
-    install.add_argument("--scope", choices=("project", "global"), required=True)
+    install.add_argument(
+        "--scope", choices=("auto", "project", "global"), default="auto"
+    )
     install.add_argument("--agent", default="codex")
     install.add_argument("--project-root")
+    install.add_argument("--no-project-context", action="store_true")
     install.add_argument("--lock")
     install.add_argument("--attempts", type=_positive_int, default=3)
     install.add_argument("--retry-delay", type=_non_negative_float, default=2.0)

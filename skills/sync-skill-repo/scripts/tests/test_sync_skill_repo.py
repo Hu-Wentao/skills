@@ -278,16 +278,21 @@ class SyncSkillRepoTests(unittest.TestCase):
     def test_refresh_failure_reports_every_attempt_and_command(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            installed = root / "installed" / "demo-skill"
+            installed = root / ".agents" / "skills" / "demo-skill"
             source = root / "source" / "demo-skill"
+            lock = root / ".agents" / ".skill-lock.json"
             write_skill(installed, "demo-skill")
             write_skill(source, "demo-skill")
+            lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "a" * 40}}}),
+                encoding="utf-8",
+            )
             args = SimpleNamespace(
                 skill_dir=str(installed),
                 source_skill_dir=str(source),
                 scope="global",
                 project_root=str(root),
-                lock=None,
+                lock=str(lock),
                 attempts=2,
                 retry_delay=0,
             )
@@ -295,17 +300,363 @@ class SyncSkillRepoTests(unittest.TestCase):
                 args=[], returncode=1, stdout="network error", stderr="detail"
             )
 
-            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
-                with patch.object(
-                    MODULE.subprocess,
-                    "run",
-                    side_effect=[failed, failed],
-                ):
-                    with self.assertRaisesRegex(
-                        MODULE.SyncError,
-                        "(?s)attempt 1/2.*network error.*attempt 2/2",
+            with patch.object(
+                MODULE,
+                "_shared_global_skills_root",
+                return_value=root / ".agents" / "skills",
+            ):
+                with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                    with patch.object(
+                        MODULE.subprocess,
+                        "run",
+                        side_effect=[failed, failed],
                     ):
-                        MODULE.refresh_skill(args)
+                        with self.assertRaisesRegex(
+                            MODULE.SyncError,
+                            "(?s)attempt 1/2.*network error.*attempt 2/2",
+                        ):
+                            MODULE.refresh_skill(args)
+
+    def test_scope_auto_resolves_project_installation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+
+            scope = MODULE.resolve_installation_scope(
+                installed,
+                "demo-skill",
+                "auto",
+                None,
+                None,
+                require_tracked=True,
+            )
+
+            self.assertEqual(scope.name, "project")
+            self.assertEqual(
+                scope.project_root, MODULE._absolute_path(project)
+            )
+            self.assertEqual(
+                scope.lock_path,
+                MODULE._absolute_path(project / "skills-lock.json"),
+            )
+
+    def test_scope_auto_resolves_global_installation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            global_skills = root / ".agents" / "skills"
+            installed = global_skills / "demo-skill"
+            write_skill(installed, "demo-skill")
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                scope = MODULE.resolve_installation_scope(
+                    installed,
+                    "demo-skill",
+                    "auto",
+                    None,
+                    None,
+                    require_tracked=True,
+                    allow_no_project_context=True,
+                )
+
+            self.assertEqual(scope.name, "global")
+            self.assertEqual(
+                scope.lock_path, MODULE._absolute_path(global_lock)
+            )
+
+    def test_scope_rejects_global_without_project_context_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            global_skills = root / ".agents" / "skills"
+            installed = global_skills / "demo-skill"
+            write_skill(installed, "demo-skill")
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "requires --project-root"
+                ):
+                    MODULE.resolve_installation_scope(
+                        installed,
+                        "demo-skill",
+                        "auto",
+                        None,
+                        None,
+                        require_tracked=False,
+                    )
+
+    def test_scope_rejects_explicit_scope_path_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(installed, "demo-skill")
+
+            with self.assertRaisesRegex(MODULE.SyncError, "conflicts with installed path"):
+                MODULE.resolve_installation_scope(
+                    installed,
+                    "demo-skill",
+                    "global",
+                    project,
+                    None,
+                    require_tracked=False,
+                )
+
+    def test_scope_rejects_project_and_global_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            global_skills = root / "global" / ".agents" / "skills"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            global_installed = global_skills / "demo-skill"
+            write_skill(installed, "demo-skill")
+            write_skill(global_installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "Conflicting project and global installations"
+                ):
+                    MODULE.resolve_installation_scope(
+                        installed,
+                        "demo-skill",
+                        "auto",
+                        project,
+                        None,
+                        require_tracked=True,
+                    )
+
+    def test_scope_rejects_project_install_when_global_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            global_skills = root / "global" / ".agents" / "skills"
+            global_installed = global_skills / "demo-skill"
+            write_skill(global_installed, "demo-skill")
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "active global installation already exists"
+                ):
+                    MODULE.resolve_installation_scope(
+                        project / ".agents" / "skills" / "demo-skill",
+                        "demo-skill",
+                        "auto",
+                        project,
+                        None,
+                        require_tracked=False,
+                    )
+
+    def test_scope_rejects_global_install_when_project_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            global_skills = root / "global" / ".agents" / "skills"
+            project_installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(project_installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "active project installation already exists"
+                ):
+                    MODULE.resolve_installation_scope(
+                        global_skills / "demo-skill",
+                        "demo-skill",
+                        "auto",
+                        project,
+                        None,
+                        require_tracked=False,
+                    )
+
+    def test_scope_inference_preserves_global_symlink_location(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            global_skills = root / ".agents" / "skills"
+            source = root / "source" / "demo-skill"
+            installed = global_skills / "demo-skill"
+            write_skill(source, "demo-skill")
+            global_skills.mkdir(parents=True)
+            installed.symlink_to(source, target_is_directory=True)
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                scope = MODULE.resolve_installation_scope(
+                    installed,
+                    "demo-skill",
+                    "auto",
+                    None,
+                    None,
+                    require_tracked=True,
+                    allow_no_project_context=True,
+                )
+
+            self.assertEqual(scope.name, "global")
+            self.assertEqual(
+                scope.expected_skill, MODULE._absolute_path(installed)
+            )
+
+    def test_scope_inference_preserves_project_symlink_location(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source = root / "source" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(source, "demo-skill")
+            installed.parent.mkdir(parents=True)
+            installed.symlink_to(source, target_is_directory=True)
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+
+            scope = MODULE.resolve_installation_scope(
+                installed,
+                "demo-skill",
+                "auto",
+                project,
+                None,
+                require_tracked=True,
+            )
+
+            self.assertEqual(scope.name, "project")
+            self.assertEqual(
+                scope.expected_skill, MODULE._absolute_path(installed)
+            )
+
+    def test_scope_inference_preserves_symlinked_global_skills_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            agents_root = root / "logical" / ".agents"
+            storage_skills = root / "storage" / "skills"
+            agents_root.mkdir(parents=True)
+            storage_skills.mkdir(parents=True)
+            (agents_root / "skills").symlink_to(storage_skills, target_is_directory=True)
+            installed = agents_root / "skills" / "demo-skill"
+            write_skill(installed, "demo-skill")
+            global_lock = agents_root / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE,
+                "_shared_global_skills_root",
+                return_value=agents_root / "skills",
+            ):
+                scope = MODULE.resolve_installation_scope(
+                    installed,
+                    "demo-skill",
+                    "auto",
+                    None,
+                    None,
+                    require_tracked=True,
+                    allow_no_project_context=True,
+                )
+
+            self.assertEqual(scope.name, "global")
+            self.assertEqual(scope.lock_path, MODULE._absolute_path(global_lock))
+
+    def test_scope_inference_preserves_symlinked_project_agents_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            storage_agents = root / "storage" / ".agents"
+            project.mkdir()
+            (storage_agents / "skills").mkdir(parents=True)
+            (project / ".agents").symlink_to(storage_agents, target_is_directory=True)
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+
+            scope = MODULE.resolve_installation_scope(
+                installed,
+                "demo-skill",
+                "auto",
+                project,
+                None,
+                require_tracked=True,
+            )
+
+            self.assertEqual(scope.name, "project")
+            self.assertEqual(scope.project_root, MODULE._absolute_path(project))
+
+    def test_scope_rejects_lock_override_from_another_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            global_skills = root / "global" / ".agents" / "skills"
+            project_installed = project / ".agents" / "skills" / "demo-skill"
+            global_installed = global_skills / "demo-skill"
+            write_skill(project_installed, "demo-skill")
+            write_skill(global_installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps({"skills": {"demo-skill": {"computedHash": "a" * 64}}}),
+                encoding="utf-8",
+            )
+            custom_lock = root / "custom-global-lock.json"
+            custom_lock.write_text(
+                json.dumps({"skills": {"demo-skill": {"skillFolderHash": "b" * 40}}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "does not belong to global installation"
+                ):
+                    MODULE.resolve_installation_scope(
+                        global_installed,
+                        "demo-skill",
+                        "global",
+                        project,
+                        custom_lock,
+                        require_tracked=True,
+                    )
 
     def test_install_global_targets_only_codex(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

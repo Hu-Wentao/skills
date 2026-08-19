@@ -53,9 +53,12 @@ Determine whether the skill is already inside its source Git checkout:
   registered source checkout.
 
 Never infer that a non-GitHub remote satisfies a request to publish to GitHub.
-Before pushing, identify the post-publish installation scope: prefer the
-originating project with a matching `skills-lock.json` entry; otherwise use the
-matching globally tracked installation. Do not update unrelated skills.
+Before pushing, identify the post-publish installation scope from the installed
+path and its matching lock. A project installation must be
+`<project>/.agents/skills/<skill-name>` with a matching `skills-lock.json`
+entry. A global installation must be under `~/.agents/skills/` with a matching
+shared lock entry. If both installations are active, stop and remove the
+unintended scope before publishing. Do not update unrelated skills.
 
 ### 2. Resolve an Installed Copy's Source Checkout
 
@@ -156,9 +159,11 @@ Follow the owning repository's Node instructions and load its configured nvm
 runtime. Never probe the Skills CLI with `skills update --help`: some released
 versions interpret it as an unscoped update and may refresh unrelated skills.
 Use the bundled deterministic refresh command, which always names exactly one
-skill, retries transient installer failures, preserves every attempt's output,
-compares installed paths and file contents with the pushed source while
-allowing installer-normalized executable bits, and verifies the lock hash:
+skill, infers scope from the installed path by default, cross-checks any
+explicit scope, rejects active project/global duplicates, retries transient
+installer failures, preserves every attempt's output, compares installed paths
+and file contents with the pushed source while allowing installer-normalized
+executable bits, and verifies the lock hash:
 
 ```bash
 # Project installation and project skills-lock.json. Run from the project root.
@@ -167,12 +172,19 @@ uv run python <skill-dir>/scripts/sync_skill_repo.py refresh \
   --source-skill-dir <source-repo-skill-dir> \
   --scope project --project-root .
 
-# Globally tracked installation. Pass --lock when a global lock file exists.
+# Globally tracked installation. The shared global lock is required.
 uv run python <skill-dir>/scripts/sync_skill_repo.py refresh \
   <global-installed-skill-dir> \
   --source-skill-dir <source-repo-skill-dir> \
-  --scope global [--lock <global-lock-path>]
+  --scope global --no-project-context --lock <global-lock-path>
 ```
+
+Omit `--scope` to use the safe `auto` default. Keep an explicit `--scope` when
+recording the intended owner in automation; the helper rejects it when it does
+not match the installed path. Pass `--project-root` whenever the operation originates in a consuming project
+so duplicate detection can inspect that project even for a requested global
+action. A purely global operation with no consuming project must say
+`--no-project-context`; global actions without either declaration fail closed.
 
 The helper runs only `pnpm dlx skills update <skill-name> <-p|-g> -y` and
 defaults to three attempts with a two-second delay. A failed attempt is not a
@@ -183,9 +195,10 @@ project lock's 64-character SHA-256 `computedHash`. Accept both the current
 formats in the shared global lock.
 
 If the skill is not yet tracked in either scope, use the deterministic install
-command. It defaults to the `codex` agent, never selects every detected agent,
-and never passes `--copy`, so global installations remain in the shared
-`~/.agents/skills` directory:
+command. Its default `auto` scope follows the expected installed path; an
+explicit scope is accepted only when it matches that path. It defaults to the
+`codex` agent, never selects every detected agent, and never passes `--copy`,
+so global installations remain in the shared `~/.agents/skills` directory:
 
 ```bash
 # Project installation. Run from the project root.
@@ -198,7 +211,7 @@ uv run python <skill-dir>/scripts/sync_skill_repo.py install \
 uv run python <skill-dir>/scripts/sync_skill_repo.py install \
   <owner>/<repo> ~/.agents/skills/<skill-name> \
   --source-skill-dir <source-repo-skill-dir> \
-  --scope global --lock ~/.agents/.skill-lock.json
+  --scope global --no-project-context --lock ~/.agents/.skill-lock.json
 ```
 
 Use `--agent <agent-id>` only when the user explicitly requests a consumer

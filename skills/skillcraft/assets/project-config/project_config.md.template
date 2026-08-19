@@ -22,10 +22,11 @@ tasks:
       validate: <project validation command>
 ```
 
-Run the resolver before a configured task:
+Resolve `<skill-root>` from the active skill's `SKILL.md` location, then run
+the resolver before a configured task:
 
 ```bash
-uv run python .agents/skills/__SKILL_NAME__/scripts/resolve.py --task default
+uv run python <skill-root>/scripts/resolve.py --task default
 ```
 
 Read the returned instruction path once per new `instructions_id`. Resolution

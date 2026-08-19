@@ -60,7 +60,11 @@ class InitSkillTest(unittest.TestCase):
             skill_text = (skill / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn("## Resolve Project Behavior", skill_text)
             self.assertIn(
-                ".agents/skills/demo-skill/scripts/resolve.py --task <task>",
+                "<skill-root>/scripts/resolve.py --task <task>",
+                skill_text,
+            )
+            self.assertNotIn(
+                ".agents/skills/demo-skill/scripts/resolve.py",
                 skill_text,
             )
             self.assertIn("same reusable skill can behave differently", skill_text)
@@ -98,6 +102,87 @@ class InitSkillTest(unittest.TestCase):
                 msg=generated_tests.stdout + generated_tests.stderr,
             )
             self.assertIn("Ran 6 tests", generated_tests.stderr)
+
+    def test_user_level_project_config_skill_resolves_separate_project(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="skillcraft-user-") as raw_root:
+            root = Path(raw_root)
+            user_skills = root / "user-skills"
+            repo = root / "consumer"
+            user_skills.mkdir()
+            repo.mkdir()
+            (repo / ".git").mkdir()
+
+            initialized = subprocess.run(
+                [
+                    sys.executable,
+                    str(INIT_SCRIPT),
+                    "demo-skill",
+                    "--path",
+                    str(user_skills),
+                    "--project-config",
+                    "--interface",
+                    "display_name=Demo Skill",
+                    "--interface",
+                    "short_description=Demonstrate project configuration",
+                    "--interface",
+                    "default_prompt=Use $demo-skill to demonstrate configuration.",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                initialized.returncode,
+                0,
+                msg=initialized.stdout + initialized.stderr,
+            )
+
+            skill = user_skills / "demo-skill"
+            config_root = repo / ".agents" / "skills-config" / "demo-skill"
+            config_root.mkdir(parents=True)
+            (config_root / "config.yaml").write_text(
+                "\n".join(
+                    [
+                        "schema: demo-skill.config.v1",
+                        "profile: consumer",
+                        "tasks:",
+                        "  default:",
+                        "    profile: project.md",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (config_root / "project.md").write_text(
+                "Consumer-specific instructions.\n", encoding="utf-8"
+            )
+
+            resolved = subprocess.run(
+                [
+                    sys.executable,
+                    str(skill / "scripts" / "resolve.py"),
+                    "--cwd",
+                    str(repo),
+                    "--task",
+                    "default",
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+            self.assertIn("profile: consumer", resolved.stdout)
+            resolved_path = next(
+                (repo / ".agents" / ".cache" / "demo-skill" / "default").glob(
+                    "*.md"
+                )
+            )
+            self.assertIn(
+                "Consumer-specific instructions.",
+                resolved_path.read_text(encoding="utf-8"),
+            )
 
     def test_plain_scaffold_replaces_skill_creator_behavior(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skillcraft-plain-") as raw_root:

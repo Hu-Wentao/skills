@@ -20,11 +20,12 @@ repository owns the profile that specializes its behavior.
 ## Layout
 
 ```text
-.agents/
-├── skills/<skill-name>/
-│   ├── SKILL.md
-│   ├── references/<task>.md
-│   └── scripts/resolve.py
+<skill-root>/
+├── SKILL.md
+├── references/<task>.md
+└── scripts/resolve.py
+
+<project-root>/.agents/
 ├── skills-config/<skill-name>/
 │   ├── config.yaml
 │   └── <profile>.md
@@ -32,7 +33,10 @@ repository owns the profile that specializes its behavior.
     └── <resolved-instructions>.md
 ```
 
-Track `skills` and `skills-config`. Do not track `.agents/.cache`.
+Track the reusable skill in its source repository. Track `skills-config` in the
+consuming project. Do not track `.agents/.cache`. A project-local skill source
+may use `<project-root>/.agents/skills/<skill-name>` as `<skill-root>`, but
+project configuration does not require that layout.
 
 ## Ownership Boundary
 
@@ -75,9 +79,9 @@ tasks:
       validate: pnpm test
 ```
 
-`base` is relative to `.agents/skills/<skill-name>/`. `profile` is relative to
-`.agents/skills-config/<skill-name>/`. Reject absolute paths and paths escaping
-their respective roots.
+`base` is relative to the reusable skill root containing `SKILL.md`. `profile`
+is relative to `.agents/skills-config/<skill-name>/` in the consuming project.
+Reject absolute paths and paths escaping their respective roots.
 
 Commands are declarative output. Resolving configuration must never execute
 them. `SKILL.md` decides when an emitted command is appropriate and user
@@ -91,10 +95,11 @@ non-configurable only when every consuming project must preserve it.
 
 ## Resolver Contract
 
-Before a config-aware task, run:
+Before a config-aware task, resolve `<skill-root>` from the active skill's
+`SKILL.md` location, then run:
 
 ```bash
-uv run python .agents/skills/<skill-name>/scripts/resolve.py --task <task>
+uv run python <skill-root>/scripts/resolve.py --task <task>
 ```
 
 The resolver must:

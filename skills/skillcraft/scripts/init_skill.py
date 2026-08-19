@@ -119,11 +119,11 @@ Files not intended to be loaded into context, but rather used within the output 
 
 PROJECT_CONFIG_SKILL_SECTION = """## Resolve Project Behavior
 
-Before executing any supported task, resolve the behavior for the current
-repository:
+Before executing any supported task, resolve `<skill-root>` from this active
+`SKILL.md` location, then resolve the behavior for the current repository:
 
 ```bash
-uv run python .agents/skills/{skill_name}/scripts/resolve.py --task <task>
+uv run python <skill-root>/scripts/resolve.py --task <task>
 ```
 
 Read the returned `instructions.path` whenever `instructions_id` changes, then

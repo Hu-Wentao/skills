@@ -88,9 +88,11 @@ skill-name/
 ### Optional Project Configuration
 
 Use project configuration when the same reusable skill must produce different
-behavior from tracked repository-specific rules. Keep the reusable skill in
-`.agents/skills/<skill-name>/` and keep project-owned configuration in the
-repository sibling `.agents/skills-config/<skill-name>/`.
+behavior from tracked repository-specific rules. Keep the reusable skill at
+its independently chosen source or installation root. Keep project-owned
+configuration in `<project-root>/.agents/skills-config/<skill-name>/` and
+resolved output in `<project-root>/.agents/.cache/<skill-name>/`; neither path
+requires a project-local copy of the reusable skill.
 
 Read [project_config.md](references/project_config.md) before creating or
 materially changing a config-aware skill. A config-aware skill must provide a
@@ -283,7 +285,7 @@ For example, when building an image-editor skill, relevant questions include:
 - "Can you give some examples of how this skill would be used?"
 - "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
 - "What would a user say that should trigger this skill?"
-- "Where should I create this skill? If you do not have a preference, I will place it in `$CODEX_HOME/skills` (or `~/.codex/skills` when `CODEX_HOME` is unset) so Codex can discover it automatically."
+- "Is this skill owned only by the current repository, or should it be reusable across projects?"
 
 To avoid overwhelming users, avoid asking too many questions in a single message. Start with the most important questions and follow up as needed for better effectiveness.
 
@@ -333,7 +335,28 @@ At this point, it is time to actually create the skill.
 
 Skip this step only if the skill being developed already exists. In this case, continue to the next step.
 
-Before running `init_skill.py`, ask where the user wants the skill created. If they do not specify a location, default to `$CODEX_HOME/skills`; when `CODEX_HOME` is unset, fall back to `~/.codex/skills` so the skill is auto-discovered.
+Before running `init_skill.py`, separate the authored source location from the
+consuming installation scope, then choose the path:
+
+- When updating an existing skill source checkout, preserve its tracked source
+  directory regardless of where consumers install it.
+- When the current repository is explicitly a skill source repository and the
+  request adds reusable behavior there, use its established source layout such
+  as `skills/<skill-name>`; do not mistake source ownership for project-only
+  installation.
+- When the request explicitly describes a skill owned only by the current
+  application repository, default to
+  `<project-root>/.agents/skills/<skill-name>`.
+- When the request explicitly describes a new reusable skill without an
+  established source checkout, default to `$CODEX_HOME/skills`; when
+  `CODEX_HOME` is unset, fall back to `~/.codex/skills`.
+- When ownership or reuse scope is ambiguous, ask the user to choose. Never
+  select user scope merely because the user omitted a path.
+
+Treat `--project-config` as independent from installation scope. Resolve its
+runtime scripts from the active `SKILL.md` location so a reusable user-level
+skill can consume repository-owned configuration, while a project-only skill
+may not need configuration at all.
 
 When creating a new skill from scratch, always run the `init_skill.py` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
 
@@ -346,9 +369,9 @@ scripts/init_skill.py <skill-name> --path <output-directory> [--resources script
 Examples:
 
 ```bash
+scripts/init_skill.py project-only --path <project-root>/.agents/skills
 scripts/init_skill.py my-skill --path "${CODEX_HOME:-$HOME/.codex}/skills"
 scripts/init_skill.py my-skill --path "${CODEX_HOME:-$HOME/.codex}/skills" --resources scripts,references
-scripts/init_skill.py my-skill --path ~/work/skills --resources scripts --examples
 scripts/init_skill.py project-aware --path ~/work/skills --project-config
 ```
 
