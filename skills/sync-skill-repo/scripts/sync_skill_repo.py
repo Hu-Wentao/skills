@@ -48,6 +48,28 @@ class InstallationScope:
     project_root: Path
     lock_path: Path
     expected_skill: Path
+    context_project_root: Path | None
+
+
+@dataclass(frozen=True)
+class SourceContext:
+    repo: Path
+    skill_dir: Path
+    skill_relative: Path
+    branch: str
+    upstream: str
+    upstream_remote: str
+    upstream_branch: str
+    upstream_push_url: str
+
+
+@dataclass(frozen=True)
+class PublishReceipt:
+    source: SourceContext
+    installation: InstallationScope | None
+    installed_skill: Path | None
+    push_enabled: bool
+    reinstall_enabled: bool
 
 
 def default_registry_path() -> Path:
@@ -288,8 +310,18 @@ def resolve_target(
             "--destination requires --repo when no lock-derived repository is used"
         )
 
-    project_root = git_root(skill_dir)
-    lock_path = nearest_lock(skill_dir, project_root)
+    logical_skill = _absolute_path(skill_dir)
+    logical_project_root = _project_root_from_installed_path(
+        logical_skill, skill_name
+    )
+    if logical_project_root is not None and _lock_tracks_skill(
+        logical_project_root / "skills-lock.json", skill_name
+    ):
+        project_root = logical_project_root
+        lock_path = project_root / "skills-lock.json"
+    else:
+        project_root = git_root(skill_dir)
+        lock_path = nearest_lock(skill_dir, project_root)
     if lock_path is None:
         raise SyncError(
             "No skills-lock.json found; pass --repo and optional --destination"
@@ -314,6 +346,243 @@ def resolve_target(
         raise SyncError(f"Invalid skillPath for {skill_name} in {lock_path}")
     destination, normalized = contained_path(repo, relative)
     return Target(repo, destination, normalized, source_id, lock_path)
+
+
+def _source_context_in_repo(
+    repo: Path, skill_dir: Path, *, require_tracked: bool
+) -> SourceContext:
+    repository = repo.expanduser().resolve()
+    skill = skill_dir.expanduser().resolve()
+    try:
+        relative = skill.relative_to(repository)
+    except ValueError as exc:
+        raise SyncError(f"Skill is outside its source repository: {skill}") from exc
+    tracked = run_git(
+        repository,
+        "ls-files",
+        "--error-unmatch",
+        str(relative / "SKILL.md"),
+        check=False,
+    )
+    if require_tracked and not tracked:
+        raise SyncError(f"Skill is not tracked in its source repository: {skill}")
+    origin = run_git(repository, "remote", "get-url", "origin", check=False)
+    if not origin or not normalize_source(origin).startswith("github.com/"):
+        raise SyncError(
+            f"Skill source repository has no GitHub origin: {repository}"
+        )
+    branch = run_git(repository, "branch", "--show-current")
+    if not branch:
+        raise SyncError(
+            f"Source repository is in detached HEAD state: {repository}"
+        )
+    upstream = run_git(
+        repository,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+        check=False,
+    )
+    if not upstream:
+        raise SyncError(f"Current branch '{branch}' has no configured upstream")
+    upstream_remote = run_git(
+        repository, "config", f"branch.{branch}.remote", check=False
+    )
+    merge_ref = run_git(
+        repository, "config", f"branch.{branch}.merge", check=False
+    )
+    if (
+        not upstream_remote
+        or upstream_remote == "."
+        or not merge_ref.startswith("refs/heads/")
+    ):
+        raise SyncError(
+            f"Current branch '{branch}' has no pushable remote branch upstream"
+        )
+    upstream_push_url = run_git(
+        repository,
+        "remote",
+        "get-url",
+        "--push",
+        upstream_remote,
+        check=False,
+    )
+    if not upstream_push_url or not normalize_source(
+        upstream_push_url
+    ).startswith("github.com/"):
+        raise SyncError(
+            f"Configured upstream remote is not GitHub: {upstream_remote}"
+        )
+    upstream_branch = merge_ref.removeprefix("refs/heads/")
+    expected_upstream = f"{upstream_remote}/{upstream_branch}"
+    if upstream != expected_upstream:
+        raise SyncError(
+            f"Resolved upstream {upstream} does not match branch configuration "
+            f"{expected_upstream}"
+        )
+    return SourceContext(
+        repository,
+        skill,
+        relative,
+        branch,
+        upstream,
+        upstream_remote,
+        upstream_branch,
+        upstream_push_url,
+    )
+
+
+def _source_context(skill_dir: Path) -> SourceContext:
+    skill = skill_dir.expanduser().resolve()
+    return _source_context_in_repo(
+        git_root(skill), skill, require_tracked=True
+    )
+
+
+def _direct_source_context(skill_dir: Path) -> SourceContext | None:
+    skill = skill_dir.expanduser().resolve()
+    try:
+        repo = git_root(skill)
+        relative = skill.relative_to(repo)
+    except (SyncError, ValueError):
+        return None
+    tracked = run_git(
+        repo,
+        "ls-files",
+        "--error-unmatch",
+        str(relative / "SKILL.md"),
+        check=False,
+    )
+    origin = run_git(repo, "remote", "get-url", "origin", check=False)
+    if (
+        not tracked
+        or not origin
+        or not normalize_source(origin).startswith("github.com/")
+    ):
+        return None
+    return _source_context_in_repo(repo, skill, require_tracked=True)
+
+
+def _git_changed_paths(repo: Path) -> set[Path]:
+    commands = (
+        ("diff", "--name-only"),
+        ("diff", "--cached", "--name-only"),
+        ("ls-files", "--others", "--exclude-standard"),
+    )
+    changed: set[Path] = set()
+    for command in commands:
+        output = run_git(repo, *command)
+        changed.update(Path(line) for line in output.splitlines() if line)
+    return changed
+
+
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _refresh_source_upstream(context: SourceContext) -> None:
+    run_git(
+        context.repo,
+        "fetch",
+        "--quiet",
+        context.upstream_push_url,
+        f"+refs/heads/{context.upstream_branch}:"
+        f"refs/remotes/{context.upstream_remote}/{context.upstream_branch}",
+    )
+
+
+def _source_ahead(context: SourceContext) -> int:
+    return int(
+        run_git(
+            context.repo,
+            "rev-list",
+            "--count",
+            f"{context.upstream}..HEAD",
+        )
+    )
+
+
+def _source_behind(context: SourceContext) -> int:
+    return int(
+        run_git(
+            context.repo,
+            "rev-list",
+            "--count",
+            f"HEAD..{context.upstream}",
+        )
+    )
+
+
+def _check_source_repo(
+    context: SourceContext,
+    *,
+    allow_dirty: bool,
+    allow_unpushed: bool,
+    allow_skill_changes: bool,
+) -> None:
+    unmerged = run_git(
+        context.repo, "diff", "--name-only", "--diff-filter=U"
+    )
+    if unmerged:
+        raise SyncError(
+            "Source repository has unresolved merge conflicts; publishing must "
+            f"not stage them:\n{unmerged}"
+        )
+    changed = _git_changed_paths(context.repo)
+    outside = sorted(
+        path for path in changed if not _inside(path, context.skill_relative)
+    )
+    if outside and not allow_dirty:
+        rendered = "\n".join(str(path) for path in outside)
+        raise SyncError(
+            "Source repository has unrelated changes; choose 先提交 or 先忽略. "
+            f"Use --allow-dirty only for 先忽略:\n{rendered}"
+        )
+    skill_changes = sorted(
+        path for path in changed if _inside(path, context.skill_relative)
+    )
+    if skill_changes and not allow_skill_changes:
+        rendered = "\n".join(str(path) for path in skill_changes)
+        raise SyncError(
+            "--no-push cannot reinstall unpublished source changes:\n"
+            f"{rendered}"
+        )
+    behind = _source_behind(context)
+    if behind:
+        raise SyncError(
+            f"Source branch is behind or diverged from {context.upstream} by "
+            f"{behind} commit(s); reconcile it before publishing"
+        )
+    ahead = _source_ahead(context)
+    if ahead and not allow_unpushed:
+        raise SyncError(
+            f"Source repository has {ahead} existing unpushed commit(s); "
+            "review them and rerun with --allow-unpushed"
+        )
+
+
+def _commit_skill(context: SourceContext, message: str) -> str | None:
+    run_git(context.repo, "add", "--", str(context.skill_relative))
+    staged = run_git(
+        context.repo,
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        str(context.skill_relative),
+    )
+    if not staged:
+        return None
+    run_git(
+        context.repo,
+        "commit",
+        "-m",
+        message,
+        "--",
+        str(context.skill_relative),
+    )
+    return run_git(context.repo, "rev-parse", "HEAD")
 
 
 def excluded(relative: Path) -> bool:
@@ -381,25 +650,31 @@ def installed_content_changes(
 ) -> list[tuple[str, Path]]:
     """Compare installed content while allowing installer-normalized file modes."""
 
+    source = source_entries(source_skill)
     changes: list[tuple[str, Path]] = []
-    for relative, source in source_entries(source_skill).items():
+    for relative, source_path in source.items():
         installed = installed_skill / relative
         if not installed.exists() and not installed.is_symlink():
             changes.append(("ADD", relative))
-        elif source.is_symlink():
-            if not installed.is_symlink() or os.readlink(source) != os.readlink(
-                installed
-            ):
+        elif source_path.is_symlink():
+            if not installed.is_symlink() or os.readlink(
+                source_path
+            ) != os.readlink(installed):
                 changes.append(("UPDATE", relative))
-        elif source.is_dir():
+        elif source_path.is_dir():
             if not installed.is_dir() or installed.is_symlink():
                 changes.append(("UPDATE", relative))
         elif (
             not installed.is_file()
             or installed.is_symlink()
-            or not filecmp.cmp(source, installed, shallow=False)
+            or not filecmp.cmp(source_path, installed, shallow=False)
         ):
             changes.append(("UPDATE", relative))
+    if installed_skill.is_dir():
+        for installed_path in installed_skill.rglob("*"):
+            relative = installed_path.relative_to(installed_skill)
+            if not excluded(relative) and relative not in source:
+                changes.append(("REMOVE", relative))
     return sorted(changes)
 
 
@@ -497,6 +772,66 @@ def push_with_retry(repo: Path, attempts: int, retry_delay: float) -> None:
     )
 
 
+def push_source_with_retry(
+    context: SourceContext, attempts: int, retry_delay: float
+) -> None:
+    remote_ref = f"refs/heads/{context.upstream_branch}"
+    command = [
+        "git",
+        "-C",
+        str(context.repo),
+        "push",
+        context.upstream_push_url,
+        f"HEAD:{remote_ref}",
+    ]
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = "\n".join(
+            part.strip()
+            for part in (result.stdout, result.stderr)
+            if part.strip()
+        )
+        if result.returncode == 0:
+            if output:
+                print(output)
+            print(f"Pushed on attempt {attempt}/{attempts}.")
+            break
+        failures.append(
+            f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
+            f"{output or '<no git output>'}"
+        )
+        if attempt < attempts and retry_delay:
+            time.sleep(retry_delay)
+    else:
+        rendered = "\n\n".join(failures)
+        raise SyncError(
+            f"git push failed after {attempts} attempts. "
+            f"Command: {' '.join(command)}\n{rendered}"
+        )
+
+    local_head = run_git(context.repo, "rev-parse", "HEAD")
+    remote_output = run_git(
+        context.repo,
+        "ls-remote",
+        "--heads",
+        context.upstream_push_url,
+        remote_ref,
+    )
+    remote_head = remote_output.split(maxsplit=1)[0] if remote_output else ""
+    if remote_head != local_head:
+        raise SyncError(
+            f"Push returned success but {context.upstream_push_url} "
+            f"{context.upstream_branch} "
+            f"is {remote_head or '<missing>'}, expected {local_head}"
+        )
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -511,7 +846,55 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
-def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
+def _compute_skill_folder_hash(skill_dir: Path) -> str:
+    node = shutil.which("node")
+    if node is None:
+        raise SyncError("node is required to verify the Skills CLI folder hash")
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const root = process.argv[1];
+const files = [];
+function collect(current) {
+  for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+    const full = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      collect(full);
+    } else if (entry.isFile()) {
+      files.push({
+        relativePath: path.relative(root, full).split("\\").join("/"),
+        content: fs.readFileSync(full),
+      });
+    }
+  }
+}
+collect(root);
+files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+const hash = crypto.createHash("sha256");
+for (const file of files) {
+  hash.update(file.relativePath);
+  hash.update(file.content);
+}
+process.stdout.write(hash.digest("hex"));
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(skill_dir.resolve())],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    value = result.stdout.strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{64}", value):
+        detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
+        raise SyncError(f"Cannot compute Skills CLI folder hash: {detail}")
+    return value
+
+
+def _verified_lock_hash(
+    lock_path: Path, skill_name: str, installed_skill: Path | None = None
+) -> str:
     try:
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         entry = lock["skills"][skill_name]
@@ -534,6 +917,13 @@ def _verified_lock_hash(lock_path: Path, skill_name: str) -> str:
             re.fullmatch(rf"[0-9a-f]{{{length}}}", value)
             for length in lengths
         ):
+            if installed_skill is not None and len(value) == 64:
+                actual = _compute_skill_folder_hash(installed_skill)
+                if value != actual:
+                    raise SyncError(
+                        f"Refresh succeeded but {lock_path} records stale "
+                        f"{skill_name} {field}: {value}, expected {actual}"
+                    )
             return value
         raise SyncError(
             f"Refresh succeeded but {lock_path} has an invalid "
@@ -614,7 +1004,9 @@ def _verify_installed_skill(
         )
     print(f"Verified installed skill matches source: {source_skill}")
     if lock_path is not None:
-        computed_hash = _verified_lock_hash(lock_path, skill_name)
+        computed_hash = _verified_lock_hash(
+            lock_path, skill_name, installed_skill
+        )
         print(f"Verified lock hash: {computed_hash} ({lock_path})")
 
 
@@ -622,9 +1014,9 @@ def _shared_global_skills_root() -> Path:
     return Path.home() / ".agents" / "skills"
 
 
-def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
+def _lock_skills(lock_path: Path) -> dict[str, object]:
     if not lock_path.is_file():
-        return False
+        return {}
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
         skills = data["skills"]
@@ -632,7 +1024,42 @@ def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
         raise SyncError(f"Cannot inspect skill lock {lock_path}: {exc}") from exc
     if not isinstance(skills, dict):
         raise SyncError(f"Skill lock has no skills object: {lock_path}")
-    return skill_name in skills
+    return skills
+
+
+def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
+    return skill_name in _lock_skills(lock_path)
+
+
+def _validate_installation_source(
+    lock_path: Path,
+    skill_name: str,
+    source: SourceContext,
+) -> None:
+    entry = _lock_skills(lock_path).get(skill_name)
+    if not isinstance(entry, dict):
+        raise SyncError(f"Lock has no usable {skill_name} entry: {lock_path}")
+    raw_source = entry.get("source") or entry.get("sourceUrl")
+    if not isinstance(raw_source, str) or not raw_source.strip():
+        raise SyncError(
+            f"Lock entry for {skill_name} has no source identity: {lock_path}"
+        )
+    locked_source = normalize_source(raw_source)
+    push_source = normalize_source(source.upstream_push_url)
+    if locked_source != push_source:
+        raise SyncError(
+            f"Installation source {locked_source} does not match actual push "
+            f"endpoint {push_source}"
+        )
+    locked_skill_path = entry.get(
+        "skillPath", f"skills/{skill_name}/SKILL.md"
+    )
+    expected_skill_path = (source.skill_relative / "SKILL.md").as_posix()
+    if locked_skill_path != expected_skill_path:
+        raise SyncError(
+            f"Installation skillPath {locked_skill_path!r} does not match publish "
+            f"skill path {expected_skill_path!r}"
+        )
 
 
 def _absolute_path(path: Path) -> Path:
@@ -791,6 +1218,7 @@ def resolve_installation_scope(
         working_root,
         selected_lock,
         _absolute_path(expected_skill),
+        context_root,
     )
 
 
@@ -872,6 +1300,223 @@ def refresh_skill(args: argparse.Namespace) -> None:
         action=f"Refreshed {skill_name} with scoped command",
     )
     _verify_installed_skill(source_skill, installed_skill, scope.lock_path)
+
+
+def _resolve_publish_receipt(
+    args: argparse.Namespace,
+) -> tuple[PublishReceipt, Path, Target | None]:
+    local_skill = _absolute_path(Path(args.skill_dir))
+    skill_name = read_skill_name(local_skill)
+    logical_project_root = _project_root_from_installed_path(
+        local_skill, skill_name
+    )
+    is_project_installation = bool(
+        logical_project_root is not None
+        and _active_installation(
+            local_skill,
+            logical_project_root / "skills-lock.json",
+            skill_name,
+        )
+    )
+    direct_source = (
+        None
+        if is_project_installation
+        else _direct_source_context(local_skill.resolve())
+    )
+    target: Target | None = None
+    if direct_source is not None:
+        source = direct_source
+        automatic_installation: Path | None = None
+    else:
+        registry_path = Path(args.registry).expanduser().resolve()
+        target = resolve_target(
+            local_skill,
+            skill_name,
+            registry_path,
+            Path(args.repo) if args.repo else None,
+            Path(args.destination) if args.destination else None,
+        )
+        source = _source_context_in_repo(
+            target.repo, target.destination, require_tracked=False
+        )
+        automatic_installation = local_skill
+
+    installation: InstallationScope | None = None
+    installed_skill: Path | None = None
+    if args.reinstall:
+        if args.installed_skill:
+            installed_skill = _absolute_path(Path(args.installed_skill))
+            if automatic_installation is not None and not _same_location(
+                installed_skill, automatic_installation
+            ):
+                raise SyncError(
+                    "A project-installed publish must reinstall the originating "
+                    f"copy {automatic_installation}, not {installed_skill}"
+                )
+        else:
+            installed_skill = automatic_installation
+        if installed_skill is None:
+            raise SyncError(
+                "Direct-source publish with reinstall enabled requires "
+                "--installed-skill; global installation is never an implicit fallback"
+            )
+        if read_skill_name(installed_skill) != skill_name:
+            raise SyncError("Installed and source skill names do not match")
+        installation = resolve_installation_scope(
+            installed_skill,
+            skill_name,
+            args.scope,
+            Path(args.project_root) if args.project_root else None,
+            Path(args.lock) if args.lock else None,
+            require_tracked=True,
+            allow_no_project_context=args.no_project_context,
+        )
+        _validate_installation_source(
+            installation.lock_path,
+            skill_name,
+            source,
+        )
+
+    receipt = PublishReceipt(
+        source=source,
+        installation=installation,
+        installed_skill=installed_skill,
+        push_enabled=args.push,
+        reinstall_enabled=args.reinstall,
+    )
+    print(f"Publish source: {source.skill_dir}")
+    print(f"Source repository: {source.repo}")
+    print(f"Push enabled: {str(args.push).lower()}")
+    print(f"Reinstall enabled: {str(args.reinstall).lower()}")
+    if installation is not None and installed_skill is not None:
+        print(f"Bound installation: {installed_skill}")
+        print(f"Bound scope: {installation.name}")
+        print(f"Bound lock: {installation.lock_path}")
+    return receipt, local_skill, target
+
+
+def _publish_direct_source(args: argparse.Namespace, receipt: PublishReceipt) -> None:
+    context = receipt.source
+    _refresh_source_upstream(context)
+    _check_source_repo(
+        context,
+        allow_dirty=args.allow_dirty,
+        allow_unpushed=args.allow_unpushed if args.push else False,
+        allow_skill_changes=args.push,
+    )
+    validate_skill(context.skill_dir)
+    if not args.push:
+        print("Push skipped; verified source matches its upstream state.")
+        return
+    commit = _commit_skill(
+        context, args.message or f"feat: publish {context.skill_dir.name} skill"
+    )
+    push_source_with_retry(
+        context, args.push_attempts, args.push_retry_delay
+    )
+    if commit:
+        print(f"Committed source skill: {commit}")
+    print(f"Pushed: {context.branch} -> {context.upstream}")
+
+
+def _check_project_copy_worktree(local_skill: Path) -> None:
+    project_root = _project_root_from_installed_path(
+        _absolute_path(local_skill), local_skill.name
+    )
+    if project_root is None:
+        return
+    try:
+        repo = git_root(project_root)
+    except SyncError:
+        return
+    unmerged = run_git(repo, "diff", "--name-only", "--diff-filter=U")
+    if unmerged:
+        raise SyncError(
+            "Originating project has unresolved merge conflicts; publishing must "
+            f"not copy them:\n{unmerged}"
+        )
+
+
+def _publish_project_copy(
+    args: argparse.Namespace,
+    receipt: PublishReceipt,
+    local_skill: Path,
+    target: Target,
+) -> None:
+    _check_project_copy_worktree(local_skill)
+    context = receipt.source
+    _refresh_source_upstream(context)
+    _check_source_repo(
+        context,
+        allow_dirty=args.allow_dirty,
+        allow_unpushed=args.allow_unpushed if args.push else False,
+        allow_skill_changes=False,
+    )
+    changes, preserved = copy_plan(local_skill, target.destination)
+    for action, relative in changes:
+        print(f"{action}: {relative}")
+    for relative in preserved:
+        print(f"PRESERVE: {relative}")
+    if changes and not args.push:
+        raise SyncError(
+            "--no-push cannot reinstall a project copy that differs from its "
+            "published source"
+        )
+    if args.push and changes:
+        apply_copy(local_skill, target.destination)
+    validate_skill(target.destination)
+    if not args.push:
+        print("Push skipped; verified project copy matches published source.")
+        return
+    commit = _commit_skill(
+        context, args.message or f"feat: sync {local_skill.name} skill"
+    )
+    push_source_with_retry(
+        context, args.push_attempts, args.push_retry_delay
+    )
+    if commit:
+        print(f"Committed source skill: {commit}")
+    print(f"Pushed: {context.branch} -> {context.upstream}")
+
+
+def publish_skill(args: argparse.Namespace) -> None:
+    if not args.push and not args.reinstall:
+        raise SyncError("Publish requires at least one of push or reinstall")
+    receipt, local_skill, target = _resolve_publish_receipt(args)
+    if target is None:
+        _publish_direct_source(args, receipt)
+    elif local_skill.resolve() == receipt.source.skill_dir.resolve():
+        _check_project_copy_worktree(local_skill)
+        _publish_direct_source(args, receipt)
+    else:
+        _publish_project_copy(args, receipt, local_skill, target)
+
+    if not args.reinstall:
+        print("Reinstall skipped by --no-reinstall.")
+        return
+    assert receipt.installation is not None
+    assert receipt.installed_skill is not None
+    installation = receipt.installation
+    refresh_skill(
+        argparse.Namespace(
+            skill_dir=str(receipt.installed_skill),
+            source_skill_dir=str(receipt.source.skill_dir),
+            scope=installation.name,
+            project_root=(
+                str(installation.context_project_root)
+                if installation.context_project_root is not None
+                else None
+            ),
+            no_project_context=(
+                installation.name == "global"
+                and installation.context_project_root is None
+            ),
+            lock=str(installation.lock_path),
+            attempts=args.attempts,
+            retry_delay=args.retry_delay,
+        )
+    )
+    print("Publish completed: requested push and reinstall steps succeeded.")
 
 
 def sync_skill(args: argparse.Namespace) -> None:
@@ -997,6 +1642,40 @@ def build_parser() -> argparse.ArgumentParser:
     register.add_argument("--alias", action="append", default=[])
     register.add_argument("--registry", default=str(default_registry_path()))
 
+    publish = subparsers.add_parser(
+        "publish",
+        help="push and reinstall one skill with a bound installation target",
+    )
+    publish.add_argument("skill_dir", help="source skill or project-installed copy")
+    publish.add_argument(
+        "--installed-skill",
+        help="existing tracked installation to refresh after a direct-source push",
+    )
+    publish.add_argument("--repo")
+    publish.add_argument("--destination")
+    publish.add_argument("--registry", default=str(default_registry_path()))
+    publish.add_argument("--message")
+    publish.add_argument(
+        "--push", action=argparse.BooleanOptionalAction, default=True
+    )
+    publish.add_argument(
+        "--reinstall", action=argparse.BooleanOptionalAction, default=True
+    )
+    publish.add_argument(
+        "--scope", choices=("auto", "project", "global"), default="auto"
+    )
+    publish.add_argument("--project-root")
+    publish.add_argument("--no-project-context", action="store_true")
+    publish.add_argument("--lock")
+    publish.add_argument("--allow-dirty", action="store_true")
+    publish.add_argument("--allow-unpushed", action="store_true")
+    publish.add_argument("--push-attempts", type=_positive_int, default=3)
+    publish.add_argument(
+        "--push-retry-delay", type=_non_negative_float, default=2.0
+    )
+    publish.add_argument("--attempts", type=_positive_int, default=3)
+    publish.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
+
     sync = subparsers.add_parser(
         "sync", help="sync a project skill to its source repository"
     )
@@ -1062,6 +1741,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.alias,
             )
             print(json.dumps(entry, ensure_ascii=False, indent=2))
+        elif args.command == "publish":
+            publish_skill(args)
         elif args.command == "sync":
             sync_skill(args)
         elif args.command == "refresh":

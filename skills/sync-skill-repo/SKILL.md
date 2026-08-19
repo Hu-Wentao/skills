@@ -15,8 +15,11 @@ Treat `publish-skill`, "发布技能", and equivalent requests as instructions t
 2. automatically reinstall that exact skill from the pushed source; and
 3. refresh and verify its matching project or global lock entry.
 
-Publishing is complete only when both the GitHub push and post-push refresh
-succeed. A request that says only sync or push may stop after GitHub.
+Use one parameterized `publish` operation. Its `push` and `reinstall` steps are
+both enabled by default and may be disabled independently with `--no-push` or
+`--no-reinstall`. Publishing is complete only when every enabled step succeeds.
+Reject `--no-push --no-reinstall`. A request that says only sync or push may
+use the narrower `sync` workflow and stop after GitHub.
 
 ## Source registry
 
@@ -53,12 +56,20 @@ Determine whether the skill is already inside its source Git checkout:
   registered source checkout.
 
 Never infer that a non-GitHub remote satisfies a request to publish to GitHub.
-Before pushing, identify the post-publish installation scope from the installed
-path and its matching lock. A project installation must be
-`<project>/.agents/skills/<skill-name>` with a matching `skills-lock.json`
-entry. A global installation must be under `~/.agents/skills/` with a matching
-shared lock entry. If both installations are active, stop and remove the
-unintended scope before publishing. Do not update unrelated skills.
+When reinstall is enabled, resolve and bind the installation receipt before the
+first source mutation. The receipt includes the source repository identity,
+installed path, project or global scope, project context, and canonical lock.
+Require the lock's source to match the GitHub repository being pushed. A
+project installation must be `<project>/.agents/skills/<skill-name>` with a
+matching `skills-lock.json` entry. A global installation must be under
+`~/.agents/skills/` with a matching shared lock entry. If both installations
+are active, stop and remove the unintended scope before publishing. Do not
+update unrelated skills.
+
+A project-installed input binds itself automatically. A direct source checkout
+must use `--installed-skill <existing-installation>` whenever reinstall remains
+enabled. Never infer a global target or create a new installation as a publish
+fallback.
 
 ### 2. Resolve an Installed Copy's Source Checkout
 
@@ -123,37 +134,42 @@ or switch to an unscoped workflow after the first network failure. Use
 `--push-attempts` and `--push-retry-delay` only when the repository requires a
 different bounded retry policy.
 
-For a project-local installed copy, synchronize and publish with:
-
-After resolving preflight findings, run:
+After resolving preflight findings, use the unified command:
 
 ```bash
-uv run python <skill-dir>/scripts/sync_skill_repo.py sync <project-skill-dir>
+# Project-installed input: installation ownership is automatic.
+uv run python <skill-dir>/scripts/sync_skill_repo.py publish \
+  <project-installed-skill-dir>
+
+# Direct source input: bind the existing consumer before pushing.
+uv run python <skill-dir>/scripts/sync_skill_repo.py publish \
+  <source-repo-skill-dir> \
+  --installed-skill <project-installed-skill-dir>
 ```
 
-Optional flags:
+Step controls:
 
 ```text
---repo <path>
---destination <relative-path>
---registry <path>
---message <commit-message>
---allow-source-dirty
---allow-dirty
---dry-run
---push-attempts <count>
---push-retry-delay <seconds>
+--push / --no-push               # default: --push
+--reinstall / --no-reinstall     # default: --reinstall
 ```
 
-The script copies the skill, validates it with the installed `skillcraft`,
-stages only the destination skill, commits it, and pushes the current branch.
-It never force-pushes. If content is unchanged, it creates no commit; push any
-already-approved unpushed commits separately when needed.
+Use `--no-reinstall` for a push-only publication. Use `--no-push` for a
+reinstall-only recovery only when the local source is clean and exactly equals
+the freshly fetched upstream. The command rejects behind, diverged, dirty,
+unpushed, source-mismatched, conflicted, unknown, or ambiguous states unless a
+narrow documented override applies. It pushes an explicit GitHub upstream ref
+and verifies the remote head equals local `HEAD` before reinstalling.
+
+The lower-level `sync` command remains available for a plain project-copy sync
+and push without post-push reinstall. Its existing flags and behavior remain
+compatible.
 
 ### 5. Reinstall and Refresh After Publish
 
-Run this step automatically after a successful `publish-skill` or "发布技能"
-push. Do not run it for a plain sync or push request.
+The unified `publish` command runs this step automatically when `reinstall` is
+enabled. Use standalone `refresh` only for recovery or maintenance after a
+separately verified push. Do not run it for a plain sync or push request.
 
 Follow the owning repository's Node instructions and load its configured nvm
 runtime. Never probe the Skills CLI with `skills update --help`: some released
@@ -190,9 +206,10 @@ The helper runs only `pnpm dlx skills update <skill-name> <-p|-g> -y` and
 defaults to three attempts with a two-second delay. A failed attempt is not a
 reason to run an unscoped update. If all attempts fail, report the exact
 command and complete per-attempt output emitted by the helper. Accept the
-project lock's 64-character SHA-256 `computedHash`. Accept both the current
-64-character SHA-256 and legacy 40-character Git tree `skillFolderHash`
-formats in the shared global lock.
+project lock's 64-character SHA-256 `computedHash` and verify it against the
+installed folder contents. Apply the same content verification to a
+64-character global `skillFolderHash`; accept a legacy 40-character Git tree
+`skillFolderHash` only together with the exact installed/source comparison.
 
 If the skill is not yet tracked in either scope, use the deterministic install
 command. Its default `auto` scope follows the expected installed path; an

@@ -45,6 +45,42 @@ def write_skill(path: Path, name: str, body: str = "body") -> None:
     )
 
 
+def configure_github_upstream(repo: Path) -> None:
+    git(repo, "branch", "-M", "main")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(repo, "config", "branch.main.remote", "origin")
+    git(repo, "config", "branch.main.merge", "refs/heads/main")
+
+
+def publish_args(
+    skill: Path,
+    *,
+    installed: Path | None = None,
+    push: bool = True,
+    reinstall: bool = True,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        skill_dir=str(skill),
+        installed_skill=str(installed) if installed else None,
+        repo=None,
+        destination=None,
+        registry=str(Path.home() / ".codex" / "unused-test-registry.json"),
+        message=None,
+        push=push,
+        reinstall=reinstall,
+        scope="auto",
+        project_root=None,
+        no_project_context=False,
+        lock=None,
+        allow_dirty=False,
+        allow_unpushed=False,
+        push_attempts=3,
+        push_retry_delay=0,
+        attempts=3,
+        retry_delay=0,
+    )
+
+
 class SyncSkillRepoTests(unittest.TestCase):
     def test_normalize_source_variants(self) -> None:
         expected = "github.com/hu-wentao/skills"
@@ -213,6 +249,425 @@ class SyncSkillRepoTests(unittest.TestCase):
             ).stdout.strip()
             self.assertEqual(message, "feat: sync demo-skill skill")
 
+    def test_publish_flags_default_to_push_and_reinstall(self) -> None:
+        args = MODULE.build_parser().parse_args(["publish", "/tmp/demo-skill"])
+
+        self.assertTrue(args.push)
+        self.assertTrue(args.reinstall)
+
+        disabled = MODULE.build_parser().parse_args(
+            ["publish", "/tmp/demo-skill", "--no-push", "--no-reinstall"]
+        )
+        self.assertFalse(disabled.push)
+        self.assertFalse(disabled.reinstall)
+
+    def test_publish_requires_at_least_one_enabled_step(self) -> None:
+        args = publish_args(
+            Path("/tmp/demo-skill"), push=False, reinstall=False
+        )
+
+        with self.assertRaisesRegex(MODULE.SyncError, "at least one"):
+            MODULE.publish_skill(args)
+
+    def test_direct_source_publish_requires_bound_installation_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "requires --installed-skill"
+            ):
+                MODULE.publish_skill(publish_args(skill))
+
+    def test_direct_source_publish_binds_project_reinstall_before_push(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "before")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            write_skill(skill, "demo-skill", "after")
+            write_skill(installed, "demo-skill", "before")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = publish_args(skill, installed=installed)
+
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "push_source_with_retry") as push:
+                        with patch.object(MODULE, "refresh_skill") as refresh:
+                            MODULE.publish_skill(args)
+
+            self.assertEqual(push.call_count, 1)
+            self.assertEqual(push.call_args.args[0].repo, repo.resolve())
+            self.assertEqual(push.call_args.args[1:], (3, 0))
+            refresh.assert_called_once()
+            refresh_args = refresh.call_args.args[0]
+            self.assertEqual(refresh_args.scope, "project")
+            self.assertEqual(
+                Path(refresh_args.skill_dir), MODULE._absolute_path(installed)
+            )
+            self.assertEqual(
+                Path(refresh_args.project_root), MODULE._absolute_path(project)
+            )
+            self.assertFalse(refresh_args.no_project_context)
+
+    def test_direct_source_publish_can_push_without_reinstall(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "before")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            write_skill(skill, "demo-skill", "after")
+            args = publish_args(skill, reinstall=False)
+
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "push_source_with_retry") as push:
+                        with patch.object(MODULE, "refresh_skill") as refresh:
+                            MODULE.publish_skill(args)
+
+            self.assertEqual(push.call_count, 1)
+            self.assertEqual(push.call_args.args[0].repo, repo.resolve())
+            self.assertEqual(push.call_args.args[1:], (3, 0))
+            refresh.assert_not_called()
+            self.assertIn(
+                "after", (skill / "SKILL.md").read_text(encoding="utf-8")
+            )
+
+    def test_direct_source_publish_rejects_mismatched_installation_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            write_skill(installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "other/source",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "does not match actual push endpoint"
+            ):
+                MODULE.publish_skill(publish_args(skill, installed=installed))
+
+    def test_direct_source_binding_uses_actual_push_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            git(repo, "branch", "-M", "main")
+            git(repo, "remote", "add", "publish", "git@github.com:other/source.git")
+            git(repo, "update-ref", "refs/remotes/publish/main", "HEAD")
+            git(repo, "config", "branch.main.remote", "publish")
+            git(repo, "config", "branch.main.merge", "refs/heads/main")
+            write_skill(installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "does not match actual push endpoint"
+            ):
+                MODULE.publish_skill(publish_args(skill, installed=installed))
+
+    def test_direct_source_binding_rejects_different_skill_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "packages" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            write_skill(installed, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "does not match publish skill path"
+            ):
+                MODULE.publish_skill(publish_args(skill, installed=installed))
+
+    def test_direct_source_global_publish_preserves_project_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            installed = global_skills / "demo-skill"
+            write_skill(skill, "demo-skill", "before")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            write_skill(skill, "demo-skill", "after")
+            write_skill(installed, "demo-skill", "before")
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillFolderHash": "a" * 40,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = publish_args(skill, installed=installed)
+            args.scope = "global"
+            args.project_root = str(project)
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with patch.object(MODULE, "_refresh_source_upstream"):
+                    with patch.object(MODULE, "validate_skill"):
+                        with patch.object(MODULE, "push_source_with_retry"):
+                            with patch.object(MODULE, "refresh_skill") as refresh:
+                                MODULE.publish_skill(args)
+
+            refresh_args = refresh.call_args.args[0]
+            self.assertEqual(refresh_args.scope, "global")
+            self.assertEqual(
+                Path(refresh_args.project_root), MODULE._absolute_path(project)
+            )
+            self.assertFalse(refresh_args.no_project_context)
+
+    def test_project_symlink_publish_keeps_originating_installation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            registry = root / "registry.json"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            installed.parent.mkdir(parents=True)
+            installed.symlink_to(skill, target_is_directory=True)
+            write_skill(skill, "demo-skill", "modified through project symlink")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            MODULE.register_repository(repo, registry, None, [])
+            args = publish_args(installed)
+            args.registry = str(registry)
+
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "push_source_with_retry"):
+                        with patch.object(MODULE, "refresh_skill") as refresh:
+                            MODULE.publish_skill(args)
+
+            refresh_args = refresh.call_args.args[0]
+            self.assertEqual(
+                Path(refresh_args.skill_dir), MODULE._absolute_path(installed)
+            )
+            self.assertEqual(refresh_args.scope, "project")
+
+    def test_no_push_rejects_source_behind_upstream(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "first")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "first")
+            configure_github_upstream(repo)
+            write_skill(skill, "demo-skill", "second")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "second")
+            remote_head = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            git(repo, "reset", "--hard", "HEAD~1")
+            git(repo, "update-ref", "refs/remotes/origin/main", remote_head)
+            context = MODULE._source_context(skill)
+
+            with self.assertRaisesRegex(MODULE.SyncError, "behind or diverged"):
+                MODULE._check_source_repo(
+                    context,
+                    allow_dirty=False,
+                    allow_unpushed=False,
+                    allow_skill_changes=False,
+                )
+
+    def test_publish_rejects_unmerged_skill_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "base")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "base")
+            configure_github_upstream(repo)
+            git(repo, "checkout", "-q", "-b", "side")
+            write_skill(skill, "demo-skill", "side")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "side")
+            git(repo, "checkout", "-q", "main")
+            write_skill(skill, "demo-skill", "main")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "main")
+            merge = subprocess.run(
+                ["git", "-C", str(repo), "merge", "side"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(merge.returncode, 0)
+            context = MODULE._source_context(skill)
+
+            with self.assertRaisesRegex(MODULE.SyncError, "merge conflicts"):
+                MODULE._check_source_repo(
+                    context,
+                    allow_dirty=True,
+                    allow_unpushed=True,
+                    allow_skill_changes=True,
+                )
+
+    def test_project_copy_rejects_originating_worktree_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            init_repo(project)
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(installed, "demo-skill")
+            readme = project / "README.md"
+            readme.write_text("base\n", encoding="utf-8")
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "base")
+            git(project, "branch", "-M", "main")
+            git(project, "checkout", "-q", "-b", "side")
+            readme.write_text("side\n", encoding="utf-8")
+            git(project, "add", "README.md")
+            git(project, "commit", "-q", "-m", "side")
+            git(project, "checkout", "-q", "main")
+            readme.write_text("main\n", encoding="utf-8")
+            git(project, "add", "README.md")
+            git(project, "commit", "-q", "-m", "main")
+            merge = subprocess.run(
+                ["git", "-C", str(project), "merge", "side"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(merge.returncode, 0)
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "Originating project has unresolved"
+            ):
+                MODULE._check_project_copy_worktree(installed)
+
+    def test_installed_comparison_detects_installed_only_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source" / "demo-skill"
+            installed = root / "installed" / "demo-skill"
+            write_skill(source, "demo-skill")
+            write_skill(installed, "demo-skill")
+            (installed / "unexpected.txt").write_text(
+                "unexpected\n", encoding="utf-8"
+            )
+
+            self.assertIn(
+                ("REMOVE", Path("unexpected.txt")),
+                MODULE.installed_content_changes(source, installed),
+            )
+
     def test_refresh_retries_exact_scoped_skill_and_verifies_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -222,13 +677,14 @@ class SyncSkillRepoTests(unittest.TestCase):
             source = root / "source" / "demo-skill"
             write_skill(installed, "demo-skill", "published")
             write_skill(source, "demo-skill", "published")
+            installed_hash = MODULE._compute_skill_folder_hash(installed)
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
                         "version": 1,
                         "skills": {
                             "demo-skill": {
-                                "computedHash": "a" * 64,
+                                "computedHash": installed_hash,
                             }
                         },
                     }
@@ -253,11 +709,14 @@ class SyncSkillRepoTests(unittest.TestCase):
 
             with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
                 with patch.object(
-                    MODULE.subprocess,
-                    "run",
-                    side_effect=[failed, succeeded],
-                ) as run:
-                    MODULE.refresh_skill(args)
+                    MODULE, "_compute_skill_folder_hash", return_value=installed_hash
+                ):
+                    with patch.object(
+                        MODULE.subprocess,
+                        "run",
+                        side_effect=[failed, succeeded],
+                    ) as run:
+                        MODULE.refresh_skill(args)
 
             self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
@@ -665,6 +1124,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             source = root / "source" / "demo-skill"
             write_skill(installed, "demo-skill", "published")
             write_skill(source, "demo-skill", "published")
+            installed_hash = MODULE._compute_skill_folder_hash(installed)
             lock = root / ".agents" / ".skill-lock.json"
             lock.parent.mkdir(exist_ok=True)
             lock.write_text(
@@ -673,7 +1133,7 @@ class SyncSkillRepoTests(unittest.TestCase):
                         "version": 1,
                         "skills": {
                             "demo-skill": {
-                                "computedHash": "b" * 64,
+                                "computedHash": installed_hash,
                             }
                         },
                     }
@@ -702,11 +1162,16 @@ class SyncSkillRepoTests(unittest.TestCase):
             ):
                 with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
                     with patch.object(
-                        MODULE.subprocess,
-                        "run",
-                        return_value=succeeded,
-                    ) as run:
-                        MODULE.install_skill(args)
+                        MODULE,
+                        "_compute_skill_folder_hash",
+                        return_value=installed_hash,
+                    ):
+                        with patch.object(
+                            MODULE.subprocess,
+                            "run",
+                            return_value=succeeded,
+                        ) as run:
+                            MODULE.install_skill(args)
 
             self.assertEqual(
                 run.call_args.args[0],
@@ -801,13 +1266,14 @@ class SyncSkillRepoTests(unittest.TestCase):
             source = root / "source" / "demo-skill"
             write_skill(installed, "demo-skill", "published")
             write_skill(source, "demo-skill", "published")
+            installed_hash = MODULE._compute_skill_folder_hash(installed)
             (root / "skills-lock.json").write_text(
                 json.dumps(
                     {
                         "version": 1,
                         "skills": {
                             "demo-skill": {
-                                "computedHash": "c" * 64,
+                                "computedHash": installed_hash,
                             }
                         },
                     }
@@ -831,11 +1297,14 @@ class SyncSkillRepoTests(unittest.TestCase):
 
             with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
                 with patch.object(
-                    MODULE.subprocess,
-                    "run",
-                    return_value=succeeded,
-                ) as run:
-                    MODULE.install_skill(args)
+                    MODULE, "_compute_skill_folder_hash", return_value=installed_hash
+                ):
+                    with patch.object(
+                        MODULE.subprocess,
+                        "run",
+                        return_value=succeeded,
+                    ) as run:
+                        MODULE.install_skill(args)
 
             self.assertNotIn("--global", run.call_args.args[0])
             self.assertIn("codex", run.call_args.args[0])
@@ -912,6 +1381,99 @@ class SyncSkillRepoTests(unittest.TestCase):
             )
             changes, _ = MODULE.copy_plan(source, installed)
             self.assertIn(("UPDATE", Path("scripts/tool.py")), changes)
+
+    def test_source_context_rejects_non_github_upstream_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            git(repo, "branch", "-M", "main")
+            git(repo, "remote", "add", "evil", "https://gitlab.com/example/source.git")
+            git(repo, "update-ref", "refs/remotes/evil/main", "HEAD")
+            git(repo, "config", "branch.main.remote", "evil")
+            git(repo, "config", "branch.main.merge", "refs/heads/main")
+
+            with self.assertRaisesRegex(
+                MODULE.SyncError, "upstream remote is not GitHub"
+            ):
+                MODULE._source_context(skill)
+
+    def test_push_source_uses_explicit_upstream_and_verifies_remote_head(self) -> None:
+        context = MODULE.SourceContext(
+            repo=Path("/source/repo"),
+            skill_dir=Path("/source/repo/skills/demo-skill"),
+            skill_relative=Path("skills/demo-skill"),
+            branch="main",
+            upstream="origin/main",
+            upstream_remote="origin",
+            upstream_branch="main",
+            upstream_push_url="git@github.com:example/source.git",
+        )
+        pushed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="pushed", stderr=""
+        )
+        local = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="abc123\n", stderr=""
+        )
+        remote = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="abc123\trefs/heads/main\n",
+            stderr="",
+        )
+
+        with patch.object(
+            MODULE.subprocess, "run", side_effect=[pushed, local, remote]
+        ) as run:
+            MODULE.push_source_with_retry(context, 3, 0)
+
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            [
+                "git",
+                "-C",
+                "/source/repo",
+                "push",
+                "git@github.com:example/source.git",
+                "HEAD:refs/heads/main",
+            ],
+        )
+
+    def test_folder_hash_matches_skills_cli_locale_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            skill = Path(temporary) / "demo-skill"
+            skill.mkdir()
+            (skill / ".hidden").write_text("hidden\n", encoding="utf-8")
+            (skill / "_meta").write_text("meta\n", encoding="utf-8")
+            (skill / "SKILL.md").write_text("skill\n", encoding="utf-8")
+
+            self.assertEqual(
+                MODULE._compute_skill_folder_hash(skill),
+                "da3eb168b0fdecec37db610e43d3d3a1fa25253071729e40fa0bb015f088e569",
+            )
+
+    def test_verified_lock_rejects_stale_sha256_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "demo-skill"
+            write_skill(installed, "demo-skill")
+            lock = root / "skills-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {"computedHash": "a" * 64}
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(MODULE.SyncError, "stale"):
+                MODULE._verified_lock_hash(lock, "demo-skill", installed)
 
     def test_push_retries_transient_failure_with_complete_diagnostics(self) -> None:
         failed = subprocess.CompletedProcess(
