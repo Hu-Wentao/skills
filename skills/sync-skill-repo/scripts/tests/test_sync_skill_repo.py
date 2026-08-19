@@ -1839,9 +1839,14 @@ class SyncSkillRepoTests(unittest.TestCase):
             stdout="abc123\trefs/heads/main\n",
             stderr="",
         )
+        updated = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
 
         with patch.object(
-            MODULE.subprocess, "run", side_effect=[pushed, local, remote]
+            MODULE.subprocess,
+            "run",
+            side_effect=[pushed, local, remote, updated],
         ) as run:
             MODULE.push_source_with_retry(context, 3, 0)
 
@@ -1854,6 +1859,17 @@ class SyncSkillRepoTests(unittest.TestCase):
                 "push",
                 "git@github.com:example/source.git",
                 "HEAD:refs/heads/main",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[-1].args[0],
+            [
+                "git",
+                "-C",
+                "/source/repo",
+                "update-ref",
+                "refs/remotes/origin/main",
+                "abc123",
             ],
         )
 

@@ -834,6 +834,12 @@ def push_source_with_retry(
             f"{context.upstream_branch} "
             f"is {remote_head or '<missing>'}, expected {local_head}"
         )
+    run_git(
+        context.repo,
+        "update-ref",
+        f"refs/remotes/{context.upstream_remote}/{context.upstream_branch}",
+        local_head,
+    )
 
 
 def _positive_int(value: str) -> int:
