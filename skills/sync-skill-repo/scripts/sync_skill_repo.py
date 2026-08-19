@@ -64,10 +64,17 @@ class SourceContext:
 
 
 @dataclass(frozen=True)
+class UpdateTarget:
+    scope: str
+    lock_path: Path
+    installed_skill: Path
+
+
+@dataclass(frozen=True)
 class PublishReceipt:
     source: SourceContext
-    installation: InstallationScope | None
-    installed_skill: Path | None
+    update_root: Path | None
+    update_targets: tuple[UpdateTarget, ...]
     push_enabled: bool
     reinstall_enabled: bool
 
@@ -314,8 +321,8 @@ def resolve_target(
     logical_project_root = _project_root_from_installed_path(
         logical_skill, skill_name
     )
-    if logical_project_root is not None and _lock_tracks_skill(
-        logical_project_root / "skills-lock.json", skill_name
+    if logical_project_root is not None and skill_name in _cli_lock_skills(
+        logical_project_root / "skills-lock.json", "project"
     ):
         project_root = logical_project_root
         lock_path = project_root / "skills-lock.json"
@@ -327,10 +334,9 @@ def resolve_target(
             "No skills-lock.json found; pass --repo and optional --destination"
         )
     try:
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        entry = lock["skills"][skill_name]
+        entry = _cli_lock_skills(lock_path, "project")[skill_name]
         source_id = str(entry["source"])
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+    except (KeyError, TypeError) as exc:
         raise SyncError(
             f"No usable lock entry for {skill_name}; pass --repo and optional --destination"
         ) from exc
@@ -728,9 +734,7 @@ def validate_skill(destination: Path) -> None:
         [
             "uv",
             "run",
-            "--with",
-            "pyyaml",
-            "python",
+            "--script",
             str(find_validator()),
             str(destination),
         ],
@@ -893,7 +897,10 @@ process.stdout.write(hash.digest("hex"));
 
 
 def _verified_lock_hash(
-    lock_path: Path, skill_name: str, installed_skill: Path | None = None
+    lock_path: Path,
+    skill_name: str,
+    installed_skill: Path | None = None,
+    expected_git_tree_hash: str | None = None,
 ) -> str:
     try:
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -923,6 +930,13 @@ def _verified_lock_hash(
                     raise SyncError(
                         f"Refresh succeeded but {lock_path} records stale "
                         f"{skill_name} {field}: {value}, expected {actual}"
+                    )
+            if len(value) == 40 and expected_git_tree_hash is not None:
+                if value != expected_git_tree_hash:
+                    raise SyncError(
+                        f"Refresh succeeded but {lock_path} records stale "
+                        f"{skill_name} {field}: {value}, expected "
+                        f"{expected_git_tree_hash}"
                     )
             return value
         raise SyncError(
@@ -990,7 +1004,10 @@ def _run_installer_with_retry(
 
 
 def _verify_installed_skill(
-    source_skill: Path, installed_skill: Path, lock_path: Path | None
+    source_skill: Path,
+    installed_skill: Path,
+    lock_path: Path | None,
+    expected_git_tree_hash: str | None = None,
 ) -> None:
     skill_name = read_skill_name(source_skill)
     if read_skill_name(installed_skill) != skill_name:
@@ -1005,13 +1022,24 @@ def _verify_installed_skill(
     print(f"Verified installed skill matches source: {source_skill}")
     if lock_path is not None:
         computed_hash = _verified_lock_hash(
-            lock_path, skill_name, installed_skill
+            lock_path,
+            skill_name,
+            installed_skill,
+            expected_git_tree_hash,
         )
         print(f"Verified lock hash: {computed_hash} ({lock_path})")
 
 
 def _shared_global_skills_root() -> Path:
     return Path.home() / ".agents" / "skills"
+
+
+def _global_skill_lock_path(global_skills_root: Path | None = None) -> Path:
+    xdg_state_home = os.environ.get("XDG_STATE_HOME")
+    if xdg_state_home:
+        return Path(xdg_state_home).expanduser() / "skills" / ".skill-lock.json"
+    skills_root = global_skills_root or _shared_global_skills_root()
+    return _absolute_path(skills_root).parent / ".skill-lock.json"
 
 
 def _lock_skills(lock_path: Path) -> dict[str, object]:
@@ -1029,6 +1057,26 @@ def _lock_skills(lock_path: Path) -> dict[str, object]:
 
 def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
     return skill_name in _lock_skills(lock_path)
+
+
+def _cli_lock_skills(lock_path: Path, scope: str) -> dict[str, object]:
+    if not lock_path.is_file():
+        return {}
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    minimum_version = 1 if scope == "project" else 3
+    version = data.get("version") if isinstance(data, dict) else None
+    skills = data.get("skills") if isinstance(data, dict) else None
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, (int, float))
+        or version < minimum_version
+        or not isinstance(skills, dict)
+    ):
+        return {}
+    return skills
 
 
 def _validate_installation_source(
@@ -1051,9 +1099,12 @@ def _validate_installation_source(
             f"Installation source {locked_source} does not match actual push "
             f"endpoint {push_source}"
         )
-    locked_skill_path = entry.get(
-        "skillPath", f"skills/{skill_name}/SKILL.md"
-    )
+    locked_skill_path = entry.get("skillPath")
+    if not isinstance(locked_skill_path, str) or not locked_skill_path:
+        raise SyncError(
+            f"Skills CLI cannot update {skill_name} from {lock_path}: "
+            "the lock entry has no skillPath"
+        )
     expected_skill_path = (source.skill_relative / "SKILL.md").as_posix()
     if locked_skill_path != expected_skill_path:
         raise SyncError(
@@ -1108,7 +1159,7 @@ def resolve_installation_scope(
     installed_skill = _absolute_path(installed_skill)
     global_skills_root = _absolute_path(_shared_global_skills_root())
     global_skill = global_skills_root / skill_name
-    global_lock = global_skills_root.parent / ".skill-lock.json"
+    global_lock = _global_skill_lock_path(global_skills_root)
 
     path_project_root = _project_root_from_installed_path(installed_skill, skill_name)
     if installed_skill == global_skill:
@@ -1302,6 +1353,182 @@ def refresh_skill(args: argparse.Namespace) -> None:
     _verify_installed_skill(source_skill, installed_skill, scope.lock_path)
 
 
+def resolve_named_update_targets(
+    project_root: Path,
+    skill_name: str,
+    source: SourceContext,
+) -> tuple[UpdateTarget, ...]:
+    """Resolve Skills CLI ownership from lock entries, never from discovered paths."""
+
+    root = _absolute_path(project_root)
+    if not root.is_dir():
+        raise SyncError(f"Update project context is not a directory: {root}")
+
+    targets: list[UpdateTarget] = []
+    project_lock = root / "skills-lock.json"
+    project_skills = _cli_lock_skills(project_lock, "project")
+    if skill_name in project_skills:
+        _validate_installation_source(project_lock, skill_name, source)
+        targets.append(
+            UpdateTarget(
+                "project",
+                project_lock,
+                root / ".agents" / "skills" / skill_name,
+            )
+        )
+
+    global_skills = _absolute_path(_shared_global_skills_root())
+    global_lock = _global_skill_lock_path(global_skills)
+    global_skills_lock = _cli_lock_skills(global_lock, "global")
+    if skill_name in global_skills_lock:
+        global_entry = global_skills_lock[skill_name]
+        if not isinstance(global_entry, dict) or not global_entry.get(
+            "skillFolderHash"
+        ):
+            raise SyncError(
+                f"Skills CLI cannot update {skill_name} from {global_lock}: "
+                "the global lock entry has no skillFolderHash"
+            )
+        _validate_installation_source(global_lock, skill_name, source)
+        targets.append(
+            UpdateTarget(
+                "global",
+                global_lock,
+                global_skills / skill_name,
+            )
+        )
+
+    if not targets:
+        raise SyncError(
+            f"{skill_name} is not tracked by Skills CLI in {project_lock} or "
+            f"{global_lock}; install it once with 'skills add' before publishing "
+            "with automatic reinstall"
+        )
+    return tuple(targets)
+
+
+def _source_git_tree_hash(source_skill: Path) -> str:
+    source = source_skill.expanduser().resolve()
+    repo = git_root(source)
+    relative = source.relative_to(repo)
+    value = run_git(repo, "rev-parse", f"HEAD:{relative.as_posix()}")
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise SyncError(f"Cannot resolve Git tree hash for published skill: {source}")
+    return value
+
+
+def refresh_named_skill(
+    source_skill: Path,
+    project_root: Path,
+    targets: tuple[UpdateTarget, ...],
+    *,
+    attempts: int,
+    retry_delay: float,
+) -> None:
+    """Refresh one named skill in every matching lock-managed scope."""
+
+    skill_name = read_skill_name(source_skill)
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
+        raise SyncError(
+            "pnpm is not available; load the repository's configured nvm runtime first"
+        )
+    command = [pnpm, "dlx", "skills", "update", skill_name, "-y"]
+    expected_git_tree_hash = (
+        _source_git_tree_hash(source_skill)
+        if any(target.scope == "global" for target in targets)
+        else None
+    )
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            command,
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part.strip()
+        )
+        normalized_output = output.lower()
+        if any(
+            marker in normalized_output
+            for marker in (
+                "eperm",
+                "eacces",
+                "operation not permitted",
+                "permission denied",
+            )
+        ):
+            raise SyncError(
+                "Named skill update failed with a non-retryable filesystem "
+                f"permission error. Command: {' '.join(command)}\n"
+                f"attempt {attempt}/{attempts}:\n"
+                f"{output or '<no installer output>'}"
+            )
+
+        if result.returncode == 0:
+            try:
+                for target in targets:
+                    _verify_installed_skill(
+                        source_skill,
+                        target.installed_skill,
+                        target.lock_path,
+                        (
+                            expected_git_tree_hash
+                            if target.scope == "global"
+                            else None
+                        ),
+                    )
+            except SyncError as exc:
+                failures.append(
+                    f"attempt {attempt}/{attempts}, verification failed:\n{exc}\n"
+                    f"{output or '<no installer output>'}"
+                )
+            else:
+                if failures:
+                    print("Previous named update attempts failed:")
+                    for failure in failures:
+                        print(failure)
+                if output:
+                    print(output)
+                print(
+                    f"Refreshed tracked {skill_name} installations on attempt "
+                    f"{attempt}/{attempts}."
+                )
+                return
+        else:
+            rendered_output = output or "<no installer output>"
+            failures.append(
+                f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
+                f"{rendered_output}"
+            )
+
+        normalized_failure = failures[-1].lower()
+        if any(
+            marker in normalized_failure
+            for marker in (
+                "eperm",
+                "eacces",
+                "operation not permitted",
+                "permission denied",
+            )
+        ):
+            raise SyncError(
+                "Named skill update failed with a non-retryable filesystem "
+                f"permission error. Command: {' '.join(command)}\n"
+                f"{failures[-1]}"
+            )
+        if attempt < attempts and retry_delay:
+            time.sleep(retry_delay)
+
+    raise SyncError(
+        f"Named skill update failed after {attempts} attempts. "
+        f"Command: {' '.join(command)}\n" + "\n\n".join(failures)
+    )
+
+
 def _resolve_publish_receipt(
     args: argparse.Namespace,
 ) -> tuple[PublishReceipt, Path, Target | None]:
@@ -1312,10 +1539,10 @@ def _resolve_publish_receipt(
     )
     is_project_installation = bool(
         logical_project_root is not None
-        and _active_installation(
-            local_skill,
-            logical_project_root / "skills-lock.json",
-            skill_name,
+        and local_skill.is_dir()
+        and skill_name
+        in _cli_lock_skills(
+            logical_project_root / "skills-lock.json", "project"
         )
     )
     direct_source = (
@@ -1324,9 +1551,9 @@ def _resolve_publish_receipt(
         else _direct_source_context(local_skill.resolve())
     )
     target: Target | None = None
+    automatic_project_root: Path | None = None
     if direct_source is not None:
         source = direct_source
-        automatic_installation: Path | None = None
     else:
         registry_path = Path(args.registry).expanduser().resolve()
         target = resolve_target(
@@ -1339,48 +1566,26 @@ def _resolve_publish_receipt(
         source = _source_context_in_repo(
             target.repo, target.destination, require_tracked=False
         )
-        automatic_installation = local_skill
+        automatic_project_root = logical_project_root
 
-    installation: InstallationScope | None = None
-    installed_skill: Path | None = None
+    update_root: Path | None = None
+    update_targets: tuple[UpdateTarget, ...] = ()
     if args.reinstall:
-        if args.installed_skill:
-            installed_skill = _absolute_path(Path(args.installed_skill))
-            if automatic_installation is not None and not _same_location(
-                installed_skill, automatic_installation
-            ):
-                raise SyncError(
-                    "A project-installed publish must reinstall the originating "
-                    f"copy {automatic_installation}, not {installed_skill}"
-                )
-        else:
-            installed_skill = automatic_installation
-        if installed_skill is None:
-            raise SyncError(
-                "Direct-source publish with reinstall enabled requires "
-                "--installed-skill; global installation is never an implicit fallback"
+        update_root = _absolute_path(
+            Path(args.project_root) if args.project_root else (
+                automatic_project_root or Path.cwd()
             )
-        if read_skill_name(installed_skill) != skill_name:
-            raise SyncError("Installed and source skill names do not match")
-        installation = resolve_installation_scope(
-            installed_skill,
-            skill_name,
-            args.scope,
-            Path(args.project_root) if args.project_root else None,
-            Path(args.lock) if args.lock else None,
-            require_tracked=True,
-            allow_no_project_context=args.no_project_context,
         )
-        _validate_installation_source(
-            installation.lock_path,
+        update_targets = resolve_named_update_targets(
+            update_root,
             skill_name,
             source,
         )
 
     receipt = PublishReceipt(
         source=source,
-        installation=installation,
-        installed_skill=installed_skill,
+        update_root=update_root,
+        update_targets=update_targets,
         push_enabled=args.push,
         reinstall_enabled=args.reinstall,
     )
@@ -1388,10 +1593,13 @@ def _resolve_publish_receipt(
     print(f"Source repository: {source.repo}")
     print(f"Push enabled: {str(args.push).lower()}")
     print(f"Reinstall enabled: {str(args.reinstall).lower()}")
-    if installation is not None and installed_skill is not None:
-        print(f"Bound installation: {installed_skill}")
-        print(f"Bound scope: {installation.name}")
-        print(f"Bound lock: {installation.lock_path}")
+    if update_root is not None:
+        print(f"Update context: {update_root}")
+        for update_target in update_targets:
+            print(
+                f"Tracked {update_target.scope} update: "
+                f"{update_target.lock_path}"
+            )
     return receipt, local_skill, target
 
 
@@ -1494,27 +1702,13 @@ def publish_skill(args: argparse.Namespace) -> None:
     if not args.reinstall:
         print("Reinstall skipped by --no-reinstall.")
         return
-    assert receipt.installation is not None
-    assert receipt.installed_skill is not None
-    installation = receipt.installation
-    refresh_skill(
-        argparse.Namespace(
-            skill_dir=str(receipt.installed_skill),
-            source_skill_dir=str(receipt.source.skill_dir),
-            scope=installation.name,
-            project_root=(
-                str(installation.context_project_root)
-                if installation.context_project_root is not None
-                else None
-            ),
-            no_project_context=(
-                installation.name == "global"
-                and installation.context_project_root is None
-            ),
-            lock=str(installation.lock_path),
-            attempts=args.attempts,
-            retry_delay=args.retry_delay,
-        )
+    assert receipt.update_root is not None
+    refresh_named_skill(
+        receipt.source.skill_dir,
+        receipt.update_root,
+        receipt.update_targets,
+        attempts=args.attempts,
+        retry_delay=args.retry_delay,
     )
     print("Publish completed: requested push and reinstall steps succeeded.")
 
@@ -1644,13 +1838,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     publish = subparsers.add_parser(
         "publish",
-        help="push and reinstall one skill with a bound installation target",
+        help="push and refresh one named skill through its matching CLI locks",
     )
     publish.add_argument("skill_dir", help="source skill or project-installed copy")
-    publish.add_argument(
-        "--installed-skill",
-        help="existing tracked installation to refresh after a direct-source push",
-    )
     publish.add_argument("--repo")
     publish.add_argument("--destination")
     publish.add_argument("--registry", default=str(default_registry_path()))
@@ -1662,11 +1852,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--reinstall", action=argparse.BooleanOptionalAction, default=True
     )
     publish.add_argument(
-        "--scope", choices=("auto", "project", "global"), default="auto"
+        "--project-root",
+        help="project context whose lock is checked together with the global lock",
     )
-    publish.add_argument("--project-root")
-    publish.add_argument("--no-project-context", action="store_true")
-    publish.add_argument("--lock")
     publish.add_argument("--allow-dirty", action="store_true")
     publish.add_argument("--allow-unpushed", action="store_true")
     publish.add_argument("--push-attempts", type=_positive_int, default=3)

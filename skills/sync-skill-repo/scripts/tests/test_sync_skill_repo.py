@@ -59,19 +59,20 @@ def publish_args(
     push: bool = True,
     reinstall: bool = True,
 ) -> SimpleNamespace:
+    project_root = None
+    if installed is not None:
+        project_root = MODULE._project_root_from_installed_path(
+            MODULE._absolute_path(installed), installed.name
+        )
     return SimpleNamespace(
         skill_dir=str(skill),
-        installed_skill=str(installed) if installed else None,
         repo=None,
         destination=None,
         registry=str(Path.home() / ".codex" / "unused-test-registry.json"),
         message=None,
         push=push,
         reinstall=reinstall,
-        scope="auto",
-        project_root=None,
-        no_project_context=False,
-        lock=None,
+        project_root=str(project_root) if project_root else None,
         allow_dirty=False,
         allow_unpushed=False,
         push_attempts=3,
@@ -269,20 +270,30 @@ class SyncSkillRepoTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.SyncError, "at least one"):
             MODULE.publish_skill(args)
 
-    def test_direct_source_publish_requires_bound_installation_by_default(self) -> None:
+    def test_direct_source_publish_requires_a_matching_cli_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary) / "source"
+            root = Path(temporary)
+            repo = root / "source"
+            project = root / "consumer"
+            project.mkdir()
             init_repo(repo, "git@github.com:example/source.git")
             skill = repo / "skills" / "demo-skill"
             write_skill(skill, "demo-skill")
             git(repo, "add", ".")
             git(repo, "commit", "-q", "-m", "init")
             configure_github_upstream(repo)
+            args = publish_args(skill)
+            args.project_root = str(project)
 
-            with self.assertRaisesRegex(
-                MODULE.SyncError, "requires --installed-skill"
+            with patch.object(
+                MODULE,
+                "_shared_global_skills_root",
+                return_value=root / "global" / ".agents" / "skills",
             ):
-                MODULE.publish_skill(publish_args(skill))
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "not tracked by Skills CLI"
+                ):
+                    MODULE.publish_skill(args)
 
     def test_direct_source_publish_binds_project_reinstall_before_push(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -301,12 +312,14 @@ class SyncSkillRepoTests(unittest.TestCase):
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
+                        "version": 1,
                         "skills": {
                             "demo-skill": {
                                 "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
                                 "computedHash": "a" * 64,
                             }
-                        }
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -316,22 +329,23 @@ class SyncSkillRepoTests(unittest.TestCase):
             with patch.object(MODULE, "_refresh_source_upstream"):
                 with patch.object(MODULE, "validate_skill"):
                     with patch.object(MODULE, "push_source_with_retry") as push:
-                        with patch.object(MODULE, "refresh_skill") as refresh:
+                        with patch.object(MODULE, "refresh_named_skill") as refresh:
                             MODULE.publish_skill(args)
 
             self.assertEqual(push.call_count, 1)
             self.assertEqual(push.call_args.args[0].repo, repo.resolve())
             self.assertEqual(push.call_args.args[1:], (3, 0))
             refresh.assert_called_once()
-            refresh_args = refresh.call_args.args[0]
-            self.assertEqual(refresh_args.scope, "project")
+            self.assertEqual(refresh.call_args.args[0], skill.resolve())
             self.assertEqual(
-                Path(refresh_args.skill_dir), MODULE._absolute_path(installed)
+                refresh.call_args.args[1], MODULE._absolute_path(project)
             )
+            targets = refresh.call_args.args[2]
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].scope, "project")
             self.assertEqual(
-                Path(refresh_args.project_root), MODULE._absolute_path(project)
+                targets[0].installed_skill, MODULE._absolute_path(installed)
             )
-            self.assertFalse(refresh_args.no_project_context)
 
     def test_direct_source_publish_can_push_without_reinstall(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -348,7 +362,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             with patch.object(MODULE, "_refresh_source_upstream"):
                 with patch.object(MODULE, "validate_skill"):
                     with patch.object(MODULE, "push_source_with_retry") as push:
-                        with patch.object(MODULE, "refresh_skill") as refresh:
+                        with patch.object(MODULE, "refresh_named_skill") as refresh:
                             MODULE.publish_skill(args)
 
             self.assertEqual(push.call_count, 1)
@@ -375,12 +389,14 @@ class SyncSkillRepoTests(unittest.TestCase):
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
+                        "version": 1,
                         "skills": {
                             "demo-skill": {
                                 "source": "other/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
                                 "computedHash": "a" * 64,
                             }
-                        }
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -411,6 +427,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
+                        "version": 1,
                         "skills": {
                             "demo-skill": {
                                 "source": "example/source",
@@ -444,6 +461,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
+                        "version": 1,
                         "skills": {
                             "demo-skill": {
                                 "source": "example/source",
@@ -467,6 +485,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             repo = root / "source"
             project = root / "consumer"
             global_skills = root / "global" / ".agents" / "skills"
+            project.mkdir()
             init_repo(repo, "git@github.com:example/source.git")
             skill = repo / "skills" / "demo-skill"
             installed = global_skills / "demo-skill"
@@ -480,18 +499,19 @@ class SyncSkillRepoTests(unittest.TestCase):
             global_lock.write_text(
                 json.dumps(
                     {
+                        "version": 3,
                         "skills": {
                             "demo-skill": {
                                 "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
                                 "skillFolderHash": "a" * 40,
                             }
-                        }
+                        },
                     }
                 ),
                 encoding="utf-8",
             )
             args = publish_args(skill, installed=installed)
-            args.scope = "global"
             args.project_root = str(project)
 
             with patch.object(
@@ -500,15 +520,20 @@ class SyncSkillRepoTests(unittest.TestCase):
                 with patch.object(MODULE, "_refresh_source_upstream"):
                     with patch.object(MODULE, "validate_skill"):
                         with patch.object(MODULE, "push_source_with_retry"):
-                            with patch.object(MODULE, "refresh_skill") as refresh:
+                            with patch.object(
+                                MODULE, "refresh_named_skill"
+                            ) as refresh:
                                 MODULE.publish_skill(args)
 
-            refresh_args = refresh.call_args.args[0]
-            self.assertEqual(refresh_args.scope, "global")
             self.assertEqual(
-                Path(refresh_args.project_root), MODULE._absolute_path(project)
+                refresh.call_args.args[1], MODULE._absolute_path(project)
             )
-            self.assertFalse(refresh_args.no_project_context)
+            targets = refresh.call_args.args[2]
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].scope, "global")
+            self.assertEqual(
+                targets[0].installed_skill, MODULE._absolute_path(installed)
+            )
 
     def test_project_symlink_publish_keeps_originating_installation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -529,6 +554,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             (project / "skills-lock.json").write_text(
                 json.dumps(
                     {
+                        "version": 1,
                         "skills": {
                             "demo-skill": {
                                 "source": "example/source",
@@ -547,14 +573,18 @@ class SyncSkillRepoTests(unittest.TestCase):
             with patch.object(MODULE, "_refresh_source_upstream"):
                 with patch.object(MODULE, "validate_skill"):
                     with patch.object(MODULE, "push_source_with_retry"):
-                        with patch.object(MODULE, "refresh_skill") as refresh:
+                        with patch.object(MODULE, "refresh_named_skill") as refresh:
                             MODULE.publish_skill(args)
 
-            refresh_args = refresh.call_args.args[0]
             self.assertEqual(
-                Path(refresh_args.skill_dir), MODULE._absolute_path(installed)
+                refresh.call_args.args[1], MODULE._absolute_path(project)
             )
-            self.assertEqual(refresh_args.scope, "project")
+            targets = refresh.call_args.args[2]
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].scope, "project")
+            self.assertEqual(
+                targets[0].installed_skill, MODULE._absolute_path(installed)
+            )
 
     def test_no_push_rejects_source_behind_upstream(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -667,6 +697,358 @@ class SyncSkillRepoTests(unittest.TestCase):
                 ("REMOVE", Path("unexpected.txt")),
                 MODULE.installed_content_changes(source, installed),
             )
+
+    def test_named_update_ignores_unlocked_shared_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            repo = root / "source"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            project.mkdir()
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                                "computedHash": "a" * 64,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            global_skills.mkdir(parents=True)
+            (global_skills / "demo-skill").symlink_to(
+                skill, target_is_directory=True
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                targets = MODULE.resolve_named_update_targets(
+                    project,
+                    "demo-skill",
+                    MODULE._source_context(skill),
+                )
+
+            self.assertEqual(len(targets), 1)
+            self.assertEqual(targets[0].scope, "project")
+            self.assertEqual(
+                targets[0].installed_skill,
+                MODULE._absolute_path(
+                    project / ".agents" / "skills" / "demo-skill"
+                ),
+            )
+
+    def test_named_update_rejects_lock_entry_without_skill_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            repo = root / "source"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            project.mkdir()
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "computedHash": "a" * 64,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(MODULE.SyncError, "no skillPath"):
+                    MODULE.resolve_named_update_targets(
+                        project,
+                        "demo-skill",
+                        MODULE._source_context(skill),
+                    )
+
+    def test_named_update_rejects_global_lock_without_folder_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            repo = root / "source"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            project.mkdir()
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.parent.mkdir(parents=True)
+            global_lock.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "no skillFolderHash"
+                ):
+                    MODULE.resolve_named_update_targets(
+                        project,
+                        "demo-skill",
+                        MODULE._source_context(skill),
+                    )
+
+    def test_named_update_ignores_versionless_project_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            repo = root / "source"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(repo)
+            project.mkdir()
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "not tracked by Skills CLI"
+                ):
+                    MODULE.resolve_named_update_targets(
+                        project,
+                        "demo-skill",
+                        MODULE._source_context(skill),
+                    )
+
+    def test_cli_lock_version_matches_javascript_number_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / "skills-lock.json"
+            payload = {"skills": {"demo-skill": {}}}
+
+            lock.write_text(
+                json.dumps({"version": True, **payload}), encoding="utf-8"
+            )
+            self.assertEqual(MODULE._cli_lock_skills(lock, "project"), {})
+
+            lock.write_text(
+                json.dumps({"version": 1.0, **payload}), encoding="utf-8"
+            )
+            self.assertIn(
+                "demo-skill", MODULE._cli_lock_skills(lock, "project")
+            )
+
+    def test_global_lock_path_honors_xdg_state_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_home = Path(temporary) / "state"
+            with patch.dict(
+                MODULE.os.environ,
+                {"XDG_STATE_HOME": str(state_home)},
+                clear=False,
+            ):
+                lock = MODULE._global_skill_lock_path(
+                    Path(temporary) / "home" / ".agents" / "skills"
+                )
+
+            self.assertEqual(lock, state_home / "skills" / ".skill-lock.json")
+
+    def test_named_update_uses_skill_name_without_manual_scope_or_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source = root / "source" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(source, "demo-skill", "published")
+            write_skill(installed, "demo-skill", "published")
+            lock = project / "skills-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {"computedHash": "a" * 64}
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            target = MODULE.UpdateTarget("project", lock, installed)
+            succeeded = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="updated", stderr=""
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess, "run", return_value=succeeded
+                ) as run:
+                    with patch.object(MODULE, "_verify_installed_skill") as verify:
+                        MODULE.refresh_named_skill(
+                            source,
+                            project,
+                            (target,),
+                            attempts=3,
+                            retry_delay=0,
+                        )
+
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "/bin/pnpm",
+                    "dlx",
+                    "skills",
+                    "update",
+                    "demo-skill",
+                    "-y",
+                ],
+            )
+            self.assertNotIn("-p", run.call_args.args[0])
+            self.assertNotIn("-g", run.call_args.args[0])
+            verify.assert_called_once_with(source, installed, lock, None)
+
+    def test_named_update_retries_when_cli_succeeds_but_verification_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source = root / "source" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(source, "demo-skill", "published")
+            write_skill(installed, "demo-skill", "old")
+            lock = project / "skills-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {"computedHash": "a" * 64}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            target = MODULE.UpdateTarget("project", lock, installed)
+            succeeded = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="checked", stderr=""
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess, "run", return_value=succeeded
+                ) as run:
+                    with patch.object(
+                        MODULE,
+                        "_verify_installed_skill",
+                        side_effect=[MODULE.SyncError("stale"), None],
+                    ) as verify:
+                        with patch("builtins.print") as output:
+                            MODULE.refresh_named_skill(
+                                source,
+                                project,
+                                (target,),
+                                attempts=3,
+                                retry_delay=0,
+                            )
+
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(verify.call_count, 2)
+            self.assertIn("stale", "\n".join(str(call) for call in output.call_args_list))
+
+    def test_named_update_zero_exit_permission_failure_is_not_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source = root / "source" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(source, "demo-skill", "published")
+            write_skill(installed, "demo-skill", "old")
+            lock = project / "skills-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {"computedHash": "a" * 64}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            target = MODULE.UpdateTarget("project", lock, installed)
+            succeeded_with_error = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="EPERM: operation not permitted",
+                stderr="",
+            )
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    return_value=succeeded_with_error,
+                ) as run:
+                    with patch.object(
+                        MODULE,
+                        "_verify_installed_skill",
+                        side_effect=MODULE.SyncError("stale"),
+                    ):
+                        with self.assertRaisesRegex(
+                            MODULE.SyncError, "non-retryable"
+                        ):
+                            MODULE.refresh_named_skill(
+                                source,
+                                project,
+                                (target,),
+                                attempts=3,
+                                retry_delay=0,
+                            )
+
+            self.assertEqual(run.call_count, 1)
 
     def test_refresh_retries_exact_scoped_skill_and_verifies_lock(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1211,6 +1593,39 @@ class SyncSkillRepoTests(unittest.TestCase):
 
             self.assertEqual(
                 MODULE._verified_lock_hash(lock, "demo-skill"),
+                "d" * 40,
+            )
+
+    def test_global_lock_rejects_stale_legacy_git_tree_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            lock = Path(temporary) / ".skill-lock.json"
+            lock.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "skills": {
+                            "demo-skill": {
+                                "skillFolderHash": "d" * 40,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(MODULE.SyncError, "stale"):
+                MODULE._verified_lock_hash(
+                    lock,
+                    "demo-skill",
+                    expected_git_tree_hash="e" * 40,
+                )
+
+            self.assertEqual(
+                MODULE._verified_lock_hash(
+                    lock,
+                    "demo-skill",
+                    expected_git_tree_hash="d" * 40,
+                ),
                 "d" * 40,
             )
 
