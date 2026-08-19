@@ -33,7 +33,6 @@
 ### Python UI
 
 - [`edit-streamlit`](skills/edit-streamlit)：构建、调试和重构 Streamlit 应用。
-- [`reflex-usage`](skills/reflex-usage)：构建和优化 Reflex 管理后台与门户界面。
 
 ### 知识与文档
 
