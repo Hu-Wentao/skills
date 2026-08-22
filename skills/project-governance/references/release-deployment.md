@@ -48,17 +48,61 @@ the operations explicitly authorized in the current request. A prior request,
 an existing automation, a prepared commit, or a failed earlier attempt does not
 provide current authority for another mutation.
 
+A full release or release-and-deploy request already authorizes the normal Git
+publication steps needed to release the selected committed integration
+lineage. When the configured workflow requires CI or remote source
+availability, this includes a non-force fast-forward push of that lineage to
+its configured upstream. It also includes a deterministic isolated
+release-preparation commit only when the project contract owns the exact files
+and command. Do not stop to request either authorization again. This authority
+does not include unrelated control-worktree bytes, force push, history rewrite,
+divergence resolution, a different source lineage, rollback, restore, or an
+additional target.
+
 Resolve ambiguity before acting when the requested object could be either
 application code or instance state. A target name, production host, or the word
 “update” does not by itself authorize an application deployment.
 
 ## Keep Authorized Work Moving
 
+### Direct release-and-deploy command
+
+Interpret an imperative command that combines release, deployment, and one
+named target as the complete execution request. This includes natural-language
+equivalents such as `release and deploy <target>` and `发版部署 <目标>`. Do not
+turn that command into a proposal followed by a second authorization prompt.
+
+Resolve the project's `release-deployment` task first and let its executable
+contract own the ordered path. Use the named target to select the applicable
+normal release/deploy operation and keep going through its declared version
+preparation, isolated commit, gates, non-force publication, annotated release
+tag, deployment, and terminal observation. Omit stages the project contract
+does not require; never invent replacements for stages the contract does not
+support.
+
+A generic repository rule requiring a plan before large changes does not
+create a second authorization gate for these normal contracted stages: the
+imperative release-and-deploy command already approves that bounded execution
+path. A repository rule that specifically protects release or deployment with
+an additional named decision remains authoritative. Ask only for information
+or authority that is actually missing, such as an absent target, multiple
+plausible source lineages, rollback, restore, force push, tag mutation, an
+additional environment, or a contract-declared protected decision.
+
 When the current request explicitly authorizes a sequence such as completing
 named pending changes, committing them, releasing the resulting commit, and
 deploying it, treat every named step as current authority for that sequence.
 Do not request the same authorization again between those steps. Do not extend
 the sequence to an unnamed mutation.
+
+Likewise, treat the words “full release” or “release and deploy” as authority
+for required version preparation, immutable release identity creation,
+non-force publication of the selected committed integration lineage, declared
+candidate gates, release publication, and deployment to the named target. Keep
+moving through those normal stages without asking separately for commit, push,
+tag, or workflow-dispatch authorization. Stop only when the source or target is
+ambiguous, an operation would exceed the safe boundaries above, or a required
+gate fails.
 
 Interpret retry and repair scope from the verbs the user actually authorized:
 
@@ -111,9 +155,13 @@ currently authorized release is waiting to advance.
    without a control-worktree status check.
 4. Create the retained release branch and worktree from the resolved committed
    source without running `git status` against the control worktree.
-5. Treat synchronization of an integration branch as a separate operation
-   with its own prerequisites. Never import its checkout-cleanliness gate into
-   release or deployment planning, preparation, execution, or reporting.
+5. Distinguish pre-release publication from post-release integration. A full
+   release authorizes a verified non-force fast-forward push of the selected
+   committed integration ref to its configured upstream when required for CI
+   or source availability. Synchronizing an isolated release, repair, or
+   hotfix lineage back to integration after source freeze remains a separate
+   operation. Never import its checkout-cleanliness gate into release or
+   deployment planning, preparation, execution, or reporting.
 6. Do not re-resolve a branch, `HEAD`, or another moving ref after the commit is
    frozen.
 7. Keep the release tag, full commit id, and deployment target together in

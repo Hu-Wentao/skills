@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Bootstrap, review, and maintain project architecture, governed documents, domain terminology and concept catalogs, Markdown lifecycle, implementation-plan and test-case development handoffs, dependency evaluations, compatibility, Git lineage, releases, deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for implementation from a plan, specification, or governed test case in a task worktree; domain language, bounded contexts, glossaries, and semantic relationships; document inspection, mdq contracts, stale requirements or plans, baselines, archives, test-case catalogs, and verification traceability; third-party technology assessment or replacement; branches, commits, worktrees, SemVer, tags, promotions, deployment recovery, fixed-tag retries, repairs, hotfixes, PPISS ports, recurring defects, root cause, host or Compose CPU/memory/OOM/disk incidents, resource pressure, repair history, feedback rewards, or reconciliation between governance sources and implementation."
+description: "Govern project architecture, requirements, baselines, plans, domain terminology, Markdown lifecycle, implementation and test-case handoffs, dependency evaluations, Git/worktrees/SemVer, releases and deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for governed implementation; document or concept maintenance; dependency decisions; branches, tags, promotions, retries, repairs, hotfixes, and deployment recovery; defect diagnosis and repair history; host or Compose resource incidents; and verification traceability. Trigger directly on imperative release-and-deploy requests with a named target, including `release and deploy TARGET` and `发版部署 目标`."
 ---
 
 # Project Governance
@@ -162,8 +162,13 @@ Treat these domains as peers. Crossing a domain boundary does not transfer autho
   without inspecting control-worktree cleanliness. Release and deployment
   preflight must not run `git status` against the control worktree.
 - After source freeze, do not make release or deployment status depend on the
-  moving integration branch. Treat synchronization back to it as a separately
-  authorized and separately reported operation.
+  moving integration branch. Treat post-release synchronization of an isolated
+  release, repair, or hotfix lineage back to integration as separately
+  authorized and separately reported. Do not confuse that operation with the
+  pre-release fast-forward publication of the selected committed integration
+  lineage, which a full release or release-and-deploy request already
+  authorizes when the configured workflow requires it for CI or source
+  availability.
 - Do not classify a defect root cause, recurrence, ownership, requirement status, priority, or breaking-change acceptance from a script result alone.
 - Do not turn passing checks into automatic proof of product semantics or deployment success.
 - Do not let a test case create requirements, override a higher-authority source, activate lifecycle state, or authorize release. Treat `draft_unreviewed`, unresolved requirement authority, or semantic conflict as `decision_required` for test-case-driven implementation.
@@ -248,6 +253,32 @@ managed contract.
 
 ## Govern Git, Releases, and Deployment
 
+Treat an imperative `release and deploy <target>`, `发版部署 <目标>`, or a
+semantically equivalent command as a request to execute the complete governed
+release-and-deploy workflow for that target, not as a request to rediscover or
+present the workflow. The named target and imperative release-and-deploy verb
+are current authorization for every normal contracted stage required to reach
+that target's terminal deployment state. Resolve `release-deployment`
+immediately, consume its project profile and executable contract, perform the
+declared preparation, validation, commit, non-force publication, immutable
+release identity, deployment, and terminal observation stages in order, and do
+not ask the user to confirm that same plan again.
+
+Treat a repository's generic "plan before large changes" or "wait for plan
+confirmation" rule as satisfied by this explicit command for the normal stages
+owned by the resolved release contract. A repository may still define a more
+specific protected release decision that requires a separate confirmation; do
+not bypass that explicit gate. Stop only when the target or source identity is
+missing or ambiguous, the project has no executable contract for the requested
+stage, a required gate fails, or continuation would require an operation not
+authorized by the command. Do not replace missing automation with improvised
+release shell commands.
+
+Keep discovery bounded: after resolving the task, read only the returned
+profile and policy sections needed by the selected operations, a failed
+precondition, or a semantic conflict. Do not re-derive an established project
+release workflow from the repository on every invocation.
+
 Use exactly one governed source-delivery mode for every release/deployment:
 `archive` or `github`. Resolve the project profile's deterministic source-
 delivery command and its `archive|github` contract parameter before execution.
@@ -303,16 +334,26 @@ their focused tests; never inject it into normal inspect, prepare, doctor,
 qualify, run, promote, repair, or retry execution. Product and candidate tests
 remain release gates only when the project contract declares them as such.
 
-Treat a request for a full release or release-and-deploy as authority over an
-already committed source identity, not as authority to commit the control
-worktree. Resolve the committed integration ref directly and use `release
-prepare` to create or resume the retained release worktree. Do not inspect or
-report control-worktree cleanliness during release inspection, planning,
-preparation, execution, deployment, promotion, or retry. The isolated release,
-repair, or detached worktree is the only checkout whose cleanliness is a
-release/deployment precondition. If the user intends uncommitted bytes to enter
-the candidate, obtain separate scope for finishing and committing those bytes
-before release preparation.
+Treat a request for a full release or release-and-deploy as authority to carry
+the selected committed integration lineage through every required normal
+publication step. This includes a non-force fast-forward push to its configured
+upstream when required for CI or source availability; do not ask for that
+authorization again. It also includes a deterministic release-preparation
+commit, such as a project-owned version or manifest update, only when the
+configured release workflow declares the exact mutation and performs it in an
+isolated release worktree. It does not authorize committing arbitrary staged,
+unstaged, untracked, or unrelated control-worktree bytes, force-pushing,
+rewriting history, resolving divergence, or selecting a different source
+lineage.
+
+Resolve the committed integration ref directly and use `release prepare` to
+create or resume the retained release worktree. Do not inspect or report
+control-worktree cleanliness during release inspection, planning, preparation,
+execution, deployment, promotion, or retry. The isolated release, repair, or
+detached worktree is the only checkout whose cleanliness is a
+release/deployment precondition. If uncommitted bytes are required but are not
+an exact workflow-owned release-preparation mutation, obtain separate scope for
+finishing and committing those bytes before release preparation.
 
 Treat a request to hotfix one currently deployed target as authority to inspect
 that target's exact deployed tag, commit, successful deployment transaction,
