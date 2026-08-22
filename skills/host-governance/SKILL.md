@@ -134,11 +134,37 @@ because the one-off command would be shorter.
    may request infrastructure but does not acquire authority to rewrite shared
    configuration.
 
+## Apply Conversation-Scoped SSH Authorization
+
+When the user states `本次对话允许执行SSH读写` or an unambiguous equivalent,
+treat it as standing authorization for the current conversation and current
+task. Autonomously run the SSH read and write commands needed to complete that
+task against targets unambiguously established by the request or authoritative
+host context; do not request per-command or per-turn SSH approval.
+
+Use this standing authorization to satisfy the user-authorization prerequisite
+for an in-scope contracted SSH mutation, including its `--authorized` gate. It
+does not bypass a required v2 contract, target or alias validation, transaction
+lock, secret handling rule, or verification and rollback requirement. It also
+does not independently authorize an unrequested release, deployment, rollback,
+destructive or identity-changing outcome, billable action, provider API or
+console action, browser action, local credential change, a different host, or a
+new task. Require explicit task intent for those outcomes, but do not repeat SSH
+approval when that intent and the standing authorization already cover the
+command. Ask once before execution when the target, task boundary, or material
+effect remains ambiguous.
+
+Expire the authorization when the task completes, the conversation ends, or
+the user revokes or narrows it. Never carry it into another conversation or
+infer it from an earlier one.
+
 ## Preserve Safety Invariants
 
-- Treat `inspect` and `plan` as read-only. Require current-turn authorization
-  for each remote write, reload, policy save, DNS mutation, migration, or
-  rollback target.
+- Treat `inspect` and `plan` as read-only. Without conversation-scoped SSH
+  authorization, require current-turn authorization for each remote write,
+  reload, policy save, DNS mutation, migration, or rollback target. With that
+  standing authorization, do not repeat approval for in-scope SSH writes;
+  preserve every separate authorization boundary defined above.
 - For an initial server-bootstrap request, treat local key creation, manifest
   edits, host-key scans, `inspect`, `plan`, and `apply` as intermediate states,
   never as proof that the server was initialized. End the task only as
