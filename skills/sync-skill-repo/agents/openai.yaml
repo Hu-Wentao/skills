@@ -1,4 +1,4 @@
 interface:
   display_name: "Sync Skill Repo"
-  short_description: "Publish and update one lock-managed skill"
-  default_prompt: "Use $sync-skill-repo to publish this local skill to GitHub, then refresh that named skill through Skills CLI update and verify its lock-managed installations."
+  short_description: "Revise, publish, and update one skill"
+  default_prompt: "Use $sync-skill-repo after revising this local skill to publish it to GitHub, run its named Skills CLI update, and verify its lock-managed installations."

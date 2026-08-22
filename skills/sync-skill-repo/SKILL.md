@@ -1,12 +1,24 @@
 ---
 name: sync-skill-repo
-description: Publish a local Codex skill to GitHub, then refresh that named skill through the Skills CLI update workflow and verify its project and global lock-managed installations. If the skill is already in its source repository, validate it, commit only the intended skill changes, and push the current branch. If it is a project-local installed copy, synchronize it to its registered source repository first. Use when the user asks to publish a skill, `publish-skill`, "发布技能", push, return, or synchronize skill changes. A publish request includes the post-push named update; a plain sync or push request may stop after GitHub.
+description: Publish a local Codex skill to GitHub, then refresh that named skill through the Skills CLI update workflow and verify its project and global lock-managed installations. If the skill is already in its source repository, validate it, commit only the intended skill changes, and push the current branch. If it is a project-local installed copy, synchronize it to its registered source repository first. Use when the user asks to revise or "修订技能", publish a skill, `publish-skill`, "发布技能", push, return, or synchronize skill changes. A revision or publish request includes the post-push named update by default; a plain sync or push request may stop after GitHub.
 ---
 
 # Publish or Sync a Skill
 
 Publish one local skill to its GitHub source repository without mixing unrelated
 work.
+
+## Meaning of Revision
+
+Treat a request to revise, improve, update, or "修订" an existing skill as
+authorization to modify and validate the skill, then publish it with the full
+named-update workflow. Before taking task actions, tell the user exactly:
+
+`修订技能后将推送远端并 update。`
+
+Use `skillcraft` for the modification and validation stages. After validation,
+continue with this skill's `publish` operation. Stop before push or update only
+when the user explicitly requests a local-only revision, no push, or no update.
 
 ## Meaning of Publish
 

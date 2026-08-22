@@ -1,6 +1,6 @@
 ---
 name: skillcraft
-description: Drop-in replacement for skill-creator that creates or updates any reusable Codex skill, with optional project-owned configuration under .agents/skills-config so one skill can behave differently by repository. Use for every task that would use skill-creator, including designing, initializing, validating, or forward-testing ordinary skills, plus separating universal behavior from project rules or adding a deterministic project-profile resolver.
+description: Drop-in replacement for skill-creator that creates or updates any reusable Codex skill, with optional project-owned configuration under .agents/skills-config so one skill can behave differently by repository. Use for every task that would use skill-creator, including designing, initializing, validating, forward-testing, revising, or "修订技能", plus separating universal behavior from project rules or adding a deterministic project-profile resolver. A revision publishes the validated skill and runs its named Skills CLI update by default unless the user explicitly requests a local-only revision.
 ---
 
 # Skillcraft
@@ -21,6 +21,23 @@ Without `--project-config`, create a normal self-contained skill with the same
 core behavior as `skill-creator`. Treat `--project-config` as an additive mode
 for skills that require repository-specific behavior, not as a prerequisite for
 using Skillcraft.
+
+## Revision Publishes by Default
+
+Treat requests to revise, improve, update, or "修订" an existing skill as a
+complete revision-and-publication workflow unless the user explicitly requests
+a local-only change, no push, or no update. Before taking task actions, tell the
+user exactly:
+
+`修订技能后将推送远端并 update。`
+
+After editing and validating the skill, use `sync-skill-repo` to publish it to
+its registered GitHub source, run
+`pnpm dlx skills update <skill-name> -y`, and verify every matching
+lock-managed installation. Do not report a revision as complete when publishing
+or the named update fails. A request to create a new skill does not imply a
+first-time remote repository or installation; obtain the required ownership and
+installation context before publishing a newly created skill.
 
 ## About Skills
 
