@@ -48,14 +48,12 @@ Creating a new contracted document writes the requested authored records and the
 
 Before an authored-record edit, require `valid` or a deliberately accepted `drifted` state whose warnings do not affect the target identity or boundary. Never edit an authored record under an `invalid` contract. Repair first only when repair is authorized.
 
-After every authored-record or contract write:
-
-1. validate the profile and safe index path;
-2. diagnose all records and recovery paths;
-3. query every affected identity, an unaffected representative identity, and an absent identity;
-4. verify that source ranges remain disjoint and expected;
-5. rebuild a declared index only after source checks pass;
-6. inspect the source diff for changes outside authorized ranges.
+After every authored-record or contract write, run the matching `check` tier.
+The command composes validation, diagnosis, exact/absent identity checks, record
+sampling, and v2 named-query verification without transferring each intermediate
+JSON envelope to the caller. Rebuild a declared index only after source checks
+pass, rerun the affected exact check, and inspect the source diff for changes
+outside authorized ranges.
 
 Deletion and identity rename can leave references behind. Search the document and report remaining references; update them only when the request includes reference maintenance and each occurrence is semantically unambiguous. Cross-document reference policy belongs to the calling domain, not this generic contract.
 
@@ -333,7 +331,24 @@ Commands emit JSON. A query result should include:
 }
 ```
 
-The exact `query` command accepts `--output json|minimal|raw`. `json` is the default and preserves the complete result contract above. `minimal` is a success projection, not a different matching algorithm: for one exact match with no candidates or warning/error diagnostics it emits `status`, `count`, `key`, `fields`, `line_start`, `line_end`, `confidence`, and any informational diagnostic codes. It falls back to the complete JSON envelope for every other result so ambiguity and failure evidence remain intact.
+The exact `query` command accepts `--output json|minimal|compact|raw`. `json` is
+the default and preserves the complete result contract above. The agent-facing
+`get` command uses the same matching engine and defaults to `compact`; it does
+not change the low-level JSON default. Repeat `--select <field>` on `query` or
+`get` to project only declared fields before serialization.
+
+`minimal` is a JSON success projection, not a different matching algorithm: for
+one exact match with no candidates or warning/error diagnostics it emits
+`status`, `count`, `key`, `fields`, `line_start`, `line_end`, `confidence`, and
+informational diagnostic codes. It falls back to the complete JSON envelope for
+every other result and remains available for compatibility.
+
+`compact` is an Agent-readable line projection, not a machine-stable protocol.
+It emits status, count, keys, source lines, requested fields, and unique
+warning/error diagnostic codes. It suppresses routine informational diagnostics
+except temporary-selector mode, omits `raw`, `body`, and `context` when smaller
+declared fields exist, and tells the caller to rerun with `--output json` when
+full ambiguity or failure detail may be required.
 
 `raw` emits the matched record's declared string `fields.raw` followed by a newline. It succeeds only when exactly one structured record matches, no alternate candidates exist, and no warning/error diagnostic would be hidden. It never derives source text from byte ranges, substitutes another field, truncates a match, or selects the first ambiguous record. When raw output is unavailable, emit the complete JSON envelope with an added `raw_output_unavailable` error and exit nonzero. File, encoding, and invalid-profile failures remain complete diagnostic JSON regardless of the selected output format.
 
@@ -370,9 +385,20 @@ Warnings are valid output for intentionally incomplete documents. Exit nonzero o
 
 A collection query uses `schema: mdq.collection.v1` and includes the canonical common root, applied globs, scanned and matched document counts, bounded records and candidates, per-document summaries, collection diagnostics, and a `truncated` flag. Its status is `matched`, `not_found`, `partial`, or `invalid`.
 
+`scan` keeps this JSON envelope by default. The agent-facing `find` command uses
+the same collection engine with compact output by default; both accept repeated
+`--select` field projections. Named `run` queries also retain JSON by default
+and accept `--output compact` for Agent use.
+
 A collection mutation uses `schema: mdq.mutation.v1`. It includes `applied`, scanned and changed document counts, selected and changed record counts, source-located before/after entries, per-document summaries, rebuilt index paths, and diagnostics. Preview status is `planned`, `unchanged`, `not_found`, or `invalid`; applied status is `updated`, `unchanged`, `rolled_back`, or `rollback_failed`.
 
 A named query uses `schema: mdq.query.v2` and includes the query name, value, projected records, quality status, measured count and source sizes, and diagnostics. Query verification uses `schema: mdq.verify.v2` with per-query current selectivity and worst observed bucket. Adaptive repair uses `schema: mdq.optimize.v2`; it is a read-only `planned` result unless `--apply` writes a verified candidate.
+
+Scripted edit verification uses `schema: mdq.check.v1`. Its tiers are `content`,
+`structure`, and `contract`; JSON output contains each composed check and full
+result, while compact output emits one pass/fail summary, affected records,
+sample keys, and diagnostic codes. `--id` means exactly one match is expected;
+`--absent-id` means no structured match is expected.
 
 ## 9. Index Validity
 

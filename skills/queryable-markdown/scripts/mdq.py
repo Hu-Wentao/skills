@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from bisect import bisect_right
@@ -140,6 +141,196 @@ def emit(payload: dict[str, Any]) -> None:
     sys.stdout.write("\n")
 
 
+COMPACT_BULK_FIELDS = {"body", "context", "raw"}
+COMPACT_INFORMATIONAL_DIAGNOSTICS = {
+    "temporary_selectors_applied",
+    "temporary_selectors_inferred",
+}
+
+
+def output_fields(
+    record: dict[str, Any],
+    selected_fields: list[str] | None,
+    *,
+    compact_default: bool,
+) -> dict[str, Any]:
+    fields = dict(record.get("fields") or {})
+    if selected_fields is not None:
+        return {name: fields.get(name) for name in selected_fields}
+    if not compact_default:
+        return fields
+    concise = {
+        name: value for name, value in fields.items() if name not in COMPACT_BULK_FIELDS
+    }
+    return concise or fields
+
+
+def project_output_payload(
+    payload: dict[str, Any],
+    selected_fields: list[str] | None,
+    *,
+    compact_default: bool = False,
+) -> dict[str, Any]:
+    projected = dict(payload)
+    for collection in ("records", "candidates"):
+        if collection not in payload:
+            continue
+        projected[collection] = [
+            {
+                **record,
+                "fields": output_fields(
+                    record,
+                    selected_fields,
+                    compact_default=compact_default,
+                ),
+            }
+            for record in payload.get(collection, [])
+        ]
+    return projected
+
+
+def output_selection_diagnostics(
+    document: SourceDocument,
+    selected_fields: list[str] | None,
+) -> list[dict[str, Any]]:
+    if not selected_fields:
+        return []
+    available = set((document.profile or {}).get("fields", {}))
+    if document.profile is None:
+        available.update({"body", "context", "title"})
+    return [
+        diagnostic(
+            "unknown_field",
+            "error",
+            f"field {name!r} is not available for output projection",
+        )
+        for name in selected_fields
+        if name not in available
+    ]
+
+
+def iter_result_diagnostics(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    yield from payload.get("diagnostics", [])
+    for collection in ("records", "candidates", "documents"):
+        for item in payload.get(collection, []):
+            yield from item.get("diagnostics", [])
+
+
+def compact_diagnostic_lines(payload: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in iter_result_diagnostics(payload):
+        severity = str(item.get("severity", "info"))
+        code = str(item.get("code", "unknown"))
+        if severity == "info" and code not in COMPACT_INFORMATIONAL_DIAGNOSTICS:
+            continue
+        location = str(
+            item.get("relative_path")
+            or item.get("document")
+            or ""
+        )
+        line = str(item.get("line") or "")
+        key = (severity, code, location, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        suffix = ""
+        if location:
+            suffix += f" {location}"
+        if line:
+            suffix += f":{line}" if location else f" line={line}"
+        lines.append(f"{severity}:{code}{suffix}")
+    return lines
+
+
+def compact_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def emit_compact_field(name: str, value: Any) -> None:
+    rendered = compact_value(value)
+    if "\n" in rendered:
+        sys.stdout.write(f"{name}:\n{rendered.rstrip()}\n")
+    else:
+        sys.stdout.write(f"{name}: {rendered}\n")
+
+
+def compact_record_location(record: dict[str, Any]) -> str:
+    location = str(record.get("relative_path") or record.get("document") or "")
+    start = record.get("line_start")
+    end = record.get("line_end")
+    if start is None:
+        return location
+    span = str(start) if start == end or end is None else f"{start}-{end}"
+    return f"{location}:{span}" if location else f"lines={span}"
+
+
+def emit_compact_result(payload: dict[str, Any]) -> None:
+    status = str(payload.get("status", "unknown"))
+    count = int(payload.get("count", len(payload.get("records", []))))
+    summary = f"{status} count={count}"
+    if payload.get("tier"):
+        summary += f" tier={payload['tier']}"
+    if "checks" in payload:
+        summary += f" checks={len(payload.get('checks', []))}"
+    if "documents_scanned" in payload:
+        summary += f" documents={payload.get('documents_scanned', 0)}"
+    if payload.get("truncated"):
+        summary += " truncated=true"
+    sys.stdout.write(summary + "\n")
+
+    failed_checks = [
+        str(item.get("name"))
+        for item in payload.get("checks", [])
+        if not item.get("passed", False)
+    ]
+    if failed_checks:
+        sys.stdout.write("failed_checks: " + ", ".join(failed_checks) + "\n")
+    if payload.get("sample_keys"):
+        sys.stdout.write(
+            "sample_keys: " + ", ".join(str(item) for item in payload["sample_keys"]) + "\n"
+        )
+
+    for record in payload.get("records", []):
+        key = record.get("key")
+        location = compact_record_location(record)
+        header = f"record {key}" if key is not None else "record"
+        if location:
+            header += f" {location}"
+        confidence = float(record.get("confidence", 1.0))
+        if confidence < 1.0:
+            header += f" confidence={confidence:g}"
+        sys.stdout.write(header + "\n")
+        for name, value in (record.get("fields") or {}).items():
+            emit_compact_field(name, value)
+
+    for record in payload.get("candidates", []):
+        key = record.get("key")
+        location = compact_record_location(record)
+        header = f"candidate {key}" if key is not None else "candidate"
+        if location:
+            header += f" {location}"
+        sys.stdout.write(header + "\n")
+
+    diagnostic_lines = compact_diagnostic_lines(payload)
+    if diagnostic_lines:
+        sys.stdout.write("diagnostics: " + ", ".join(diagnostic_lines) + "\n")
+    if (
+        status in {"ambiguous", "invalid", "partial", "failed"}
+        or payload.get("candidates")
+        or any(line.startswith(("warning:", "error:")) for line in diagnostic_lines)
+    ):
+        sys.stdout.write("details: rerun with --output json\n")
+
+
 def actionable_diagnostics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     items = list(payload.get("diagnostics", []))
     for record in payload.get("records", []):
@@ -181,15 +372,25 @@ def minimal_query_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     return minimal
 
 
-def emit_query_result(payload: dict[str, Any], output: str) -> int | None:
+def emit_query_result(
+    payload: dict[str, Any],
+    output: str,
+    selected_fields: list[str] | None = None,
+) -> int | None:
+    projected = project_output_payload(payload, selected_fields)
     if output == "json":
-        emit(payload)
+        emit(projected)
         return None
     if output == "minimal":
-        emit(minimal_query_payload(payload) or payload)
+        emit(minimal_query_payload(projected) or projected)
+        return None
+    if output == "compact":
+        emit_compact_result(
+            project_output_payload(payload, selected_fields, compact_default=True)
+        )
         return None
 
-    records = payload.get("records", [])
+    records = projected.get("records", [])
     reason: str | None = None
     if (
         payload.get("status") != "matched"
@@ -197,9 +398,9 @@ def emit_query_result(payload: dict[str, Any], output: str) -> int | None:
         or len(records) != 1
     ):
         reason = "raw output requires exactly one matched record"
-    elif payload.get("candidates"):
+    elif projected.get("candidates"):
         reason = "raw output refuses to hide alternate candidate evidence"
-    elif actionable_diagnostics(payload):
+    elif actionable_diagnostics(projected):
         reason = "raw output refuses to hide warning or error diagnostics"
     else:
         raw = records[0].get("fields", {}).get("raw")
@@ -211,12 +412,26 @@ def emit_query_result(payload: dict[str, Any], output: str) -> int | None:
                 sys.stdout.write("\n")
             return None
 
-    failure = dict(payload)
-    failure["diagnostics"] = list(payload.get("diagnostics", [])) + [
+    failure = dict(projected)
+    failure["diagnostics"] = list(projected.get("diagnostics", [])) + [
         diagnostic("raw_output_unavailable", "error", reason)
     ]
     emit(failure)
     return 5
+
+
+def emit_collection_result(
+    payload: dict[str, Any],
+    output: str,
+    selected_fields: list[str] | None = None,
+) -> None:
+    projected = project_output_payload(payload, selected_fields)
+    if output == "json":
+        emit(projected)
+        return
+    emit_compact_result(
+        project_output_payload(payload, selected_fields, compact_default=True)
+    )
 
 
 def normalized_json(value: Any) -> bytes:
@@ -3360,6 +3575,24 @@ def command_query(args: argparse.Namespace) -> int:
     preparation_diagnostics = prepare_temporary_profile(
         document, args, requested=requested
     )
+    selection_diagnostics = output_selection_diagnostics(
+        document, getattr(args, "select", None)
+    )
+    if selection_diagnostics:
+        emit_query_result(
+            {
+                "status": "invalid",
+                "count": 0,
+                "records": [],
+                "candidates": [],
+                "diagnostics": list(document.diagnostics)
+                + preparation_diagnostics
+                + selection_diagnostics,
+            },
+            args.output,
+            getattr(args, "select", None),
+        )
+        return 3
     if document.profile is None:
         if error_diagnostics(document.diagnostics):
             emit_query_result(
@@ -3371,6 +3604,7 @@ def command_query(args: argparse.Namespace) -> int:
                     "diagnostics": document.diagnostics,
                 },
                 args.output,
+                getattr(args, "select", None),
             )
             return 3
         selectors = temporary_selector_arguments(args)
@@ -3412,6 +3646,7 @@ def command_query(args: argparse.Namespace) -> int:
                 "diagnostics": diagnostics,
             },
             args.output,
+            getattr(args, "select", None),
         )
         return output_status or 0
     records, diagnostics = records_for_query(document)
@@ -3425,6 +3660,7 @@ def command_query(args: argparse.Namespace) -> int:
                 "diagnostics": diagnostics,
             },
             args.output,
+            getattr(args, "select", None),
         )
         return 3
     temporary = (document.profile_source or "").startswith(TEMPORARY_PROFILE_PREFIX)
@@ -3550,6 +3786,7 @@ def command_query(args: argparse.Namespace) -> int:
             "diagnostics": diagnostics,
         },
         args.output,
+        getattr(args, "select", None),
     )
     return output_status or 0
 
@@ -3669,7 +3906,7 @@ def query_quality(
 def command_run(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
     if document.profile is None or document.profile.get("version") != 2:
-        emit(
+        emit_query_result(
             {
                 "schema": "mdq.query.v2",
                 "status": "invalid",
@@ -3683,13 +3920,14 @@ def command_run(args: argparse.Namespace) -> int:
                         "named queries require an mdq v2 contract",
                     )
                 ],
-            }
+            },
+            args.output,
         )
         return 3
     queries = document.profile.get("queries") or {}
     spec = queries.get(args.query)
     if spec is None:
-        emit(
+        emit_query_result(
             {
                 "schema": "mdq.query.v2",
                 "status": "invalid",
@@ -3702,12 +3940,13 @@ def command_run(args: argparse.Namespace) -> int:
                         f"query {args.query!r} is not declared",
                     )
                 ],
-            }
+            },
+            args.output,
         )
         return 3
     when = spec.get("when")
     if when and regex_value(when["pattern"], args.value, None) is None:
-        emit(
+        emit_query_result(
             {
                 "schema": "mdq.query.v2",
                 "status": "invalid",
@@ -3720,26 +3959,28 @@ def command_run(args: argparse.Namespace) -> int:
                         "query value does not satisfy the declared input pattern",
                     )
                 ],
-            }
+            },
+            args.output,
         )
         return 3
     records, diagnostics = records_for_query(document)
     if error_diagnostics(diagnostics):
-        emit(
+        emit_query_result(
             {
                 "schema": "mdq.query.v2",
                 "status": "invalid",
                 "count": 0,
                 "records": [],
                 "diagnostics": diagnostics,
-            }
+            },
+            args.output,
         )
         return 3
     matched = query_matches(records, spec, args.value)
     quality, violations = query_quality(matched, spec.get("expect", {}))
     diagnostics.extend(violations)
     selected = spec.get("select")
-    emit(
+    emit_query_result(
         {
             "schema": "mdq.query.v2",
             "status": "matched" if matched else "not_found",
@@ -3749,7 +3990,8 @@ def command_run(args: argparse.Namespace) -> int:
             "records": [project_query_record(item, selected) for item in matched],
             "quality": quality,
             "diagnostics": diagnostics,
-        }
+        },
+        args.output,
     )
     return 0
 
@@ -3849,6 +4091,163 @@ def command_verify_queries(args: argparse.Namespace) -> int:
         }
     )
     return 0 if valid else 3
+
+
+def run_internal_mdq(*arguments: str) -> tuple[int, dict[str, Any]]:
+    completed = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), *arguments],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(f"internal mdq command returned invalid JSON: {detail}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("internal mdq command returned a non-object JSON payload")
+    return completed.returncode, payload
+
+
+def sample_record_keys(records: list[dict[str, Any]]) -> list[str]:
+    keyed = [str(item["key"]) for item in records if item.get("key") is not None]
+    if not keyed:
+        return []
+    indexes = sorted({0, len(keyed) // 2, len(keyed) - 1})
+    return [keyed[index] for index in indexes]
+
+
+def command_check(args: argparse.Namespace) -> int:
+    expected_ids = list(dict.fromkeys(args.id or []))
+    absent_ids = list(dict.fromkeys(args.absent_id or []))
+    if args.tier == "content" and not expected_ids:
+        payload = {
+            "schema": "mdq.check.v1",
+            "status": "invalid",
+            "tier": args.tier,
+            "count": 0,
+            "checks": [],
+            "records": [],
+            "candidates": [],
+            "diagnostics": [
+                diagnostic(
+                    "selector_invalid",
+                    "error",
+                    "content checks require at least one --id",
+                )
+            ],
+        }
+        if args.output == "json":
+            emit(payload)
+        else:
+            emit_compact_result(payload)
+        return 3
+
+    checks: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
+    matched_records: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    sample_keys: list[str] = []
+
+    def add_step(
+        name: str,
+        command: list[str],
+        predicate: Any,
+    ) -> dict[str, Any]:
+        returncode, result = run_internal_mdq(*command)
+        passed = bool(predicate(returncode, result))
+        checks.append(
+            {
+                "name": name,
+                "passed": passed,
+                "returncode": returncode,
+                "result": result,
+            }
+        )
+        for item in iter_result_diagnostics(result):
+            diagnostics.append({**item, "check": name})
+        return result
+
+    validate_result = add_step(
+        "validate",
+        ["validate", args.document],
+        lambda returncode, result: returncode == 0 and result.get("valid") is True,
+    )
+
+    if validate_result.get("valid") is True and args.tier in {"structure", "contract"}:
+        diagnose_result = add_step(
+            "diagnose",
+            ["diagnose", args.document],
+            lambda returncode, result: returncode == 0 and result.get("valid") is True,
+        )
+        sample_keys = sample_record_keys(diagnose_result.get("records", []))
+
+    if validate_result.get("valid") is True:
+        for identifier in expected_ids:
+            command = ["query", args.document, "--id", identifier, "--output", "json"]
+            for field_name in args.select or []:
+                command.extend(["--select", field_name])
+            result = add_step(
+                f"query:{identifier}",
+                command,
+                lambda returncode, value: (
+                    returncode == 0
+                    and value.get("status") == "matched"
+                    and value.get("count") == 1
+                    and not value.get("candidates")
+                ),
+            )
+            matched_records.extend(result.get("records", []))
+            candidates.extend(result.get("candidates", []))
+
+        for identifier in absent_ids:
+            result = add_step(
+                f"absent:{identifier}",
+                ["query", args.document, "--id", identifier, "--output", "json"],
+                lambda returncode, value: (
+                    returncode == 0
+                    and value.get("status") == "not_found"
+                    and value.get("count") == 0
+                ),
+            )
+            candidates.extend(result.get("candidates", []))
+
+        document = read_document(Path(args.document))
+        if (
+            args.tier == "contract"
+            and document.profile is not None
+            and document.profile.get("version") == 2
+            and document.profile.get("queries")
+        ):
+            add_step(
+                "verify-queries",
+                ["verify", args.document],
+                lambda returncode, result: (
+                    returncode == 0 and result.get("valid") is True
+                ),
+            )
+
+    passed = bool(checks) and all(item["passed"] for item in checks)
+    payload = {
+        "schema": "mdq.check.v1",
+        "status": "passed" if passed else "failed",
+        "tier": args.tier,
+        "document": str(Path(args.document).resolve()),
+        "count": len(matched_records),
+        "sample_keys": sample_keys,
+        "checks": checks,
+        "records": matched_records,
+        "candidates": candidates,
+        "diagnostics": diagnostics,
+    }
+    if args.output == "json":
+        emit(payload)
+    else:
+        emit_compact_result(
+            project_output_payload(payload, args.select, compact_default=True)
+        )
+    return 0 if passed else 3
 
 
 def replace_mdq_profile(raw: bytes, profile: dict[str, Any]) -> bytes:
@@ -4571,11 +4970,15 @@ def collection_record(
     document: SourceDocument,
     relative_path: str,
     field_name: str | None,
+    selected_fields: list[str] | None,
 ) -> dict[str, Any]:
     item = dict(record)
     item["document"] = str(document.path)
     item["relative_path"] = relative_path
-    if field_name is not None and field_name != "key":
+    if selected_fields is not None:
+        fields = record.get("fields") or {}
+        item["fields"] = {name: fields.get(name) for name in selected_fields}
+    elif field_name is not None and field_name != "key":
         fields = record.get("fields") or {}
         item["fields"] = {field_name: fields.get(field_name)}
     elif field_name == "key":
@@ -4589,7 +4992,7 @@ def command_scan(args: argparse.Namespace) -> int:
         [Path(item) for item in args.path], patterns
     )
     if error_diagnostics(diagnostics):
-        emit(
+        emit_collection_result(
             {
                 "schema": "mdq.collection.v1",
                 "status": "invalid",
@@ -4603,7 +5006,9 @@ def command_scan(args: argparse.Namespace) -> int:
                 "candidates": [],
                 "documents": [],
                 "diagnostics": diagnostics,
-            }
+            },
+            args.output,
+            getattr(args, "select", None),
         )
         return 3
 
@@ -4661,6 +5066,10 @@ def command_scan(args: argparse.Namespace) -> int:
             )
             document_diagnostics = list(document.diagnostics)
 
+        document_diagnostics.extend(
+            output_selection_diagnostics(document, getattr(args, "select", None))
+        )
+
         if (
             document.profile is not None
             and args.field not in {None, "key"}
@@ -4713,6 +5122,7 @@ def command_scan(args: argparse.Namespace) -> int:
                 document=document,
                 relative_path=relative_path,
                 field_name=args.field,
+                selected_fields=getattr(args, "select", None),
             )
             if selected:
                 structured.append(item)
@@ -4763,7 +5173,7 @@ def command_scan(args: argparse.Namespace) -> int:
         collection_status = "partial" if matched_records else "invalid"
     else:
         collection_status = "matched" if matched_records else "not_found"
-    emit(
+    emit_collection_result(
         {
             "schema": "mdq.collection.v1",
             "status": collection_status,
@@ -4777,7 +5187,9 @@ def command_scan(args: argparse.Namespace) -> int:
             "candidates": candidates,
             "documents": document_summaries,
             "diagnostics": diagnostics,
-        }
+        },
+        args.output,
+        getattr(args, "select", None),
     )
     return 3 if invalid_documents else 0
 
@@ -5543,12 +5955,36 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--id", required=True, help="exact record key")
     query_parser.add_argument(
         "--output",
-        choices=("raw", "minimal", "json"),
+        choices=("raw", "compact", "minimal", "json"),
         default="json",
         help="success output format (default: json; failures retain diagnostic JSON)",
     )
+    query_parser.add_argument(
+        "--select",
+        action="append",
+        help="project one declared field (repeatable)",
+    )
     add_temporary_selector_options(query_parser)
     query_parser.set_defaults(handler=command_query)
+
+    get_parser = subparsers.add_parser(
+        "get", help="retrieve one exact record with compact agent output"
+    )
+    get_parser.add_argument("document")
+    get_parser.add_argument("--id", required=True, help="exact record key")
+    get_parser.add_argument(
+        "--select",
+        action="append",
+        help="project one declared field (repeatable)",
+    )
+    get_parser.add_argument(
+        "--output",
+        choices=("raw", "compact", "minimal", "json"),
+        default="compact",
+        help="output format (default: compact)",
+    )
+    add_temporary_selector_options(get_parser)
+    get_parser.set_defaults(handler=command_query)
 
     run_parser = subparsers.add_parser(
         "run", help="run a reusable mdq v2 named query with quality checks"
@@ -5556,6 +5992,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("document")
     run_parser.add_argument("--query", required=True, help="declared query name")
     run_parser.add_argument("--value", required=True, help="query input value")
+    run_parser.add_argument(
+        "--output",
+        choices=("compact", "json"),
+        default="json",
+        help="output format (default: json)",
+    )
     run_parser.set_defaults(handler=command_run)
 
     verify_parser = subparsers.add_parser(
@@ -5563,6 +6005,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("document")
     verify_parser.set_defaults(handler=command_verify_queries)
+
+    check_parser = subparsers.add_parser(
+        "check", help="run one compact verification tier for an authorized edit"
+    )
+    check_parser.add_argument("document")
+    check_parser.add_argument(
+        "--tier",
+        choices=("content", "structure", "contract"),
+        required=True,
+        help="verification scope",
+    )
+    check_parser.add_argument(
+        "--id",
+        action="append",
+        help="record identity expected to match exactly once (repeatable)",
+    )
+    check_parser.add_argument(
+        "--absent-id",
+        action="append",
+        help="record identity expected to be absent (repeatable)",
+    )
+    check_parser.add_argument(
+        "--select",
+        action="append",
+        help="project one declared field from matched records (repeatable)",
+    )
+    check_parser.add_argument(
+        "--output",
+        choices=("compact", "json"),
+        default="compact",
+        help="output format (default: compact)",
+    )
+    check_parser.set_defaults(handler=command_check)
 
     optimize_parser = subparsers.add_parser(
         "optimize", help="preview or apply one deterministic mdq query-contract repair"
@@ -5612,12 +6087,61 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument("--limit", type=int, default=1000)
     scan_parser.add_argument(
+        "--select",
+        action="append",
+        help="project one declared field (repeatable)",
+    )
+    scan_parser.add_argument(
+        "--output",
+        choices=("compact", "json"),
+        default="json",
+        help="output format (default: json)",
+    )
+    scan_parser.add_argument(
         "--require-contract",
         action="store_true",
         help="report every profile-free or invalid document as an error",
     )
     add_temporary_selector_options(scan_parser)
     scan_parser.set_defaults(handler=command_scan)
+
+    find_parser = subparsers.add_parser(
+        "find", help="find records across files or directories with compact agent output"
+    )
+    find_parser.add_argument("path", nargs="+")
+    find_parser.add_argument(
+        "--glob",
+        action="append",
+        help="directory-relative Markdown glob (repeatable; default: **/*.md)",
+    )
+    find_selectors = find_parser.add_mutually_exclusive_group()
+    find_selectors.add_argument(
+        "--id", action="append", help="exact record key (repeatable)"
+    )
+    find_selectors.add_argument("--text", help="case-insensitive literal substring")
+    find_parser.add_argument(
+        "--field",
+        help="declared field to search, or key",
+    )
+    find_parser.add_argument(
+        "--select",
+        action="append",
+        help="project one declared field (repeatable)",
+    )
+    find_parser.add_argument("--limit", type=int, default=100)
+    find_parser.add_argument(
+        "--require-contract",
+        action="store_true",
+        help="report every profile-free or invalid document as an error",
+    )
+    find_parser.add_argument(
+        "--output",
+        choices=("compact", "json"),
+        default="compact",
+        help="output format (default: compact)",
+    )
+    add_temporary_selector_options(find_parser)
+    find_parser.set_defaults(handler=command_scan)
 
     set_parser = subparsers.add_parser(
         "set",

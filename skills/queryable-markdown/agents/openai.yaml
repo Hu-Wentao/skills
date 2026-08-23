@@ -1,4 +1,4 @@
 interface:
   display_name: "Queryable Markdown"
-  short_description: "Design, verify, and repair precise Markdown queries"
-  default_prompt: "Use $queryable-markdown to design a precise query contract, verify result quality, and safely repair over-broad Markdown queries."
+  short_description: "Query and safely edit Markdown with compact output"
+  default_prompt: "Use $queryable-markdown to retrieve or edit Markdown records through compact scripted mdq workflows."

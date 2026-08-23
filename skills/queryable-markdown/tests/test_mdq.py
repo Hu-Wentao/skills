@@ -191,6 +191,19 @@ The detail refers to REQ-2.
             )
             self.assertIn("records", ambiguous_minimal)
             self.assertNotIn("key", ambiguous_minimal)
+            ambiguous_compact = self.run_cli_process(
+                root,
+                "get",
+                str(ambiguous_path),
+                "--id",
+                "REQ-1",
+            )
+            self.assertTrue(ambiguous_compact.stdout.startswith("ambiguous count=2\n"))
+            self.assertIn("warning:duplicate_key", ambiguous_compact.stdout)
+            self.assertIn(
+                "details: rerun with --output json", ambiguous_compact.stdout
+            )
+            self.assertFalse(ambiguous_compact.stdout.lstrip().startswith("{"))
 
             warning_path = self.document(
                 root,
@@ -210,6 +223,178 @@ The detail refers to REQ-2.
             warning_codes = {item["code"] for item in warning_raw["diagnostics"]}
             self.assertIn("heading_level_drift", warning_codes)
             self.assertIn("raw_output_unavailable", warning_codes)
+            warning_compact = self.run_cli_process(
+                root,
+                "get",
+                str(warning_path),
+                "--id",
+                "REQ-2",
+            )
+            self.assertIn("warning:heading_level_drift", warning_compact.stdout)
+            self.assertIn("details: rerun with --output json", warning_compact.stdout)
+
+    def test_agent_get_projects_fields_and_keeps_json_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                profile(
+                    fields=(
+                        "  title:\n"
+                        "    source: heading\n"
+                        "    group: title\n"
+                        "  status:\n"
+                        "    source: label\n"
+                        "    labels: [Status]\n"
+                        "  raw:\n"
+                        "    source: body"
+                    )
+                )
+                + "\n## REQ-1: Login\n\n- Status: active\n\nLarge body text.\n",
+            )
+
+            compact = self.run_cli_process(
+                root,
+                "get",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--select",
+                "status",
+            )
+            projected = self.run_cli(
+                root,
+                "query",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--select",
+                "status",
+                "--output",
+                "json",
+            )
+            invalid = self.run_cli_process(
+                root,
+                "get",
+                str(path),
+                "--id",
+                "REQ-1",
+                "--select",
+                "missing",
+                expected=3,
+            )
+
+            self.assertTrue(compact.stdout.startswith("matched count=1\n"))
+            self.assertIn("status: active", compact.stdout)
+            self.assertNotIn("Large body text", compact.stdout)
+            self.assertEqual(
+                projected["records"][0]["fields"], {"status": "active"}
+            )
+            self.assertTrue(invalid.stdout.startswith("invalid count=0\n"))
+            self.assertIn("error:unknown_field", invalid.stdout)
+            self.assertIn("details: rerun with --output json", invalid.stdout)
+
+    def test_agent_find_compacts_collection_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "docs"
+            docs.mkdir()
+            fields = (
+                "  status:\n"
+                "    source: label\n"
+                "    labels: [Status]\n"
+                "  raw:\n"
+                "    source: body"
+            )
+            for filename, identifier, status in (
+                ("a.md", "REQ-1", "planned"),
+                ("b.md", "REQ-2", "active"),
+            ):
+                (docs / filename).write_text(
+                    profile(fields=fields)
+                    + f"\n## {identifier}: Item\n\n- Status: {status}\n\nVerbose body.\n",
+                    encoding="utf-8",
+                )
+
+            compact = self.run_cli_process(
+                root,
+                "find",
+                str(docs),
+                "--select",
+                "status",
+                "--require-contract",
+            )
+
+            self.assertTrue(compact.stdout.startswith("matched count=2 documents=2\n"))
+            self.assertIn("record REQ-1 a.md:", compact.stdout)
+            self.assertIn("record REQ-2 b.md:", compact.stdout)
+            self.assertIn("status: planned", compact.stdout)
+            self.assertIn("status: active", compact.stdout)
+            self.assertNotIn("Verbose body", compact.stdout)
+
+    def test_agent_check_orchestrates_verification_tiers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                profile(
+                    fields="  status:\n    source: label\n    labels: [Status]"
+                )
+                + "\n## REQ-1: Login\n\n- Status: active\n",
+            )
+
+            content = self.run_cli_process(
+                root,
+                "check",
+                str(path),
+                "--tier",
+                "content",
+                "--id",
+                "REQ-1",
+                "--select",
+                "status",
+            )
+            structure = self.run_cli_process(
+                root,
+                "check",
+                str(path),
+                "--tier",
+                "structure",
+                "--id",
+                "REQ-1",
+                "--absent-id",
+                "REQ-OLD",
+            )
+            contract = self.run_cli(
+                root,
+                "check",
+                str(path),
+                "--tier",
+                "contract",
+                "--id",
+                "REQ-1",
+                "--output",
+                "json",
+            )
+            failed = self.run_cli_process(
+                root,
+                "check",
+                str(path),
+                "--tier",
+                "structure",
+                "--absent-id",
+                "REQ-1",
+                expected=3,
+            )
+
+            self.assertIn("passed count=1 tier=content checks=2", content.stdout)
+            self.assertIn("status: active", content.stdout)
+            self.assertIn("passed count=1 tier=structure checks=4", structure.stdout)
+            self.assertEqual(contract["status"], "passed")
+            self.assertEqual(contract["tier"], "contract")
+            self.assertTrue(all(item["passed"] for item in contract["checks"]))
+            self.assertIn("failed_checks: absent:REQ-1", failed.stdout)
+            self.assertIn("details: rerun with --output json", failed.stdout)
 
     def test_commented_out_heading_is_not_a_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1593,6 +1778,20 @@ mdq:
                 "query_max_matches_deprecated",
                 {item["code"] for item in named["diagnostics"]},
             )
+            compact_named = self.run_cli_process(
+                root,
+                "run",
+                str(path),
+                "--query",
+                "by_id",
+                "--value",
+                "REQ-GA-001",
+                "--output",
+                "compact",
+            )
+            self.assertTrue(compact_named.stdout.startswith("matched count=1\n"))
+            self.assertIn("title: Teams", compact_named.stdout)
+            self.assertIn("coverage: partial", compact_named.stdout)
             verified = self.run_cli(root, "verify", str(path))
             self.assertTrue(verified["valid"])
 
