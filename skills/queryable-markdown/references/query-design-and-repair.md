@@ -76,12 +76,15 @@ Do not repair ambiguous identity with output truncation. `limit: 1`, first-match
 
 ## 4. Verify a New or Converted Document
 
-Run:
+Run one composed contract check, passing representative identities when known:
 
 ```bash
-uv run "$SKILL_DIR/scripts/mdq.py" validate <document.md>
-uv run "$SKILL_DIR/scripts/mdq.py" diagnose <document.md>
-uv run "$SKILL_DIR/scripts/mdq.py" verify <document.md>
+uv run "$SKILL_DIR/scripts/mdq.py" check <document.md> \
+  --tier contract \
+  --id <first-id> \
+  --id <middle-id> \
+  --id <last-id> \
+  --absent-id <absent-id>
 ```
 
 Then exercise:
