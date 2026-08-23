@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Govern project architecture, requirements, baselines, plans, domain terminology, Markdown lifecycle, implementation and test-case handoffs, dependency evaluations, Git/worktrees/SemVer, releases and deployments, project skills, ports, defects, resource diagnostics, and feedback lifecycles. Use for governed implementation; document or concept maintenance; dependency decisions; branches, tags, promotions, retries, repairs, hotfixes, and deployment recovery; defect diagnosis and repair history; host or Compose resource incidents; and verification traceability. Trigger directly on imperative release-and-deploy requests with a named target, including `release and deploy TARGET` and `发版部署 目标`."
+description: "Govern project architecture, requirements, baselines, plans, domain terminology, Markdown lifecycle, implementation and test-case handoffs, dependency evaluations, Git/worktrees/SemVer, releases and deployments, project skills, ports, defects, resource diagnostics, feedback lifecycles, and concise problem-summary handoffs. Use for governed implementation; document or concept maintenance; dependency decisions; branches, tags, promotions, retries, repairs, hotfixes, and deployment recovery; defect diagnosis and repair history; host or Compose resource incidents; verification traceability; or a user request such as `总结问题` that prepares facts for another agent without prescribing a fix. Trigger directly on imperative release-and-deploy requests with a named target, including `release and deploy TARGET` and `发版部署 目标`."
 ---
 
 # Project Governance
@@ -44,6 +44,26 @@ keep project facts, consequences, integration ownership, and decisions in the
 local `TECH-FIT-*` record. Run the claim-partition and final ownership audit in
 `dependency-evaluation.md` before handoff. Do not apply this split to the
 complete local `TECH-EVAL-*` fallback.
+
+## Produce Problem-Summary Handoffs
+
+When the user asks `总结问题` or an equivalent problem-summary request, produce
+a concise handoff for another agent whose job is to diagnose, verify, and solve
+the issue. Keep the problem statement more prominent than any supporting detail
+and include only the context needed to continue:
+
+- background and intended outcome;
+- current observable symptoms;
+- confirmed facts and bounded evidence;
+- affected scope and user impact;
+- unresolved questions when they materially affect the next investigation.
+
+Do not recommend a solution, prescribe repair steps or commands, turn a working
+hypothesis into a root-cause conclusion, or perform writes, deployment, or live
+repair in this mode. Preserve uncertainty explicitly and avoid secrets,
+credentials, request bodies, and unrelated investigation detail. If the user
+separately requests diagnosis or implementation, leave this handoff mode and
+follow the applicable governance domain and authorization rules.
 
 ## Use Deterministic Task Contracts
 
