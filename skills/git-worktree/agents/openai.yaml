@@ -1,4 +1,4 @@
 interface:
-  display_name: "Git Worktree & Owner Completion"
-  short_description: "Manage worktrees and mark owner tasks complete"
-  default_prompt: "Use $git-worktree to discover the current worktree, complete the owned task safely, and mark its final validated commit complete."
+  display_name: "Scripted Git Worktree"
+  short_description: "Script worktree completion and safe maintenance"
+  default_prompt: "Use $git-worktree to script exact-HEAD worktree completion, delivery, and local maintenance safely."
