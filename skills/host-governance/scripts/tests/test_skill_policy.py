@@ -100,6 +100,19 @@ class SkillPolicyTest(unittest.TestCase):
         )
         self.assertIn("browser autofill", normalized_reference)
 
+    def test_emergency_manual_authorization_is_one_round_and_bounded(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        normalized_skill = " ".join(skill.split())
+        for phrase in (
+            "grant one emergency manual-operation round",
+            "Multiple tool calls needed for that same bounded task are covered",
+            "never turn the exception into a persistent arbitrary-command capability",
+            "Expire the authorization at the end of this round",
+            "A later assistant turn or new task requires the user to state the emergency manual authorization again",
+            "The explicitly authorized one-round emergency manual operation above is the only exception",
+        ):
+            self.assertIn(phrase, normalized_skill)
+
     def test_jump_transport_socket_activation_and_local_config_are_durable(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         reference = (SKILL_ROOT / "references" / "server-bootstrap.md").read_text(

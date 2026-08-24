@@ -99,10 +99,44 @@ Legacy `host-governance.config.v1` profiles and the generic fallback remain
 readable composed instructions. Read the returned `instructions.path` whenever
 `instructions_id` changes, but do not execute legacy declared command strings
 as a substitute for a v2 contract. Without a configured transaction contract,
-leave shared host infrastructure unchanged.
+leave shared host infrastructure unchanged unless the one-round emergency
+manual authorization below explicitly applies.
 
 Read [project_config.md](references/project_config.md) before creating or
 changing a project profile.
+
+## Apply One-Round Emergency Manual Authorization
+
+Normally, every remote write, reload, policy save, DNS mutation, migration, or
+rollback must use a project-configured, validated operation. When the current
+user explicitly states `授权手动进行紧急操作` or an unambiguous equivalent,
+grant one emergency manual-operation round for the current bounded task. This
+is a narrow exception to the configured-operation requirement, not a general
+permission to run arbitrary remote commands.
+
+- Define one round as the current assistant execution turn. It starts only
+  after the explicit authorization and ends when the task completes, blocks,
+  or control returns to the user. Multiple tool calls needed for that same
+  bounded task are covered; do not ask for reauthorization between them.
+- Limit the authorization to the exact targets, actions, and material effects
+  established in the current request and plan. It does not authorize a new
+  host, provider, task, target, or scope expansion.
+- Use an available governed operation when it can complete the task. Use
+  manual SSH, API, console, or other remote steps only for the emergency gap
+  that the current authorization explicitly covers; never turn the exception
+  into a persistent arbitrary-command capability.
+- Before the first mutation, inspect the exact target and current state,
+  establish a bounded recovery path, and preserve secret-safe evidence. Apply
+  only the necessary steps, verify each material effect, and report every
+  manual change and remaining recovery gap.
+- Preserve target validation, transaction locking when available, secret
+  handling, exposure checks, and separate authorization boundaries for
+  destructive, billable, identity-changing, or otherwise materially broader
+  outcomes.
+- Expire the authorization at the end of this round, even if the task is
+  incomplete. A later assistant turn or new task requires the user to state
+  the emergency manual authorization again. Never infer it from an earlier
+  turn, an earlier conversation, or ordinary SSH authorization.
 
 ## Productize Requested Procedures
 
@@ -160,11 +194,12 @@ infer it from an earlier one.
 
 ## Preserve Safety Invariants
 
-- Treat `inspect` and `plan` as read-only. Without conversation-scoped SSH
-  authorization, require current-turn authorization for each remote write,
-  reload, policy save, DNS mutation, migration, or rollback target. With that
-  standing authorization, do not repeat approval for in-scope SSH writes;
-  preserve every separate authorization boundary defined above.
+- Treat `inspect` and `plan` as read-only. Without conversation-scoped SSH or
+  active one-round emergency manual authorization, require current-turn
+  authorization for each remote write, reload, policy save, DNS mutation,
+  migration, or rollback target. With either authorization, do not repeat
+  approval for in-scope tool calls; preserve every separate authorization
+  boundary defined above.
 - For an initial server-bootstrap request, treat local key creation, manifest
   edits, host-key scans, `inspect`, `plan`, and `apply` as intermediate states,
   never as proof that the server was initialized. End the task only as
@@ -303,8 +338,10 @@ infer it from an earlier one.
    compatibility, rollback state, and every item still unverified.
 
 `inspect`, `plan`, and `verify` are read-only. `apply` and `reconcile` require
-current write authority for the exact target. `rollback` requires separate
-current authority and must restore only the selected owner's declaration by
+current write authority for the exact target, normally through the configured
+operation contract. The explicitly authorized one-round emergency manual
+operation above is the only exception. `rollback` requires separate current
+authority and must restore only the selected owner's declaration by
 recomposing the latest complete host state; it must never restore a historical
 monolithic shared configuration.
 
