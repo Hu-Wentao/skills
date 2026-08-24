@@ -71,6 +71,7 @@ MAINTENANCE_PLAN_SCHEMA_VERSION = 1
 MUTATING_COMMANDS = frozenset(
     {
         "mark-complete",
+        "owner-finish",
         "block-auto-merge",
         "unblock-auto-merge",
         "maintenance-run",
@@ -867,6 +868,24 @@ def decision_evidence(
     }
 
 
+def automatic_retention_decision(
+    candidate: dict[str, object],
+) -> dict[str, object] | None:
+    evidence = candidate["decision_evidence"]
+    if (
+        evidence["default_decision"] != "retain"
+        or evidence["possible_decisions"] != ["retain"]
+    ):
+        return None
+    reasons = [str(item) for item in evidence["retention_reasons"]]
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "decision": "retain",
+        "reason": "script-enforced retain: " + ", ".join(reasons),
+        "automatic": True,
+    }
+
+
 def maintenance_candidates(repo: Path, target: str) -> list[dict[str, object]]:
     if not local_branch_exists(repo, target):
         raise WorkflowError(f"Target branch does not exist locally: {target}")
@@ -1082,7 +1101,7 @@ def command_list(repo: Path, _args: argparse.Namespace) -> None:
     emit({"worktrees": [asdict(worktree) for worktree in parse_worktrees(repo)]})
 
 
-def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
+def owner_status_payload(repo: Path) -> dict[str, object]:
     current_path = repo.resolve()
     worktree = next(
         (
@@ -1178,23 +1197,27 @@ def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
         next_action = "mark_complete_after_semantic_completion"
     else:
         next_action = "handoff_completed_owner_retains_worktree"
-    emit(
-        {
-            "action": "owner_status_inspected",
-            "git_common_dir": str(git_common_dir(repo)),
-            "worktree": snapshot,
-            "completion": completion,
-            "auto_merge_block": auto_merge_block,
-            "ownership": ownership,
-            "delivery": delivery,
-            "completion_eligible": not blockers,
-            "completion_blockers": blockers,
-            "next_action": next_action,
-        }
-    )
+    return {
+        "action": "owner_status_inspected",
+        "git_common_dir": str(git_common_dir(repo)),
+        "worktree": snapshot,
+        "completion": completion,
+        "auto_merge_block": auto_merge_block,
+        "ownership": ownership,
+        "delivery": delivery,
+        "completion_eligible": not blockers,
+        "completion_blockers": blockers,
+        "next_action": next_action,
+    }
 
 
-def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
+def command_owner_status(repo: Path, _args: argparse.Namespace) -> None:
+    emit(owner_status_payload(repo))
+
+
+def command_mark_complete(
+    repo: Path, args: argparse.Namespace
+) -> dict[str, object]:
     requested = Path(args.repo).expanduser().resolve()
     branch = args.branch or current_branch(requested)
     if not local_branch_exists(repo, branch):
@@ -1213,13 +1236,218 @@ def command_mark_complete(repo: Path, args: argparse.Namespace) -> None:
     previous = ref_object_id(repo, ref)
     null_object_id = "0" * len(head)
     run_git(repo, "update-ref", ref, head, previous or null_object_id)
-    emit(
+    return emit_command_result(
+        args,
         {
             "action": "branch_marked_complete",
             "branch": branch,
             "completion_ref": ref,
             "head": head,
             "previous_completion_head": previous,
+            "remote_refs_untouched": True,
+        },
+    )
+
+
+def command_owner_finish(repo: Path, args: argparse.Namespace) -> None:
+    """Advance one owned task through the next safe scripted phase."""
+    status = owner_status_payload(repo)
+    blockers = [str(item) for item in status["completion_blockers"]]
+    if blockers:
+        raise WorkflowError(
+            "Owned worktree is not safe to finish: " + ", ".join(blockers)
+        )
+
+    worktree = status["worktree"]
+    branch = str(worktree["branch"])
+    source_head = str(worktree["head"])
+    if args.validated_source_head:
+        verify_expected_head(
+            source_head,
+            args.validated_source_head,
+            f"Validated source '{branch}'",
+        )
+
+    completion_updated = False
+    completion = status["completion"]
+    if completion["status"] != "current":
+        if not args.validated_source_head:
+            raise WorkflowError(
+                "Creating the completion handoff requires "
+                "--validated-source-head for the exact source commit that passed "
+                "validation."
+            )
+        command_mark_complete(
+            repo,
+            argparse.Namespace(
+                repo=str(repo),
+                branch=branch,
+                expected_head=args.validated_source_head,
+                suppress_emit=True,
+            ),
+        )
+        completion_updated = True
+        status = owner_status_payload(repo)
+        completion = status["completion"]
+
+    ownership = status["ownership"]
+    completion_ref = completion["ref"]
+    if ownership["kind"] == "user_owned":
+        if args.validated_target_head:
+            raise WorkflowError(
+                "--validated-target-head is only valid for an agent-temporary "
+                "worktree delivery."
+            )
+        emit(
+            {
+                "action": "owner_finish",
+                "status": "handoff_completed",
+                "source": {
+                    "branch": branch,
+                    "head": source_head,
+                    "worktree": worktree["path"],
+                },
+                "completion_ref": completion_ref,
+                "completion_updated": completion_updated,
+                "ownership": "user_owned",
+                "next_action": "handoff_completed_owner_retains_worktree",
+                "remote_refs_untouched": True,
+            }
+        )
+        return
+
+    if ownership["kind"] != "agent_temporary" or not ownership["valid"]:
+        raise WorkflowError("Owned worktree has invalid temporary ownership metadata.")
+
+    target = str(ownership["target"])
+    target_worktrees = affected_worktrees(repo, target)
+    if len(target_worktrees) != 1:
+        raise WorkflowError(
+            f"Recorded target branch '{target}' must be checked out in exactly one "
+            "registered worktree."
+        )
+    target_worktree = target_worktrees[0]
+    target_path = Path(target_worktree.path)
+    ensure_affected_worktrees_clean(repo, branch, target)
+    target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
+    source_contained = (
+        run_git(
+            repo,
+            "merge-base",
+            "--is-ancestor",
+            source_head,
+            target,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+    if not source_contained:
+        if args.validated_target_head:
+            raise WorkflowError(
+                "The source is not integrated yet; validate the target HEAD returned "
+                "after this command merges it."
+            )
+        merge = command_merge(
+            target_path,
+            argparse.Namespace(
+                source=branch,
+                target=target,
+                expected_source_head=source_head,
+                expected_target_head=target_head,
+                suppress_emit=True,
+            ),
+        )
+        target_head = str(merge["commit"])
+        emit(
+            {
+                "action": "owner_finish",
+                "status": "target_validation_required",
+                "source": {
+                    "branch": branch,
+                    "head": source_head,
+                    "worktree": worktree["path"],
+                },
+                "target": {
+                    "branch": target,
+                    "head": target_head,
+                    "worktree": str(target_path),
+                },
+                "merge": merge,
+                "completion_ref": completion_ref,
+                "completion_updated": completion_updated,
+                "ownership": "agent_temporary",
+                "next_action": (
+                    "validate_target_then_rerun_owner_finish_with_exact_head"
+                ),
+                "remote_refs_untouched": True,
+            }
+        )
+        return
+
+    if not args.validated_target_head:
+        emit(
+            {
+                "action": "owner_finish",
+                "status": "target_validation_required",
+                "source": {
+                    "branch": branch,
+                    "head": source_head,
+                    "worktree": worktree["path"],
+                },
+                "target": {
+                    "branch": target,
+                    "head": target_head,
+                    "worktree": str(target_path),
+                },
+                "merge": None,
+                "completion_ref": completion_ref,
+                "completion_updated": completion_updated,
+                "ownership": "agent_temporary",
+                "next_action": (
+                    "validate_target_then_rerun_owner_finish_with_exact_head"
+                ),
+                "remote_refs_untouched": True,
+            }
+        )
+        return
+
+    verify_expected_head(
+        target_head,
+        args.validated_target_head,
+        f"Validated target '{target}'",
+    )
+    removal = command_remove(
+        target_path,
+        argparse.Namespace(
+            worktree=str(worktree["path"]),
+            require_merged_into=target,
+            require_contained_in=None,
+            expected_head=source_head,
+            allow_uncontained_detached=False,
+            reason="owner-finish after exact target validation",
+            suppress_emit=True,
+        ),
+    )
+    emit(
+        {
+            "action": "owner_finish",
+            "status": "completed",
+            "source": {
+                "branch": branch,
+                "head": source_head,
+                "worktree": worktree["path"],
+            },
+            "target": {
+                "branch": target,
+                "head": target_head,
+                "worktree": str(target_path),
+            },
+            "cleanup": removal,
+            "completion_ref": completion_ref,
+            "completion_updated": completion_updated,
+            "ownership": "agent_temporary",
+            "next_action": "report_completed_delivery",
             "remote_refs_untouched": True,
         }
     )
@@ -1339,6 +1567,26 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
                     "rescue",
                 ],
             }
+    automatic_retention = [
+        decision
+        for candidate in selected
+        if (decision := automatic_retention_decision(candidate)) is not None
+    ]
+    automatic_ids = {
+        str(decision["candidate_id"]) for decision in automatic_retention
+    }
+    review_required = [
+        {
+            "candidate_id": candidate["candidate_id"],
+            "head": candidate["head"],
+            "possible_decisions": candidate["decision_evidence"][
+                "possible_decisions"
+            ],
+            "requirements": candidate["decision_evidence"]["requirements"],
+        }
+        for candidate in selected
+        if str(candidate["candidate_id"]) not in automatic_ids
+    ]
     emit(
         {
             "action": "maintenance_audit",
@@ -1354,6 +1602,18 @@ def command_maintenance_audit(repo: Path, args: argparse.Namespace) -> None:
             "total_candidates": len(items),
             "selected_candidates": len(selected),
             "candidates": selected,
+            "decision_plan_template": (
+                {
+                    "schema_version": MAINTENANCE_PLAN_SCHEMA_VERSION,
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "target": snapshot["target"]["branch"],
+                    "decisions": [],
+                }
+                if args.all
+                else None
+            ),
+            "automatic_retention_decisions": automatic_retention,
+            "review_required": review_required,
             "owner_handoff_missing": [
                 {
                     "branch": candidate["branch"],
@@ -1509,9 +1769,14 @@ def validate_maintenance_plan(
         decisions[candidate_id] = raw
 
     missing = sorted(set(candidates) - set(decisions))
+    for candidate_id in missing:
+        automatic = automatic_retention_decision(candidates[candidate_id])
+        if automatic is not None:
+            decisions[candidate_id] = automatic
+    missing = sorted(set(candidates) - set(decisions))
     if missing:
         raise WorkflowError(
-            "Maintenance plan must classify every audited candidate; missing: "
+            "Maintenance plan must classify every review-required candidate; missing: "
             + ", ".join(missing)
         )
 
@@ -1600,6 +1865,9 @@ def command_maintenance_run(repo: Path, args: argparse.Namespace) -> None:
             "candidate_id": candidate_id,
             "decision": decision["decision"],
             "reason": decision["reason"],
+            "decision_source": (
+                "automatic" if decision.get("automatic") is True else "provided"
+            ),
         }
         if operation is not None:
             item["operation"] = operation
@@ -2304,6 +2572,20 @@ def build_parser() -> argparse.ArgumentParser:
     mark_complete.add_argument("--branch")
     mark_complete.add_argument("--expected-head", required=True)
     mark_complete.set_defaults(handler=command_mark_complete)
+
+    owner_finish = commands.add_parser(
+        "owner-finish",
+        help="Advance an owned task through completion, delivery, and cleanup",
+    )
+    owner_finish.add_argument(
+        "--validated-source-head",
+        help="Exact source HEAD that passed source-worktree validation",
+    )
+    owner_finish.add_argument(
+        "--validated-target-head",
+        help="Exact integrated target HEAD that passed target-worktree validation",
+    )
+    owner_finish.set_defaults(handler=command_owner_finish)
 
     block_auto_merge = commands.add_parser(
         "block-auto-merge",

@@ -728,6 +728,124 @@ class GitWorktreeCliTests(unittest.TestCase):
             status["next_action"], "handoff_completed_owner_retains_worktree"
         )
 
+    def test_owner_finish_marks_user_owned_worktree_without_delivery(self) -> None:
+        worktree = self.create("feat/scripted-user-handoff")
+        self.commit_file(worktree, "handoff.txt", "handoff\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        finished = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-finish",
+                    "--validated-source-head",
+                    source_head,
+                ],
+                worktree,
+            ).stdout
+        )
+
+        self.assertEqual(finished["status"], "handoff_completed")
+        self.assertEqual(finished["ownership"], "user_owned")
+        self.assertTrue(finished["completion_updated"])
+        self.assertTrue(worktree.exists())
+        self.assertEqual(
+            run(
+                ["git", "merge-base", "--is-ancestor", source_head, "main"],
+                self.repo,
+                check=False,
+            ).returncode,
+            1,
+        )
+
+    def test_owner_finish_delivers_then_requires_exact_target_validation(self) -> None:
+        worktree = self.create("feat/scripted-temporary-delivery", temporary=True)
+        self.commit_file(worktree, "delivered.txt", "delivered\n")
+        source_head = run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+
+        integrated = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-finish",
+                    "--validated-source-head",
+                    source_head,
+                ],
+                worktree,
+            ).stdout
+        )
+        target_head = integrated["target"]["head"]
+        self.assertEqual(integrated["status"], "target_validation_required")
+        self.assertEqual(
+            integrated["merge"]["source"], "feat/scripted-temporary-delivery"
+        )
+        self.assertEqual(
+            run(["git", "rev-parse", "main"], self.repo).stdout.strip(),
+            target_head,
+        )
+        self.assertTrue(worktree.exists())
+
+        stale_validation = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "owner-finish",
+                "--validated-target-head",
+                "0" * 40,
+            ],
+            worktree,
+            check=False,
+        )
+        self.assertEqual(stale_validation.returncode, 2)
+        self.assertIn("Validated target 'main' HEAD changed", stale_validation.stderr)
+        self.assertTrue(worktree.exists())
+
+        (self.repo / "target-draft.txt").write_text("draft\n")
+        dirty_target = run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--repo",
+                str(worktree),
+                "owner-finish",
+                "--validated-target-head",
+                target_head,
+            ],
+            worktree,
+            check=False,
+        )
+        self.assertEqual(dirty_target.returncode, 2)
+        self.assertIn("Branch 'main' is dirty", dirty_target.stderr)
+        self.assertTrue(worktree.exists())
+        (self.repo / "target-draft.txt").unlink()
+
+        completed = json.loads(
+            run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo",
+                    str(worktree),
+                    "owner-finish",
+                    "--validated-target-head",
+                    target_head,
+                ],
+                worktree,
+            ).stdout
+        )
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["target"]["head"], target_head)
+        self.assertTrue(completed["cleanup"]["temporary_ownership_removed"])
+        self.assertFalse(worktree.exists())
+
     def test_maintenance_audit_reports_current_and_stale_completion(self) -> None:
         worktree = self.create("feat/completed-owner-task")
         self.commit_file(worktree, "first.txt", "first\n")
@@ -804,6 +922,35 @@ class GitWorktreeCliTests(unittest.TestCase):
         (worktree / "draft.txt").write_text("draft\n")
         changed = self.maintenance_audit()
         self.assertNotEqual(first["snapshot_id"], changed["snapshot_id"])
+
+    def test_maintenance_plan_autofills_only_script_enforced_retention(self) -> None:
+        worktree = self.create("feat/automatic-retention")
+        self.commit_file(worktree, "feature.txt", "feature\n")
+        (worktree / "draft.txt").write_text("draft\n")
+        audit = self.maintenance_audit()
+
+        self.assertEqual(audit["decision_plan_template"]["decisions"], [])
+        self.assertTrue(audit["automatic_retention_decisions"])
+        completed = json.loads(
+            self.run_maintenance_plan(audit["decision_plan_template"]).stdout
+        )
+        self.assertTrue(completed["terminal_decisions"])
+        self.assertTrue(
+            all(
+                item["decision"] == "retain"
+                and item["decision_source"] == "automatic"
+                for item in completed["terminal_decisions"]
+            )
+        )
+
+        (worktree / "draft.txt").unlink()
+        clean_audit = self.maintenance_audit()
+        self.assertTrue(clean_audit["review_required"])
+        rejected = self.run_maintenance_plan(
+            clean_audit["decision_plan_template"], check=False
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("review-required candidate", rejected.stderr)
 
     def test_maintenance_run_merges_branch_and_retains_worktree(self) -> None:
         worktree = self.create("feat/batch-merge")
