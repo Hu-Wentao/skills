@@ -40,9 +40,11 @@ class SkillPolicyTest(unittest.TestCase):
         reference = (SKILL_ROOT / "references" / "docker-install.md").read_text(
             encoding="utf-8"
         )
+        normalized_skill = " ".join(skill.split())
         normalized_reference = " ".join(reference.split())
         self.assertIn("docker-install.md", skill)
         self.assertIn("root-equivalent access", skill)
+        self.assertIn("bounded automatic BuildKit cache cleanup", normalized_skill)
         for phrase in (
             "project-owned `host-governance.config.v2` control",
             "no TCP Docker API listener or firewall change",
@@ -50,6 +52,11 @@ class SkillPolicyTest(unittest.TestCase):
             "Remove the test container and remove its image only",
             "Never compensate with broad package purge",
             "Compare effective TCP listeners and firewall exposure",
+            "root-owned systemd service and timer",
+            "only re-creatable BuildKit cache",
+            "Never use `docker system prune`",
+            "immediate cleanup of an existing cache",
+            "cleanup service/timer ownership and digests",
         ):
             self.assertIn(phrase, normalized_reference)
 

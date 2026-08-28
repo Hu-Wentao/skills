@@ -18,7 +18,10 @@ Collect secret-safe facts before selecting packages:
   driver, storage driver, Docker root directory, and bounded image/container counts;
 - `/etc/docker/daemon.json` presence and digest without returning its contents;
 - Docker-owned TCP listeners, firewall state, free disk and inode capacity, and
-  any existing service that owns the requested runtime or data directory.
+  any existing service that owns the requested runtime or data directory;
+- BuildKit/Buildx availability, builder identity and driver, bounded cache
+  usage, existing cleanup timers or cron jobs, and the owner of each cleanup
+  mechanism.
 
 Stop on an unsupported platform, mixed package ownership, an active unmanaged
 daemon, insufficient capacity, a held required package, or an unexplained
@@ -44,6 +47,28 @@ and whether a container smoke test may pull an image. Default to:
 - no migration or deletion of `/var/lib/docker`;
 - no automatic package-source replacement or removal of another runtime.
 
+For a host expected to build images, include bounded automatic BuildKit cache
+cleanup in the desired state unless the project profile explicitly disables
+image building. Keep the reusable skill generic: the project/device profile
+must declare the builder selector, schedule, retention filter, and free-space
+or cache-size guardrails. Do not hardcode a builder name or capacity threshold
+from one host into this skill.
+
+The cleanup mechanism must use the product-native BuildKit interface, such as
+`docker buildx prune` or `buildctl prune` after verifying the active driver and
+version. It must target only re-creatable BuildKit cache. Never use
+`docker system prune`, image prune, volume prune, recursive deletion of
+Docker/containerd snapshot directories, or deletion of application data as an
+automatic-installation cleanup mechanism.
+
+Install the cleanup as a root-owned systemd service and timer owned by the
+host controller, not as an application user's cron entry. If Docker is
+installed before its builder exists, define and verify an explicit no-op-until-
+builder-exists behavior; do not silently treat a missing builder as proof that
+cleanup is configured. Installing or enabling the timer does not authorize an
+immediate cleanup of an existing cache; that deletion remains a separately
+authorized cleanup action.
+
 Report downloads, service starts/restarts, expected downtime, disk impact,
 external registry access, irreversible package/data effects, and recovery
 limits before apply. Snapshot installed package versions/selections, service and
@@ -63,29 +88,44 @@ Require current authorization for the exact host. Under one remote host lock:
 5. Enable/start or restart only the declared service and socket.
 6. Verify the daemon API, server version, Compose/Buildx commands, storage and
    cgroup state before continuing.
-7. Run the contracted container smoke test when authorized. Remove the test
+7. Install the declared root-owned BuildKit cleanup service and timer after
+   Docker readiness is proven. Snapshot existing cleanup artifacts and timer
+   state, install complete validated candidates atomically, reload systemd,
+   and enable the timer without running a prune during installation unless
+   that exact cleanup is separately authorized.
+8. Run the contracted container smoke test when authorized. Remove the test
    container and remove its image only when the transaction introduced it.
-8. Record result generation, package versions, transaction phase, verification,
+9. Record result generation, package versions, cleanup artifact digests,
+   transaction phase, verification,
    snapshot path, and every deliberately preserved change.
 
 On failure, stop forward progress. Restore prior daemon configuration and
-service/socket enable/active states when safe. Preserve newly installed packages
-and `/var/lib/docker` unless a separately authorized rollback contract proves
-they were absent, unused, and owned only by this transaction. Never compensate
-with broad package purge, `docker system prune`, or Docker data-root deletion.
+service/socket and cleanup-timer enable/active states when safe. Remove only
+transaction-created cleanup artifacts when the snapshot proves they were
+absent. Preserve newly installed packages and `/var/lib/docker` unless a
+separately authorized rollback contract proves they were absent, unused, and
+owned only by this transaction. Never compensate with broad package purge,
+`docker system prune`, or Docker data-root deletion.
 
 ## Verify and Report
 
 Run a fresh read-only verification after apply. Prove the declared packages and
 versions, active/enabled daemon, Docker API response, Compose/Buildx readiness,
 expected cgroup driver/version, unchanged daemon configuration when no change
-was planned, and zero leftover smoke-test containers/images introduced by the
-transaction. Compare effective TCP listeners and firewall exposure with the
-baseline; a Unix socket is not a public listener, and a new unexplained TCP
-listener is a finding even when bound to loopback.
+was planned, the cleanup service/timer ownership and digests, its enabled and
+active state, its effective policy, and zero leftover smoke-test
+containers/images introduced by the transaction. Confirm the builder selector
+and the explicit no-op state when the builder does not yet exist. Do not claim
+that cache bytes were reclaimed unless a separately authorized cleanup ran and
+its before/after evidence is available. Compare effective TCP listeners and
+firewall exposure with the baseline; a Unix socket is not a public listener,
+and a new unexplained TCP listener is a finding even when bound to loopback.
 
 Report the transaction ID, base and result generations, package source and
-versions, journal/snapshot locations, smoke-test result, exposure result,
-reboot requirement, recovery state, and unverified gaps. Record stable desired
-runtime facts in the host repository only when the current request authorizes
-that repository write; do not promote transient counts or live observations.
+versions, cleanup policy and timer evidence, journal/snapshot locations,
+smoke-test result, exposure result, reboot requirement, recovery state, and
+unverified gaps. Distinguish cleanup configuration from cleanup execution and
+report the latter only with its own authorization and before/after evidence.
+Record stable desired runtime facts in the host repository only when the
+current request authorizes that repository write; do not promote transient
+counts or live observations.
