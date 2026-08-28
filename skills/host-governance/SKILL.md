@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, Access, WAF/Rulesets, and selective Cloudflare HTTP 403 diagnosis. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, CI runner configuration, deployed-service and resource observations, Cloudflare security-event or WAF diagnosis, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation and bounded Docker/BuildKit cache cleanup, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, Access, WAF/Rulesets, and selective Cloudflare HTTP 403 diagnosis. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, Docker cache-retention automation, CI runner configuration, deployed-service and resource observations, Cloudflare security-event or WAF diagnosis, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
 ---
 
 # Host Governance
@@ -261,8 +261,12 @@ infer it from an earlier one.
   have been inspected and either verified or reported as an explicit gap.
 - Do not report a Docker installation as complete until package ownership,
   daemon and Compose readiness, cgroup mode, smoke-test cleanup, effective
-  listeners, firewall exposure, and recovery state have been verified. Treat
-  Docker group membership as root-equivalent access requiring separate intent.
+  listeners, firewall exposure, automatic BuildKit cache-cleanup posture, and
+  recovery state have been verified. For hosts expected to build images, make
+  bounded automatic BuildKit cache cleanup part of the desired installation
+  state; never broaden it to Docker image, volume, container, or data-root
+  deletion. Treat Docker group membership as root-equivalent access requiring
+  separate intent.
 - Treat Jenkins installation, controller configuration, plugin state, agents,
   credentials, shared job runtime, backups, and upgrades as host-owned state.
   Preserve application identity and signing intent from the consuming project;
