@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register local skill repositories and sync project skill changes back."""
+"""Register shared skill repositories and publish shared skill changes."""
 
 from __future__ import annotations
 
@@ -40,6 +40,17 @@ class Target:
     destination_relative: Path
     source_id: str | None
     lock_path: Path | None
+
+
+@dataclass(frozen=True)
+class ProjectSkillInput:
+    project_root: Path
+    lock_path: Path
+    lock_entry: dict[str, object] | None
+
+    @property
+    def is_private_source(self) -> bool:
+        return self.lock_entry is None
 
 
 @dataclass(frozen=True)
@@ -273,7 +284,7 @@ def nearest_lock(skill_dir: Path, project_root: Path) -> Path | None:
     project_root = project_root.resolve()
     while True:
         candidate = current / "skills-lock.json"
-        if candidate.is_file():
+        if _usable_lock_file(candidate):
             return candidate
         if current == project_root:
             return None
@@ -282,15 +293,21 @@ def nearest_lock(skill_dir: Path, project_root: Path) -> Path | None:
         current = current.parent
 
 
+def _has_git_metadata_component(path: Path) -> bool:
+    return any(part.casefold() == ".git" for part in path.parts)
+
+
 def contained_path(repo: Path, relative: Path) -> tuple[Path, Path]:
     if relative.is_absolute():
         raise SyncError(f"Destination must be relative to its repository: {relative}")
+    if _has_git_metadata_component(relative):
+        raise SyncError(f"Invalid destination inside repository: {relative}")
     destination = (repo / relative).resolve()
     try:
         normalized = destination.relative_to(repo)
     except ValueError as exc:
         raise SyncError(f"Destination escapes its repository: {relative}") from exc
-    if not normalized.parts or normalized.parts[0] == ".git":
+    if not normalized.parts or _has_git_metadata_component(normalized):
         raise SyncError(f"Invalid destination inside repository: {relative}")
     return destination, normalized
 
@@ -302,54 +319,66 @@ def resolve_target(
     repo_override: Path | None,
     destination_override: Path | None,
 ) -> Target:
-    if repo_override is not None:
-        repo = repo_override.expanduser().resolve()
-        if not repo.is_dir() or git_root(repo) != repo:
-            raise SyncError(
-                f"Destination repository must be a Git worktree root: {repo}"
-            )
-        relative = destination_override or Path("skills") / skill_name
-        destination, normalized = contained_path(repo, relative)
-        return Target(repo, destination, normalized, None, None)
-
-    if destination_override is not None:
-        raise SyncError(
-            "--destination requires --repo when no lock-derived repository is used"
-        )
-
     logical_skill = _absolute_path(skill_dir)
-    logical_project_root = _project_root_from_installed_path(
-        logical_skill, skill_name
-    )
-    if logical_project_root is not None and skill_name in _cli_lock_skills(
-        logical_project_root / "skills-lock.json", "project"
-    ):
-        project_root = logical_project_root
-        lock_path = project_root / "skills-lock.json"
+    project_input = _project_skill_input(logical_skill, skill_name)
+    if project_input is not None and project_input.is_private_source:
+        _raise_project_private_source(project_input.project_root, skill_name)
+    if project_input is not None:
+        if repo_override is not None or destination_override is not None:
+            raise SyncError(
+                f"A matching project lock owns {skill_name}; --repo and "
+                "--destination cannot override it"
+            )
+        lock_path = project_input.lock_path
+        assert project_input.lock_entry is not None
+        entry = project_input.lock_entry
     else:
+        _reject_project_config_target(logical_skill, skill_name)
+        if repo_override is not None:
+            repo = repo_override.expanduser().resolve()
+            if not repo.is_dir() or git_root(repo) != repo:
+                raise SyncError(
+                    f"Destination repository must be a Git worktree root: {repo}"
+                )
+            relative = destination_override or Path("skills") / skill_name
+            destination, normalized = contained_path(repo, relative)
+            return Target(repo, destination, normalized, None, None)
+
+        if destination_override is not None:
+            raise SyncError(
+                "--destination requires --repo when no lock-derived repository is used"
+            )
+
         project_root = git_root(skill_dir)
         lock_path = nearest_lock(skill_dir, project_root)
-    if lock_path is None:
-        raise SyncError(
-            "No skills-lock.json found; pass --repo and optional --destination"
-        )
+        if lock_path is None:
+            raise SyncError(
+                "No skills-lock.json found; pass --repo and optional --destination"
+            )
+        try:
+            entry = _cli_lock_skills(lock_path, "project")[skill_name]
+        except KeyError as exc:
+            raise SyncError(
+                f"No usable lock entry for {skill_name}; pass --repo and optional --destination"
+            ) from exc
+        if not isinstance(entry, dict):
+            raise SyncError(f"No usable lock entry for {skill_name}: {lock_path}")
+
     try:
-        entry = _cli_lock_skills(lock_path, "project")[skill_name]
         source_id = str(entry["source"])
-    except (KeyError, TypeError) as exc:
-        raise SyncError(
-            f"No usable lock entry for {skill_name}; pass --repo and optional --destination"
-        ) from exc
+    except KeyError as exc:
+        raise SyncError(f"No usable lock entry for {skill_name}: {lock_path}") from exc
+    locked_skill_file = _validated_project_lock_skill_path(
+        entry, skill_name, lock_path
+    )
+    relative = (
+        locked_skill_file.parent
+        if locked_skill_file is not None
+        else Path("skills") / skill_name
+    )
 
     registry = load_registry(registry_path)
     repo = resolve_registered_repo(registry, source_id)
-    skill_path = entry.get("skillPath")
-    if skill_path is None:
-        relative = Path("skills") / skill_name
-    elif isinstance(skill_path, str) and Path(skill_path).name == "SKILL.md":
-        relative = Path(skill_path).parent
-    else:
-        raise SyncError(f"Invalid skillPath for {skill_name} in {lock_path}")
     destination, normalized = contained_path(repo, relative)
     return Target(repo, destination, normalized, source_id, lock_path)
 
@@ -593,7 +622,8 @@ def _commit_skill(context: SourceContext, message: str) -> str | None:
 
 def excluded(relative: Path) -> bool:
     return (
-        any(part in EXCLUDED_DIRS for part in relative.parts)
+        _has_git_metadata_component(relative)
+        or any(part in EXCLUDED_DIRS for part in relative.parts)
         or relative.name in EXCLUDED_FILES
         or relative.suffix == ".pyc"
         or relative.name.startswith(".env.")
@@ -1048,8 +1078,16 @@ def _global_skill_lock_path(global_skills_root: Path | None = None) -> Path:
     return _absolute_path(skills_root).parent / ".skill-lock.json"
 
 
+def _usable_lock_file(lock_path: Path) -> bool:
+    if not os.path.lexists(lock_path):
+        return False
+    if lock_path.is_symlink() or not lock_path.is_file():
+        raise SyncError(f"Skill lock is not a usable regular file: {lock_path}")
+    return True
+
+
 def _lock_skills(lock_path: Path) -> dict[str, object]:
-    if not lock_path.is_file():
+    if not _usable_lock_file(lock_path):
         return {}
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -1066,7 +1104,7 @@ def _lock_tracks_skill(lock_path: Path, skill_name: str) -> bool:
 
 
 def _cli_lock_skills(lock_path: Path, scope: str) -> dict[str, object]:
-    if not lock_path.is_file():
+    if not _usable_lock_file(lock_path):
         return {}
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
@@ -1135,15 +1173,191 @@ def _same_location(left: Path, right: Path) -> bool:
 
 
 def _project_root_from_installed_path(
-    installed_skill: Path, skill_name: str
+    installed_skill: Path,
+    skill_name: str,
+    *,
+    require_name_match: bool = True,
 ) -> Path | None:
-    if installed_skill.name != skill_name:
+    if require_name_match and installed_skill.name != skill_name:
         return None
     skills_root = installed_skill.parent
     agents_root = skills_root.parent
     if skills_root.name != "skills" or agents_root.name != ".agents":
         return None
     return _absolute_path(agents_root.parent)
+
+
+def _validated_project_lock_skill_path(
+    entry: dict[str, object], skill_name: str, lock_path: Path
+) -> Path | None:
+    raw_skill_path = entry.get("skillPath")
+    if raw_skill_path is None:
+        return None
+    relative = Path(raw_skill_path) if isinstance(raw_skill_path, str) else None
+    if (
+        relative is None
+        or not raw_skill_path
+        or "\x00" in raw_skill_path
+        or relative.is_absolute()
+        or relative.name != "SKILL.md"
+        or relative.parent.name != skill_name
+        or ".." in relative.parts
+        or _has_git_metadata_component(relative)
+    ):
+        raise SyncError(
+            f"Matching project lock entry for {skill_name} has a present invalid "
+            f"skillPath; ownership is ambiguous: {lock_path}"
+        )
+    return relative
+
+
+def _matching_project_lock_entry(
+    lock_path: Path, skill_name: str
+) -> dict[str, object] | None:
+    try:
+        usable_lock = _usable_lock_file(lock_path)
+    except SyncError as exc:
+        raise SyncError(
+            f"Cannot determine ownership for {skill_name}; project lock is not "
+            f"a usable regular file: {lock_path}"
+        ) from exc
+    if not usable_lock:
+        return None
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SyncError(
+            f"Cannot determine ownership for {skill_name}; project lock is "
+            f"corrupt or ambiguous: {lock_path}: {exc}"
+        ) from exc
+    if not isinstance(data, dict) or "skills" not in data:
+        raise SyncError(
+            f"Cannot determine ownership for {skill_name}; project lock is "
+            f"corrupt or ambiguous: {lock_path}"
+        )
+    skills = data["skills"]
+    if not isinstance(skills, dict):
+        raise SyncError(
+            f"Cannot determine ownership for {skill_name}; project lock has an "
+            f"invalid skills object: {lock_path}"
+        )
+    if skill_name not in skills:
+        return None
+
+    version = data.get("version")
+    entry = skills[skill_name]
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, (int, float))
+        or version < 1
+        or not isinstance(entry, dict)
+    ):
+        raise SyncError(
+            f"Matching project lock entry for {skill_name} is invalid or "
+            f"incomplete; ownership is ambiguous: {lock_path}"
+        )
+    raw_source = entry.get("source")
+    if not isinstance(raw_source, str) or not raw_source.strip():
+        raise SyncError(
+            f"Matching project lock entry for {skill_name} is invalid or "
+            f"incomplete; source is missing: {lock_path}"
+        )
+    try:
+        normalize_source(raw_source)
+    except SyncError as exc:
+        raise SyncError(
+            f"Matching project lock entry for {skill_name} has an invalid "
+            f"source; ownership is ambiguous: {lock_path}"
+        ) from exc
+    _validated_project_lock_skill_path(entry, skill_name, lock_path)
+    return entry
+
+
+def _project_skill_input_at_location(
+    skill_dir: Path,
+    skill_name: str,
+    *,
+    require_name_match: bool,
+) -> ProjectSkillInput | None:
+    project_root = _project_root_from_installed_path(
+        skill_dir,
+        skill_name,
+        require_name_match=require_name_match,
+    )
+    if project_root is None:
+        return None
+    lock_path = project_root / "skills-lock.json"
+    return ProjectSkillInput(
+        project_root,
+        lock_path,
+        _matching_project_lock_entry(lock_path, skill_name),
+    )
+
+
+def _project_skill_input(
+    skill_dir: Path, skill_name: str
+) -> ProjectSkillInput | None:
+    logical_skill = _absolute_path(skill_dir)
+    resolved_skill = logical_skill.resolve()
+    global_skill = _absolute_path(_shared_global_skills_root()) / skill_name
+    candidates: list[ProjectSkillInput] = []
+    seen: set[Path] = set()
+    for location, require_name_match in (
+        (logical_skill, True),
+        (resolved_skill, False),
+    ):
+        if location in seen or location == global_skill:
+            continue
+        seen.add(location)
+        candidate = _project_skill_input_at_location(
+            location,
+            skill_name,
+            require_name_match=require_name_match,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
+    private = next(
+        (candidate for candidate in candidates if candidate.is_private_source),
+        None,
+    )
+    if private is not None:
+        return private
+    project_roots = {
+        candidate.project_root.resolve() for candidate in candidates
+    }
+    if len(project_roots) > 1:
+        rendered = ", ".join(str(root) for root in sorted(project_roots))
+        raise SyncError(
+            f"Cannot determine ownership for {skill_name}; logical and resolved "
+            f"paths belong to different lock-managed projects: {rendered}"
+        )
+    return candidates[0] if candidates else None
+
+
+def _raise_project_private_source(project_root: Path, skill_name: str) -> None:
+    raise SyncError(
+        f"{skill_name} is a project-private skill source owned by the current "
+        f"project repository: {project_root}. Ordinary revision must use that "
+        "project's Git/worktree workflow for local validation, commit, and "
+        "merge. sync-skill-repo must not publish or migrate it, bind global "
+        "locks, push, or run a named Skills CLI update."
+    )
+
+
+def _reject_project_config_target(skill_dir: Path, skill_name: str) -> None:
+    logical_skill = _absolute_path(skill_dir)
+    for location in (logical_skill, logical_skill.resolve()):
+        config_root = location.parent
+        agents_root = config_root.parent
+        if (
+            config_root.name == "skills-config"
+            and agents_root.name == ".agents"
+        ):
+            raise SyncError(
+                f"{location} is project-owned skill configuration, not a skill "
+                "publication target; deliver it only through the current project"
+            )
 
 
 def _active_installation(
@@ -1539,17 +1753,14 @@ def _resolve_publish_receipt(
     args: argparse.Namespace,
 ) -> tuple[PublishReceipt, Path, Target | None]:
     local_skill = _absolute_path(Path(args.skill_dir))
+    _reject_project_config_target(local_skill, local_skill.name)
     skill_name = read_skill_name(local_skill)
-    logical_project_root = _project_root_from_installed_path(
-        local_skill, skill_name
-    )
-    is_project_installation = bool(
-        logical_project_root is not None
-        and local_skill.is_dir()
-        and skill_name
-        in _cli_lock_skills(
-            logical_project_root / "skills-lock.json", "project"
-        )
+    project_input = _project_skill_input(local_skill, skill_name)
+    if project_input is not None and project_input.is_private_source:
+        _raise_project_private_source(project_input.project_root, skill_name)
+    is_project_installation = project_input is not None
+    logical_project_root = (
+        project_input.project_root if project_input is not None else None
     )
     direct_source = (
         None
@@ -1720,16 +1931,18 @@ def publish_skill(args: argparse.Namespace) -> None:
 
 
 def sync_skill(args: argparse.Namespace) -> None:
-    skill_dir = Path(args.skill_dir).expanduser().resolve()
-    skill_name = read_skill_name(skill_dir)
+    logical_skill = _absolute_path(Path(args.skill_dir))
+    _reject_project_config_target(logical_skill, logical_skill.name)
+    skill_name = read_skill_name(logical_skill)
     registry_path = Path(args.registry).expanduser().resolve()
     target = resolve_target(
-        skill_dir,
+        logical_skill,
         skill_name,
         registry_path,
         Path(args.repo) if args.repo else None,
         Path(args.destination) if args.destination else None,
     )
+    skill_dir = logical_skill.resolve()
     source_root = git_root(skill_dir)
     if source_root == target.repo:
         raise SyncError(
@@ -1830,7 +2043,7 @@ def sync_skill(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Register local skill repositories and sync project skill changes back"
+        description="Register shared skill repositories and publish shared skill changes"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1846,7 +2059,9 @@ def build_parser() -> argparse.ArgumentParser:
         "publish",
         help="push and refresh one named skill through its matching CLI locks",
     )
-    publish.add_argument("skill_dir", help="source skill or project-installed copy")
+    publish.add_argument(
+        "skill_dir", help="shared source skill or lock-managed project copy"
+    )
     publish.add_argument("--repo")
     publish.add_argument("--destination")
     publish.add_argument("--registry", default=str(default_registry_path()))
@@ -1871,7 +2086,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
 
     sync = subparsers.add_parser(
-        "sync", help="sync a project skill to its source repository"
+        "sync", help="sync a lock-managed or explicit copy to a shared source"
     )
     sync.add_argument("skill_dir")
     sync.add_argument("--repo")

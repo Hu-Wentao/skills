@@ -147,11 +147,697 @@ class SyncSkillRepoTests(unittest.TestCase):
             )
             self.assertEqual(target.source_id, "example/source")
 
+    def test_resolve_target_uses_legacy_default_when_skill_path_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source_repo = root / "source"
+            registry = root / "registry.json"
+            init_repo(project)
+            init_repo(source_repo, "git@github.com:example/source.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {"source": "example/source"}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            MODULE.register_repository(source_repo, registry, None, [])
+
+            target = MODULE.resolve_target(skill, "demo-skill", registry, None, None)
+
+            self.assertEqual(
+                target.destination,
+                source_repo.resolve() / "skills" / "demo-skill",
+            )
+
+    def test_invalid_lock_skill_path_for_another_skill_fails_before_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source_repo = root / "source"
+            skill = project / ".agents" / "skills" / "demo-skill"
+            destination = source_repo / "skills" / "other-skill"
+            write_skill(skill, "demo-skill", "project content")
+            write_skill(destination, "other-skill", "preserve destination")
+            before = (destination / "SKILL.md").read_text(encoding="utf-8")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "skills/other-skill/SKILL.md",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "present invalid skillPath"
+                ):
+                    MODULE.resolve_target(
+                        skill,
+                        "demo-skill",
+                        root / "registry.json",
+                        None,
+                        None,
+                    )
+
+            registry.assert_not_called()
+            self.assertEqual(
+                (destination / "SKILL.md").read_text(encoding="utf-8"), before
+            )
+
+    def test_invalid_lock_skill_path_with_nested_git_fails_before_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            source_repo = root / "source"
+            skill = project / ".agents" / "skills" / "demo-skill"
+            destination = source_repo / "packages" / ".GIT" / "demo-skill"
+            write_skill(skill, "demo-skill", "project content")
+            write_skill(destination, "demo-skill", "preserve destination")
+            before = (destination / "SKILL.md").read_text(encoding="utf-8")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/source",
+                                "skillPath": "packages/.GIT/demo-skill/SKILL.md",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "present invalid skillPath"
+                ):
+                    MODULE.resolve_target(
+                        skill,
+                        "demo-skill",
+                        root / "registry.json",
+                        None,
+                        None,
+                    )
+
+            registry.assert_not_called()
+            self.assertEqual(
+                (destination / "SKILL.md").read_text(encoding="utf-8"), before
+            )
+
+    def test_project_private_tracked_skill_rejects_direct_source_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "application"
+            init_repo(project, "git@github.com:example/application.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "init")
+            configure_github_upstream(project)
+            args = publish_args(skill, reinstall=False)
+
+            with (
+                patch.object(MODULE, "_direct_source_context") as direct,
+                patch.object(MODULE, "load_registry") as registry,
+                patch.object(MODULE, "_commit_skill") as commit,
+                patch.object(MODULE, "push_source_with_retry") as push,
+                patch.object(MODULE, "resolve_named_update_targets") as update,
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError,
+                    "project-private skill source owned by the current project",
+                ) as error:
+                    MODULE.publish_skill(args)
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+            commit.assert_not_called()
+            push.assert_not_called()
+            update.assert_not_called()
+            self.assertNotIn("Hu-Wentao/skills", str(error.exception))
+
+    def test_project_private_untracked_skill_uses_same_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "application"
+            init_repo(project, "git@github.com:example/application.git")
+            (project / "README.md").write_text("app\n", encoding="utf-8")
+            git(project, "add", "README.md")
+            git(project, "commit", "-q", "-m", "init")
+            configure_github_upstream(project)
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+
+            context = MODULE._project_skill_input(skill, "demo-skill")
+
+            self.assertIsNotNone(context)
+            assert context is not None
+            self.assertTrue(context.is_private_source)
+            self.assertEqual(context.project_root, MODULE._absolute_path(project))
+            with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                MODULE.publish_skill(publish_args(skill, reinstall=False))
+
+    def test_project_private_classification_preserves_logical_symlink_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            source = root / "shared-source"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(source, "git@github.com:example/shared.git")
+            shared_skill = source / "skills" / "demo-skill"
+            write_skill(shared_skill, "demo-skill")
+            git(source, "add", ".")
+            git(source, "commit", "-q", "-m", "init")
+            configure_github_upstream(source)
+            installed = project / ".agents" / "skills" / "demo-skill"
+            installed.parent.mkdir(parents=True)
+            installed.symlink_to(shared_skill, target_is_directory=True)
+
+            context = MODULE._project_skill_input(installed, "demo-skill")
+
+            self.assertIsNotNone(context)
+            assert context is not None
+            self.assertTrue(context.is_private_source)
+            with patch.object(MODULE, "_direct_source_context") as direct:
+                with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                    MODULE.publish_skill(
+                        publish_args(installed, reinstall=False)
+                    )
+            direct.assert_not_called()
+
+    def test_reverse_global_symlink_to_project_private_rejects_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            global_skills = root / "home" / ".agents" / "skills"
+            init_repo(project, "git@github.com:example/application.git")
+            project_skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(project_skill, "demo-skill")
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "init")
+            configure_github_upstream(project)
+            alias = global_skills / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(project_skill, target_is_directory=True)
+
+            with (
+                patch.object(
+                    MODULE, "_shared_global_skills_root", return_value=global_skills
+                ),
+                patch.object(MODULE, "_direct_source_context") as direct,
+                patch.object(MODULE, "load_registry") as registry,
+                patch.object(MODULE, "_commit_skill") as commit,
+                patch.object(MODULE, "push_source_with_retry") as push,
+                patch.object(MODULE, "resolve_named_update_targets") as update,
+            ):
+                with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                    MODULE.publish_skill(publish_args(alias))
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+            commit.assert_not_called()
+            push.assert_not_called()
+            update.assert_not_called()
+
+    def test_global_symlink_to_shared_source_remains_direct_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "shared-source"
+            global_skills = root / "home" / ".agents" / "skills"
+            init_repo(source, "git@github.com:example/shared.git")
+            shared_skill = source / "skills" / "demo-skill"
+            write_skill(shared_skill, "demo-skill")
+            git(source, "add", ".")
+            git(source, "commit", "-q", "-m", "init")
+            configure_github_upstream(source)
+            alias = global_skills / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(shared_skill, target_is_directory=True)
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                receipt, local_skill, target = MODULE._resolve_publish_receipt(
+                    publish_args(alias, reinstall=False)
+                )
+
+            self.assertEqual(local_skill, MODULE._absolute_path(alias))
+            self.assertIsNone(target)
+            self.assertEqual(receipt.source.repo, source.resolve())
+            self.assertEqual(receipt.source.skill_dir, shared_skill.resolve())
+
+    def test_reverse_global_symlink_to_project_private_rejects_sync_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            global_skills = root / "home" / ".agents" / "skills"
+            destination = root / "shared-source"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(destination, "git@github.com:example/shared.git")
+            project_skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(project_skill, "demo-skill")
+            alias = global_skills / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(project_skill, target_is_directory=True)
+            target = destination / "skills" / "demo-skill"
+            write_skill(target, "demo-skill", "preserve destination")
+            before = (target / "SKILL.md").read_text(encoding="utf-8")
+            args = MODULE.build_parser().parse_args(
+                [
+                    "sync",
+                    str(alias),
+                    "--repo",
+                    str(destination),
+                    "--destination",
+                    "skills/demo-skill",
+                ]
+            )
+
+            with (
+                patch.object(
+                    MODULE, "_shared_global_skills_root", return_value=global_skills
+                ),
+                patch.object(MODULE, "load_registry") as registry,
+                patch.object(MODULE, "push_with_retry") as push,
+            ):
+                with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                    MODULE.sync_skill(args)
+
+            registry.assert_not_called()
+            push.assert_not_called()
+            self.assertEqual(
+                (target / "SKILL.md").read_text(encoding="utf-8"), before
+            )
+
+    def test_resolved_project_private_boundary_ignores_target_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            destination = root / "shared-source"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(destination, "git@github.com:example/shared.git")
+            project_skill = project / ".agents" / "skills" / "private-target"
+            write_skill(project_skill, "demo-skill")
+            alias = root / "aliases" / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(project_skill, target_is_directory=True)
+            args = MODULE.build_parser().parse_args(
+                [
+                    "sync",
+                    str(alias),
+                    "--repo",
+                    str(destination),
+                    "--destination",
+                    "skills/demo-skill",
+                ]
+            )
+
+            with (
+                patch.object(MODULE, "load_registry") as registry,
+                patch.object(MODULE, "push_with_retry") as push,
+            ):
+                with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                    MODULE.sync_skill(args)
+
+            registry.assert_not_called()
+            push.assert_not_called()
+            self.assertFalse((destination / "skills" / "demo-skill").exists())
+
+    def test_project_private_ignores_same_name_global_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            global_skills = root / "global" / ".agents" / "skills"
+            init_repo(project, "git@github.com:example/application.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            global_lock = global_skills.parent / ".skill-lock.json"
+            global_lock.parent.mkdir(parents=True)
+            global_lock.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/shared",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                                "skillFolderHash": "a" * 40,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                MODULE, "_shared_global_skills_root", return_value=global_skills
+            ):
+                with patch.object(MODULE, "resolve_named_update_targets") as update:
+                    with patch.object(MODULE, "load_registry") as registry:
+                        with self.assertRaisesRegex(
+                            MODULE.SyncError, "project-private"
+                        ):
+                            MODULE.publish_skill(publish_args(skill))
+
+            update.assert_not_called()
+            registry.assert_not_called()
+
+    def test_valid_project_lock_precedes_tracked_direct_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            source_repo = root / "shared-source"
+            registry = root / "registry.json"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(source_repo, "git@github.com:example/shared.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/shared",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "init")
+            configure_github_upstream(project)
+            (source_repo / "README.md").write_text("source\n", encoding="utf-8")
+            git(source_repo, "add", ".")
+            git(source_repo, "commit", "-q", "-m", "init")
+            configure_github_upstream(source_repo)
+            MODULE.register_repository(
+                source_repo, registry, "example/shared", []
+            )
+            args = publish_args(skill, reinstall=False)
+            args.registry = str(registry)
+
+            with patch.object(MODULE, "_direct_source_context") as direct:
+                receipt, local_skill, target = MODULE._resolve_publish_receipt(args)
+
+            direct.assert_not_called()
+            self.assertEqual(local_skill, MODULE._absolute_path(skill))
+            self.assertIsNotNone(target)
+            assert target is not None
+            self.assertEqual(target.repo, source_repo.resolve())
+            self.assertEqual(receipt.source.repo, source_repo.resolve())
+
+    def test_invalid_matching_project_lock_fails_closed_before_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "application"
+            init_repo(project, "git@github.com:example/application.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            (project / "skills-lock.json").write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/shared",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            git(project, "add", ".")
+            git(project, "commit", "-q", "-m", "init")
+            configure_github_upstream(project)
+
+            with patch.object(MODULE, "_direct_source_context") as direct:
+                with patch.object(MODULE, "load_registry") as registry:
+                    with self.assertRaisesRegex(
+                        MODULE.SyncError,
+                        "invalid or incomplete; ownership is ambiguous",
+                    ):
+                        MODULE.publish_skill(
+                            publish_args(skill, reinstall=False)
+                        )
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+
+    def test_project_lock_directory_fails_closed_before_source_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "application"
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            (project / "skills-lock.json").mkdir()
+
+            with (
+                patch.object(MODULE, "_direct_source_context") as direct,
+                patch.object(MODULE, "load_registry") as registry,
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "not a usable regular file"
+                ):
+                    MODULE.publish_skill(publish_args(skill, reinstall=False))
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+
+    def test_broken_project_lock_symlink_fails_closed_before_source_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "application"
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            (project / "skills-lock.json").symlink_to(
+                project / "missing-lock-target.json"
+            )
+
+            with (
+                patch.object(MODULE, "_direct_source_context") as direct,
+                patch.object(MODULE, "load_registry") as registry,
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "not a usable regular file"
+                ):
+                    MODULE.publish_skill(publish_args(skill, reinstall=False))
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+
+    def test_valid_project_lock_symlink_fails_closed_before_source_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            external_lock = root / "external-lock.json"
+            external_lock.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "skills": {
+                            "demo-skill": {
+                                "source": "example/shared",
+                                "skillPath": "skills/demo-skill/SKILL.md",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (project / "skills-lock.json").symlink_to(external_lock)
+
+            with (
+                patch.object(MODULE, "_direct_source_context") as direct,
+                patch.object(MODULE, "load_registry") as registry,
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.SyncError, "not a usable regular file"
+                ):
+                    MODULE.publish_skill(publish_args(skill, reinstall=False))
+
+            direct.assert_not_called()
+            registry.assert_not_called()
+
+    def test_publish_repo_override_cannot_migrate_project_private_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            destination = root / "shared-source"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(destination, "git@github.com:example/shared.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            args = publish_args(skill, reinstall=False)
+            args.repo = str(destination)
+            args.destination = "skills/demo-skill"
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(MODULE.SyncError, "project-private"):
+                    MODULE.publish_skill(args)
+
+            registry.assert_not_called()
+            self.assertFalse((destination / "skills" / "demo-skill").exists())
+
+    def test_sync_repo_override_cannot_migrate_project_private_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "application"
+            destination = root / "shared-source"
+            init_repo(project, "git@github.com:example/application.git")
+            init_repo(destination, "git@github.com:example/shared.git")
+            skill = project / ".agents" / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill")
+            args = MODULE.build_parser().parse_args(
+                [
+                    "sync",
+                    str(skill),
+                    "--repo",
+                    str(destination),
+                    "--destination",
+                    "skills/demo-skill",
+                ]
+            )
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with patch.object(MODULE, "push_with_retry") as push:
+                    with self.assertRaisesRegex(
+                        MODULE.SyncError, "project-private"
+                    ):
+                        MODULE.sync_skill(args)
+
+            registry.assert_not_called()
+            push.assert_not_called()
+            self.assertFalse((destination / "skills" / "demo-skill").exists())
+
+    def test_explicit_non_project_lockless_copy_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            copy = root / "copies" / "demo-skill"
+            destination = root / "shared-source"
+            write_skill(copy, "demo-skill")
+            init_repo(destination, "git@github.com:example/shared.git")
+
+            target = MODULE.resolve_target(
+                copy,
+                "demo-skill",
+                root / "unused-registry.json",
+                destination,
+                Path("packages/demo-skill"),
+            )
+
+            self.assertEqual(target.repo, destination.resolve())
+            self.assertEqual(
+                target.destination,
+                destination.resolve() / "packages" / "demo-skill",
+            )
+            self.assertIsNone(target.lock_path)
+
+    def test_project_skills_config_is_not_a_publication_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = (
+                Path(temporary)
+                / "application"
+                / ".agents"
+                / "skills-config"
+                / "demo-skill"
+            )
+            config.mkdir(parents=True)
+            (config / "config.yaml").write_text("schema: test\n", encoding="utf-8")
+            args = publish_args(config, reinstall=False)
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(
+                    MODULE.SyncError,
+                    "project-owned skill configuration, not a skill publication target",
+                ):
+                    MODULE.publish_skill(args)
+
+            registry.assert_not_called()
+
+    def test_project_skills_config_alias_is_not_a_publication_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = (
+                root
+                / "application"
+                / ".agents"
+                / "skills-config"
+                / "demo-skill"
+            )
+            config.mkdir(parents=True)
+            (config / "config.yaml").write_text("schema: test\n", encoding="utf-8")
+            alias = root / "global" / ".agents" / "skills" / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(config, target_is_directory=True)
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(
+                    MODULE.SyncError,
+                    "project-owned skill configuration, not a skill publication target",
+                ):
+                    MODULE.publish_skill(publish_args(alias, reinstall=False))
+
+            registry.assert_not_called()
+
+    def test_project_skills_config_alias_ignores_target_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = (
+                root
+                / "application"
+                / ".agents"
+                / "skills-config"
+                / "project-profile"
+            )
+            config.mkdir(parents=True)
+            (config / "config.yaml").write_text("schema: test\n", encoding="utf-8")
+            alias = root / "aliases" / "demo-skill"
+            alias.parent.mkdir(parents=True)
+            alias.symlink_to(config, target_is_directory=True)
+
+            with patch.object(MODULE, "load_registry") as registry:
+                with self.assertRaisesRegex(
+                    MODULE.SyncError,
+                    "project-owned skill configuration, not a skill publication target",
+                ):
+                    MODULE.publish_skill(publish_args(alias, reinstall=False))
+
+            registry.assert_not_called()
+
     def test_reject_destination_escape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary).resolve()
             with self.assertRaises(MODULE.SyncError):
                 MODULE.contained_path(repo, Path("../outside"))
+
+    def test_reject_destination_with_nested_git_component(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary).resolve()
+            for component in (".git", ".GIT", ".Git"):
+                with self.subTest(component=component):
+                    with self.assertRaisesRegex(
+                        MODULE.SyncError, "Invalid destination"
+                    ):
+                        MODULE.contained_path(
+                            repo, Path("packages") / component / "demo-skill"
+                        )
 
     def test_copy_plan_preserves_destination_only_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
