@@ -1,6 +1,6 @@
 ---
 name: sync-skill-repo
-description: Publish a local Codex skill to GitHub, then refresh that named skill through the Skills CLI update workflow and verify its project and global lock-managed installations. If the skill is already in its source repository, validate it, commit only the intended skill changes, and push the current branch. If it is a project-local installed copy, synchronize it to its registered source repository first. Use when the user asks to revise or "修订技能", publish a skill, `publish-skill`, "发布技能", push, return, or synchronize skill changes. A revision or publish request includes the post-push named update by default; a plain sync or push request may stop after GitHub.
+description: Publish a shared Codex skill to GitHub, then refresh that exact named skill through the Skills CLI update workflow and verify its project and global lock-managed installations. If the skill is already in its shared source repository, validate it, commit only the intended skill changes, and push the current branch. If it is a lock-managed project installation, synchronize it to its registered source repository first. Use when the user asks to publish a shared skill, `publish-skill`, "发布技能", push, return, or synchronize shared skill changes. Reject project-private sources and project-owned skills-config targets; ordinary project-private revisions stay in the owning project's local Git/worktree workflow.
 ---
 
 # Publish or Sync a Skill
@@ -10,15 +10,18 @@ work.
 
 ## Meaning of Revision
 
-Treat a request to revise, improve, update, or "修订" an existing skill as
-authorization to modify and validate the skill, then publish it with the full
-named-update workflow. Before taking task actions, tell the user exactly:
+Use `skillcraft` to classify ownership before revision. For shared direct source
+or a valid lock-managed project installation, treat a request to revise,
+improve, update, or "修订" as authorization to modify and validate the skill,
+then publish it with the full named-update workflow. Before taking task actions,
+tell the user exactly:
 
 `修订技能后将推送远端并 update。`
 
-Use `skillcraft` for the modification and validation stages. After validation,
-continue with this skill's `publish` operation. Stop before push or update only
-when the user explicitly requests a local-only revision, no push, or no update.
+For a project-private source at
+`<project-root>/.agents/skills/<skill-name>` without a matching project lock,
+do not invoke this skill during ordinary revision. Keep the work in the owning
+project's local Git/worktree workflow with no push and no Skills CLI update.
 
 ## Meaning of Publish
 
@@ -37,27 +40,43 @@ or push may use the narrower `sync` workflow and stop after GitHub.
 
 ## Installation Ownership
 
-Treat a matching Skills CLI lock entry as the authority for installation scope:
+Inspect both the logical input path and its resolved location before checking
+GitHub upstreams. Either location can establish a protected project ownership
+boundary:
 
-- `<project>/skills-lock.json` owns a project installation;
+- A valid matching entry in a regular, non-symlink
+  `<project>/skills-lock.json` owns a project-scoped lock-managed installation
+  and takes precedence over direct-source detection.
+- `<project>/.agents/skills/<skill-name>` without a matching project lock entry
+  is project-private source owned by that project repository. Stop before
+  registry lookup, commit, push, global-lock binding, or named update and direct
+  ordinary revision to the project's Git/worktree workflow.
+- A raw matching project lock entry whose version, entry, or source is invalid
+  or incomplete, or whose present `skillPath` is invalid, is ambiguous or
+  corrupt. Fail closed instead of falling back to project-private or
+  direct-source handling. A missing `skillPath` is a supported legacy fallback
+  only for resolving a sync destination; it is not eligible for named update.
 - `$XDG_STATE_HOME/skills/.skill-lock.json` owns a global installation when
-  `XDG_STATE_HOME` is set;
-- otherwise, `~/.agents/.skill-lock.json` owns a global installation.
+  `XDG_STATE_HOME` is set; otherwise `~/.agents/.skill-lock.json` does.
+- A same-name global lock never changes project-private ownership.
+- `<project>/.agents/skills-config/<skill-name>` is project-owned configuration,
+  not a skill publication target.
 
 Do not classify a skill as global merely because discovery finds it under a
 shared skill directory or because `~/.agents/skills/<name>` is a symlink. A
 project-owned source linked there without a matching global lock entry is not a
-global installation for this workflow. Do not reject or update such untracked
-paths.
+global installation for this workflow: reject its publication as
+project-private, and never update it through the global scope.
 
 A named `skills update <skill-name>` checks matching entries in both the current
 project lock and the global lock. This is intentional: update every tracked
 installation of that exact skill, but no unrelated skill. Do not require the
 caller to provide an installed-skill path or select project/global scope.
 
-If neither lock tracks the skill, stop before mutating the source. A first-time
-installation is separate from publishing and must be performed once with
-`skills add`; `skills update` must not be replaced with a guessed path install.
+When named update is enabled and neither lock tracks a shared skill, stop before
+mutating the source. A first-time installation is separate from publishing and
+must be performed once with `skills add`; `skills update` must not be replaced
+with a guessed path install.
 
 ## Source Registry
 
@@ -86,30 +105,39 @@ Registration validates that the path is a Git worktree root.
 Accept an absolute or project-relative directory containing `SKILL.md`. Verify
 that its frontmatter `name` equals the folder name.
 
-Determine whether the skill is already inside its source Git checkout:
+Classify the logical and resolved paths before source detection:
 
-- If its Git worktree has a GitHub upstream and the skill is tracked there, use
-  the direct-source workflow.
-- Otherwise, treat it as a project-installed copy and resolve its registered
-  source checkout.
+1. If either location is a project-private source or a `skills-config` target,
+   stop with the ownership guidance above, even when
+   `--repo` or `--destination` is supplied. This includes a shared-directory
+   alias that resolves into a project-private source.
+2. If it has a valid matching project lock, use the lock-managed project-copy
+   workflow even when the resolved symlink target is tracked in a GitHub repo.
+3. Otherwise, if its Git worktree has a GitHub upstream and the skill is tracked
+   there, use the shared direct-source workflow.
+4. Otherwise, resolve a registered source checkout or require an explicit
+   destination for a non-project-owned lockless copy.
 
 Never infer that a non-GitHub remote satisfies a request to publish to GitHub.
-When named update is enabled, bind matching lock entries before the first source
-mutation and require each lock source and `skillPath` to match the GitHub
-repository and skill path being pushed. Match Skills CLI's lock eligibility:
-project locks require numeric `version >= 1`, global locks require numeric
-`version >= 3`, and an entry without `skillPath` is not updateable.
+Validate every present project-lock `skillPath` before registry lookup or copy:
+require a safe relative path ending in `<skill-name>/SKILL.md` and reject every
+case-insensitive `.git` path component. When named update is enabled, bind
+matching lock entries
+before the first source mutation and require each lock source and `skillPath` to
+match the GitHub repository and skill path being pushed. Match Skills CLI's lock
+eligibility: project locks require numeric `version >= 1`, global locks require
+numeric `version >= 3`, and an entry without `skillPath` is not updateable.
 
 Choose the project context in this order:
 
 1. `--project-root`, when explicitly supplied;
-2. the owning project of a project-installed input;
+2. the owning project of a lock-managed project input;
 3. the caller's current working directory for a direct-source input.
 
 The project context only selects the project lock visible to Skills CLI. The
 global lock is always checked automatically.
 
-### 2. Resolve an Installed Copy's Source Checkout
+### 2. Resolve a Lock-Managed Copy's Source Checkout
 
 Skip this step for the direct-source workflow.
 
@@ -128,9 +156,13 @@ By default, resolve the destination deterministically:
 4. Use the directory containing `skillPath`, or `skills/<skill-name>` when the
    lock entry omits `skillPath`.
 
-If the lock entry is absent, require both `--repo <path>` and, when the source
-repository does not use `skills/<skill-name>`, `--destination <relative-path>`.
-Never guess between repositories or accept a destination escaping its Git root.
+If the input is a non-project-owned lockless copy, require both `--repo <path>`
+and, when the source repository does not use `skills/<skill-name>`,
+`--destination <relative-path>`. Never guess between repositories or accept a
+destination escaping its Git root. These flags must not override project-private
+ownership or a matching project lock. Extracting a project-private skill into a
+shared repository is a separate explicit migration task, not `sync` or
+`publish`.
 
 ### 3. Inspect Git State
 
@@ -138,7 +170,7 @@ Inspect the relevant worktrees and exact GitHub upstream URL.
 
 - In the direct-source workflow, inspect all worktree changes and stage only the
   intended skill paths. Follow repository governance for unrelated work.
-- For an installed copy, inspect the dry-run changes. If it has uncommitted
+- For a lock-managed copy, inspect the dry-run changes. If it has uncommitted
   changes, confirm that this is the version to publish, then use
   `--allow-source-dirty`.
 - If the source repository has unrelated changes, follow its `AGENTS.md` and
@@ -177,9 +209,9 @@ Use the unified command after resolving preflight findings:
 uv run python <skill-dir>/scripts/sync_skill_repo.py publish \
   <source-repo-skill-dir>
 
-# Project-installed input; its owning project becomes update context.
+# Lock-managed project input; its owning project becomes update context.
 uv run python <skill-dir>/scripts/sync_skill_repo.py publish \
-  <project-installed-skill-dir>
+  <lock-managed-project-skill-dir>
 ```
 
 For a direct-source publish launched outside the consuming project, identify the
