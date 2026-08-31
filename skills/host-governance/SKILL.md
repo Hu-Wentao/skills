@@ -1,6 +1,6 @@
 ---
 name: host-governance
-description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation and bounded Docker/BuildKit cache cleanup, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, Access, WAF/Rulesets, and selective Cloudflare HTTP 403 diagnosis. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, Docker cache-retention automation, CI runner configuration, deployed-service and resource observations, Cloudflare security-event or WAF diagnosis, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
+description: Query and govern shared host infrastructure across projects, including safe service-deployment inventory, guarded initial Linux server bootstrap, Docker installation, bounded Docker/BuildKit cache cleanup, Docker storage and volume-leak incident response, reusable operational-function productization, GitHub Actions self-hosted runners, Jenkins installation, upgrades, controller and agent configuration, credentials, plugins, jobs and Android/iOS packaging; Tailscale; Caddy; PostgreSQL; Cloudflare Tunnel, DNS, Access, WAF/Rulesets, and selective Cloudflare HTTP 403 diagnosis. Use when an agent needs authoritative host inventory, server onboarding, container-runtime installation, Docker cache-retention or storage-leak remediation, CI runner configuration, deployed-service and resource observations, Cloudflare security-event or WAF diagnosis, inspection, planning, writes, verification, rollback, or asks to make a host procedure such as installing specific software a reusable host-governance function.
 ---
 
 # Host Governance
@@ -267,6 +267,12 @@ infer it from an earlier one.
   state; never broaden it to Docker image, volume, container, or data-root
   deletion. Treat Docker group membership as root-equivalent access requiring
   separate intent.
+- Treat Docker storage and volume-leak remediation as a separately authorized
+  incident workflow, never as an extension of routine BuildKit cleanup. Read
+  [docker-storage-maintenance.md](references/docker-storage-maintenance.md),
+  use project-owned `inspect`, `plan`, `apply`, and `verify` operations, and
+  never infer that a dangling volume is disposable. Preserve named volumes by
+  default and prohibit broad prune or data-root deletion.
 - Treat Jenkins installation, controller configuration, plugin state, agents,
   credentials, shared job runtime, backups, and upgrades as host-owned state.
   Preserve application identity and signing intent from the consuming project;
@@ -302,6 +308,9 @@ infer it from an earlier one.
      [procedure-productization.md](references/procedure-productization.md).
    - Initial Linux server bootstrap: read [server-bootstrap.md](references/server-bootstrap.md).
    - Docker Engine or Compose installation: read [docker-install.md](references/docker-install.md).
+   - Docker volume leaks, runtime storage pressure, or stale transient
+     containers and networks: read
+     [docker-storage-maintenance.md](references/docker-storage-maintenance.md).
    - GitHub Actions self-hosted runner installation or lifecycle: read
      [github-actions-runner.md](references/github-actions-runner.md).
    - Caddy or HTTP/TLS ingress: read [caddy.md](references/caddy.md).
@@ -359,6 +368,7 @@ monolithic shared configuration.
 | Live service inventory and capacity observation | Runtime host | Bounded read-only collector |
 | Target host and service exposure | Host infrastructure repository | Target host and network |
 | Docker package source, daemon lifecycle, and host-level container runtime | Host infrastructure repository | Package manager, systemd, and Docker daemon |
+| Docker storage incident policy, exact candidates, and service recovery baseline | Host infrastructure repository | Docker daemon and host integration runtime |
 | Jenkins installation, controller, plugins, nodes, credentials, backups, and upgrades | Host infrastructure repository | Jenkins controller and agents |
 | Jenkins job definition and execution state | Host infrastructure repository | Jenkins controller and agents |
 | Caddy host mapping and shared ingress | Host infrastructure repository | Running Caddy instance |

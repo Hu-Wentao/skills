@@ -60,6 +60,34 @@ class SkillPolicyTest(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_reference)
 
+    def test_docker_storage_incidents_use_exact_separately_authorized_cleanup(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        reference = (
+            SKILL_ROOT / "references" / "docker-storage-maintenance.md"
+        ).read_text(encoding="utf-8")
+        normalized_skill = " ".join(skill.split())
+        normalized_reference = " ".join(reference.split())
+        self.assertIn("docker-storage-maintenance.md", skill)
+        for phrase in (
+            "separately authorized incident workflow",
+            "never infer that a dangling volume is disposable",
+            "Preserve named volumes by default",
+        ):
+            self.assertIn(phrase, normalized_skill)
+        for phrase in (
+            "`dangling` means unreferenced, not disposable",
+            "Fix the source lifecycle first",
+            "docker rm --volumes",
+            "candidate digest",
+            "Never use `docker volume prune`",
+            "deleting a volume has no generic rollback",
+            "reject any generation or candidate-digest drift",
+            "Stop expansion on the first unexpected result",
+            "without starting containers that were previously stopped",
+            "pre-incident running-service baseline is restored",
+        ):
+            self.assertIn(phrase, normalized_reference)
+
     def test_github_actions_runner_identity_path_and_service_are_durable(self) -> None:
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         reference = (
