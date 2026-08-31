@@ -46,7 +46,7 @@ class GovernanceValidatorTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (self.docs / "defects" / "README.md").write_text(
+        (self.docs / "defects" / "INDEX.md").write_text(
             contracted_document("DEFECT-INDEX", "# Defects\n"),
             encoding="utf-8",
         )
@@ -158,6 +158,10 @@ Focused verification owns the invariant.
         plans = self.docs / "plans"
         plans.mkdir()
         (plans / "README.md").write_text(
+            "# Plans\n\nUser-facing planning overview.\n",
+            encoding="utf-8",
+        )
+        (plans / "INDEX.md").write_text(
             contracted_document("PLAN-INDEX", "# Plans\n\n- [Example](./example.md)\n"),
             encoding="utf-8",
         )
@@ -171,6 +175,19 @@ Focused verification owns the invariant.
         self.assertEqual(result.returncode, 1)
         self.assertIn("[persistent_contract_required]", result.stdout)
         self.assertIn("docs/plans/example.md:1", result.stdout)
+        self.assertNotIn("docs/plans/README.md:1", result.stdout)
+
+    def test_readme_is_not_required_to_have_a_persistent_contract(self) -> None:
+        readme = self.docs / "README.md"
+        readme.write_text(
+            "# Project\n\nUser-facing project introduction.\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_validator()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("README.md:1", result.stdout)
 
     def test_rejects_declared_but_invalid_persistent_contract(self) -> None:
         archive = self.docs / "archive"

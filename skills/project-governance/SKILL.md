@@ -22,6 +22,15 @@ deterministic mechanics, and `references/` for domain semantics.
 5. Treat release, deployment, publishing, rollback, live migration, reward,
    and destructive authority as current-turn permissions.
 
+Treat every `README.md` as a user-facing entry point for its project or
+component: explain purpose, capabilities, supported usage, setup, and other
+information needed by users. Do not put architecture decisions, module maps,
+schemas, requirements, baselines, plans, lifecycle indexes, defects, audits,
+operations, deployment procedures, or persistent `mdq` contracts in a
+`README.md`. Keep those responsibilities in dedicated project documents under
+`docs/` or the appropriate domain directory; use `INDEX.md` for internal
+collection indexes and link to them from the README when useful.
+
 For implementation of a plan, specification, governed test case, or
 implementation prompt, run `git-worktree` `owner-status` on the current
 directory before editing. For an eligible non-main worktree, use its ownership
@@ -158,7 +167,9 @@ resolved instructions and preserve their narrower guarantees.
 ## Govern Documents, Concepts, and Test Cases
 
 Every governed Markdown document created or materially revised through this
-skill must use `queryable-markdown` with a valid persistent mdq contract. Define
+skill must use `queryable-markdown` with a valid persistent mdq contract. A
+`README.md` is not a governed record document by default and must remain free
+of persistent `mdq` headers. Define
 stable record identity and fields, validate the contract, run representative
 positive and negative queries, and stop if the contract is missing or
 ambiguous. Use the contracted `docs` operations when available; do not perform

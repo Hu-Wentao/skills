@@ -39,7 +39,8 @@ Rules:
 Prefer this compact set unless the user asks for more:
 
 ```text
-README.md              # scope, key decisions, module map, doc index
+README.md              # user-facing purpose, capabilities, setup, usage, doc links
+project-design.md      # internal scope, key decisions, and design-document map
 review-levels.md       # review/confidence level definitions
 modules.md             # app/package responsibilities and boundaries
 storage.md             # persistence ownership and schema
@@ -47,6 +48,13 @@ strategy-or-domain.md  # domain-specific algorithms/rules, if relevant
 ops.md                 # auth, config, ports, deployment, jobs, testing
 implementation-prompt.md
 ```
+
+Keep `README.md` focused on information a project or component user needs to
+understand and use the software. Do not turn it into an architecture document,
+governance index, lifecycle/status board, operations runbook, or contract host.
+Put those concerns in the dedicated documents above or in the appropriate
+`docs/` subdirectory. Use `INDEX.md` rather than `README.md` for an internal
+collection index.
 
 Do not create one document per minor topic by default. Consolidate when separate files create repeated explanations.
 

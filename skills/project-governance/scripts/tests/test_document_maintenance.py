@@ -118,6 +118,10 @@ class DocumentMaintenanceTest(unittest.TestCase):
     def test_plan_surfaces_undeclared_lifecycle_status(self) -> None:
         plans = self.docs / "plans"
         plans.mkdir()
+        (plans / "README.md").write_text(
+            "# Plans\n\nUser-facing planning overview.\n",
+            encoding="utf-8",
+        )
         (plans / "example.md").write_text(
             plan_document(expose_status=False), encoding="utf-8"
         )
@@ -135,6 +139,21 @@ class DocumentMaintenanceTest(unittest.TestCase):
         )
         self.assertTrue(report["batches"])
         self.assertTrue(report["source_snapshot"])
+
+    def test_readme_is_not_a_governed_document(self) -> None:
+        plans = self.docs / "plans"
+        plans.mkdir()
+        (plans / "README.md").write_text(
+            "# Plans\n\nUser-facing planning overview.\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_script("inspect", "--scope", "governed")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["counts"]["governed_files"], 1)
+        self.assertFalse(any(issue["file"].endswith("README.md") for issue in report["issues"]))
 
     def test_inspect_governs_embedded_bff_contracts_outside_docs(self) -> None:
         bff = self.root / "lib/app/home/home.bff.md"

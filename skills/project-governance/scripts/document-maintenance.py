@@ -121,7 +121,9 @@ def governed_files(root: Path, docs: Path) -> list[Path]:
     if docs.is_dir():
         for pattern in GOVERNED_PATTERNS:
             selected.update(
-                path.resolve() for path in docs.glob(pattern) if path.is_file()
+                path.resolve()
+                for path in docs.glob(pattern)
+                if path.is_file() and path.name != "README.md"
             )
     selected.update(
         path

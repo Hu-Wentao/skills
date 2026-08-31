@@ -54,9 +54,10 @@ the allowed vocabulary and decides whether code-complete but
 acceptance-pending work remains partial, while mdq preserves the exact authored
 value and source location.
 
-Keep one primary status authority. Any lifecycle README, table, or generated
-JSON is a projection that must be reproducible from the authoritative governed
-records and must not silently override them.
+Keep one primary status authority. Any lifecycle index such as `INDEX.md`,
+table, or generated JSON is a projection that must be reproducible from the
+authoritative governed records and must not silently override them. A
+`README.md` remains a user-facing introduction, not a lifecycle index.
 
 ## Move Documents by Meaning
 

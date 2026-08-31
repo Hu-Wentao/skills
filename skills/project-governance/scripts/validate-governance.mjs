@@ -212,6 +212,10 @@ function main() {
       if (!report) continue;
       for (const item of report.diagnostics ?? []) {
         if (
+          item.document
+          && basename(resolve(item.document)) === "README.md"
+        ) continue;
+        if (
           item.severity !== "error"
           && !blockingMdqDiagnostics.has(item.code)
         ) continue;
@@ -286,7 +290,10 @@ function main() {
     }
 
     const defectDirectory = resolve(docs, "defects");
-    if (dirname(file) === defectDirectory && file !== join(defectDirectory, "README.md")) {
+    if (
+      dirname(file) === defectDirectory
+      && !["README.md", "INDEX.md"].includes(basename(file))
+    ) {
       const filenameId = basename(file, ".md");
       const frontmatter = parseFrontmatter(content);
       if (!defectIdPattern.test(filenameId)) {
@@ -351,13 +358,13 @@ function main() {
   }
 
   const plans = join(docs, "plans");
-  const plansIndex = join(plans, "README.md");
+  const plansIndex = join(plans, "INDEX.md");
   if (existsSync(plans) && !existsSync(plansIndex)) {
-    issues.push({ level: "warning", file: plans, message: "plans directory has no README.md status index" });
+    issues.push({ level: "warning", file: plans, message: "plans directory has no INDEX.md status index" });
   } else if (existsSync(plansIndex)) {
     const index = readFileSync(plansIndex, "utf8");
     for (const plan of markdownFiles(plans)) {
-      if (plan === plansIndex) continue;
+      if (plan === plansIndex || basename(plan) === "README.md") continue;
       const relativePlan = relative(plans, plan).replaceAll("\\", "/");
       if (!index.includes(relativePlan) && !index.includes(basename(relativePlan))) {
         issues.push({
@@ -369,9 +376,9 @@ function main() {
     }
   }
   const defects = join(docs, "defects");
-  const defectsIndex = join(defects, "README.md");
+  const defectsIndex = join(defects, "INDEX.md");
   if (existsSync(defects) && !existsSync(defectsIndex)) {
-    issues.push({ level: "warning", file: defects, message: "defects directory has no README.md policy" });
+    issues.push({ level: "warning", file: defects, message: "defects directory has no INDEX.md policy" });
   }
 
   for (const [id, declaration] of declarations) {

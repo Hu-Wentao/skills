@@ -31,6 +31,11 @@ runtime caches, and vendored trees. Inventory does not make every Markdown file
 a governed document and does not require every README, package guide, or
 operations note to adopt an `mdq` contract.
 
+Treat `README.md` as a user-facing introduction, not as a governance record or
+internal lifecycle index. Exclude README files from the governed-document set;
+do not add a persistent `mdq` contract to them. Put internal collection indexes
+in `INDEX.md` or another dedicated governed document.
+
 Require persistent `mdq` contracts only for project-governed requirements,
 baselines, plans, dependency evaluations, defects, archives, coverage,
 verification, and traceability documents. Preserve repository-owned governed
