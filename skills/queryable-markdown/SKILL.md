@@ -33,6 +33,7 @@ Resolve `SKILL_DIR` to this skill directory before invoking
 - Return absent values as `null`; never invent IDs, fields, prose, or domain decisions.
 - Preflight every selected document before a batch write. If one target is unsafe, write none.
 - Keep structure checks separate from domain approval. Parsing success does not prove authored content is correct.
+- Treat a project's `README.md` as ordinary documentation, never as a persistent `mdq` contract host. Do not create, convert, repair, or write an `mdq` header there; use temporary selectors for read-only queries and a separate Markdown document for durable records. If one already exists, report it as a policy violation and do not silently rewrite or relocate it.
 
 ## Read With Compact Output
 
@@ -103,7 +104,9 @@ an applicable governance workflow requires stronger evidence.
 Read [protocol.md](references/protocol.md) and
 [query-design-and-repair.md](references/query-design-and-repair.md) before
 creating, converting, or changing a contract. Default new AI-maintained records
-to heading blocks. Preserve existing tables unless conversion is authorized.
+to heading blocks. Never create or persist a contract in a project's
+`README.md`; preserve that file as ordinary Markdown. Preserve existing tables
+unless conversion is authorized.
 Use `inspect` before conversion and `optimize` without `--apply` before a
 contract repair. Apply only an authorized unique candidate; never rewrite
 authored content during optimization.

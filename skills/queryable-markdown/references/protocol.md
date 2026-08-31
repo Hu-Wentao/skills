@@ -27,6 +27,8 @@ The `scan` command applies the same query semantics across one or more explicit 
 
 Without a valid contract, authored-content editing is outside this protocol. The only supported write is an explicitly requested creation or conversion into a contracted document. Do not treat a generic request to edit ordinary Markdown as permission to add a contract.
 
+A project's `README.md` is always ordinary documentation in this protocol. Never create, convert, repair, or persist an `mdq` profile in that file. Use temporary selectors for read-only queries and place durable, queryable records in a separate Markdown document. If a README already contains an `mdq` header, report the policy violation and do not silently rewrite or relocate it.
+
 With a valid contract, an explicit request may authorize adding, updating, deleting, renaming, or reorganizing authored records. Resolve each existing target through the contract, reject ambiguous identity, patch only the bounded authorized source, and validate the complete contract after the write. Permission to edit authored content does not implicitly authorize changing the profile, identity scheme, markers, or index policy.
 
 Create or change a profile, insert markers, repair invalid metadata, or change index policy only when the user explicitly requests creation, conversion, contract maintenance, or repair. Rebuilding an already-declared index is an expected derived-cache step after an authorized contracted-document write; it does not expand permission to authored content.
@@ -78,7 +80,14 @@ mdq:
 ---
 ```
 
-For documents without Front Matter, create the YAML block at byte zero. HTML comment profiles and TOML or JSON contract headers are unsupported. Treat a legacy `<!-- mdq ... -->` declaration or a non-YAML top-level `mdq` declaration as `profile_unsupported` rather than silently falling back to temporary selectors. A damaged, unclosed, or non-YAML header requires an explicitly authorized conversion or repair before adding the contract. Do not create a second Front Matter block or repair unrelated metadata merely to add a profile.
+For documents without Front Matter, create the YAML block at byte zero, except
+for a project's `README.md`, which must remain an ordinary Markdown document.
+HTML comment profiles and TOML or JSON contract headers are unsupported. Treat a
+legacy `<!-- mdq ... -->` declaration or a non-YAML top-level `mdq` declaration
+as `profile_unsupported` rather than silently falling back to temporary
+selectors. A damaged, unclosed, or non-YAML header requires an explicitly
+authorized conversion or repair before adding the contract. Do not create a
+second Front Matter block or repair unrelated metadata merely to add a profile.
 
 ## 4. Complete Example
 
