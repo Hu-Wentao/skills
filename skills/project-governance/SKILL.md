@@ -1,6 +1,6 @@
 ---
 name: project-governance
-description: "Govern project architecture, requirements, baselines, plans, domain terminology, Markdown lifecycle, implementation and test-case handoffs, dependency evaluations, Git/worktrees/SemVer, releases and deployments, project skills, ports, defects, resource diagnostics, feedback lifecycles, and concise problem-summary handoffs. Use for governed implementation; document or concept maintenance; dependency decisions; branches, tags, promotions, retries, repairs, hotfixes, and deployment recovery; defect diagnosis and repair history; host or Compose resource incidents; verification traceability; or a user request such as `总结问题` that prepares facts for another agent without prescribing a fix. Trigger directly on imperative release-and-deploy requests with a named target, including `release and deploy TARGET` and `发版部署 目标`."
+description: "Govern project architecture, requirements, baselines, plans, domain terminology, Markdown lifecycle, implementation and test-case handoffs, dependency evaluations, Git/worktrees/SemVer, releases and deployments, project skills, ports, defects, resource diagnostics, feedback lifecycles, and concise problem-summary handoffs. Use for governed implementation; document or concept maintenance; dependency decisions; Git/worktree/version decisions; published release tags, promotions, retries, repairs, hotfixes, and deployment recovery; defect diagnosis and repair history; host or Compose resource incidents; verification traceability; or a user request such as `总结问题` that prepares facts for another agent without prescribing a fix. Trigger directly on imperative release-and-deploy requests with a named target, including `release and deploy TARGET` and `发版部署 目标`."
 ---
 
 # Project Governance
@@ -128,10 +128,12 @@ resolved instructions and preserve their narrower guarantees.
 - Host-visible ports: resolve `port-allocation`, use `project-segments.py`,
   and read [port-allocation.md](references/port-allocation.md). Treat missing
   or invalid project port configuration as a blocker.
-- Git snapshots, versioning, releases, deployment, promotion, repair, or
-  hotfix: use `git snapshot` or the `release-deployment` contract and read
-  [git-version-governance.md](references/git-version-governance.md) and
-  [release-deployment.md](references/release-deployment.md) only as needed.
+- Git snapshots, versioning, published release tags, deployment, promotion,
+  repair, or hotfix: use `git snapshot` or the `release-deployment` contract
+  and read [git-version-governance.md](references/git-version-governance.md)
+  and [release-deployment.md](references/release-deployment.md) only as needed.
+  A disposable local tag or ref used only to avoid repeated work does not by
+  itself activate the release-deployment workflow.
 - Repeated high-risk workflow extraction or skill changes: read
   [project-skill-design.md](references/project-skill-design.md) and keep
   reusable policy, project configuration, and tested scripts separate.
@@ -228,7 +230,7 @@ ownership, repair shape, test escape, and repair-history decisions.
 Run the smallest contracted checks first. After changing this skill, run:
 
 ```bash
-uv run --script <skill-root>/scripts/quick_validate.py <skill-root>
+node <skillcraft-root>/scripts/quick_validate.mjs <skill-root>
 uv run --script <skill-root>/scripts/tests/run.py
 ```
 

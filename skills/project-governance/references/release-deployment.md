@@ -437,92 +437,34 @@ ones or broaden the mutation scope.
 
 ## Diagnose and Qualify Before Publishing
 
-For a project that supports candidate qualification, keep fast diagnosis,
-production-shape qualification, and publication/deployment as separate
-contracted operations:
+Use candidate qualification only when the project contract declares it. Run
+project-owned gates against one exact committed candidate before admitting a
+stable release tag, and keep qualification separate from deployment.
 
-1. Run the fast diagnostic graph against one exact committed candidate. Emit
-   the first actionable failure immediately while continuing independent safe
-   gates; mark dependent gates as blocked instead of hiding them.
-2. Persist private per-gate evidence, stable failure codes, input digests,
-   fingerprints, durations, cache decisions, and a deterministic reproduction
-   operation. Do not expose detailed logs or sensitive values in progress
-   events.
-3. Give every diagnostic and production-shape check an explicit project-owned
-   timeout, terminate its process group at the boundary, and retain bounded
-   progress output plus private full stdout/stderr. A timeout is a classified
-   failure with evidence, never permission to wait indefinitely.
-4. Reuse a successful gate only when its declared input digest, toolchain, and tool policy
-   remain identical. After a repair, rerun the failed gate and its downstream
-   dependencies rather than every unrelated gate.
-5. Unless the current user explicitly authorizes the skip described below, run
-   production-shape qualification before creating a stable tag. Bind its
-   receipt to the exact commit, tree, target, artifact mode, source evidence,
-   and immutable artifact manifests.
-6. Without that explicit skip, make publication/deployment consume the receipt.
-   It may refresh short-lived target admission but must not rediscover source,
-   rebuild artifacts, or use the live deployment as the first realistic
-   integration test.
+- Give each gate a bounded timeout and preserve its real exit status. Report
+  the first actionable failure without hiding independent results.
+- Treat a reusable qualification record as release evidence only when the
+  project contract makes that record an authority for publication. Bind it to
+  the exact identities the contract requires and consume it through the
+  project executor.
+- Treat a disposable optimization cache differently. If a missing or invalid
+  marker safely causes the gate to run again, key it only to the minimum exact
+  input needed for correctness, often the full commit. Do not add receipts,
+  toolchain or environment fingerprints, task state, signatures, or
+  cross-machine trust unless the project contract explicitly requires them.
+- After source changes, rerun the gates required by the project contract. Do
+  not infer a queue, persistent state machine, circuit breaker, or cumulative
+  timing ledger from the existence of a cache.
+- When a gate consumes generated output, let the project executor create and
+  verify that output before the test starts. Do not rely on stale ignored files
+  or invent package-manager commands in this generic policy.
 
-The current user may explicitly authorize skipping Doctor, qualification, or
-all validation for one exact release and target. Do not infer that authority
-from urgency, hotfix scope, or ordinary release/deployment authorization, and
-do not persist it for a later turn. When it is present, use only a contracted
-authorized skip path, record the omitted operations and evidence in the task
-state and final report, and allow publication without Doctor results or a
-qualification receipt when the contract declares that boundary. The skip does
-not authorize a moving source ref, mutable or rebuilt release artifact, tag
-mutation, a different target, bypass of deployment transaction admission, or a
-successful deployment claim without the executor's terminal health and exact
-identity evidence. If the project executor has no such path, treat that as a
-missing contract capability; do not reproduce the release or deployment as ad
-hoc shell commands.
-
-Persist a technical release-task identity when attempts can cross processes or
-worktrees. Track cumulative qualification duration and failure fingerprints,
-but never persist or broaden user authorization. Reject an unchanged
-deterministic failure, bound transient retries, and trip a project-configured
-circuit breaker after the declared distinct-failure or duration budget. A
-generic request to continue does not override that breaker.
-Treat a process that disappeared with a running attempt as an interrupted
-failure and count it against the retry and duration budgets; stale `running`
-state must not create an unbounded crash loop.
-
-Record timing for failed as well as successful attempts. Measure at least the
-time to first actionable failure, per-gate duration, blocked dependencies,
-cache reuse, and total qualification duration. Passing timing checks remains
-operational evidence, not proof of product semantics.
-
-### Establish generated outputs before tests
-
-Treat generated output consumed through a package export, generated client,
-compiled schema, code-generation entry point, or equivalent build-backed import
-as a prerequisite of the consuming test gate. A checkout may contain stale or
-missing ignored output even when its tracked source is clean, so test discovery
-must not rely on whatever output a prior command happened to leave behind.
-
-For each consuming gate, require the project contract or its deterministic
-executor to:
-
-1. detect changes to package export maps, generated entry points, their source,
-   build configuration, workspace dependency graph, lockfile, or toolchain;
-2. select the smallest affected producer dependency closure and build it in
-   dependency order before starting consumers;
-3. invalidate the selected producers' declared generated directories before
-   rebuilding, so an old file cannot satisfy the gate;
-4. verify every selected export or generated entry target exists after the
-   build and before test collection; and
-5. include the producer inputs and generated-output verification in the gate's
-   reuse digest and private evidence.
-
-Keep the commands and output-directory declarations project-owned. Do not
-guess package-manager commands, delete undeclared directories, or expand an
-affected build into a full-workspace build without a project contract. If a
-test is started before these prerequisites and fails only because a generated
-entry is absent, classify the incident as qualification orchestration and fix
-the gate ordering; do not count it as a product defect, deterministic candidate
-fingerprint, or transient retry. If the declared build or post-build export
-verification fails, retain that failure as the actionable build evidence.
+The current user may skip Doctor or qualification only through an explicit
+contracted path for one exact release and target. Do not infer the skip from
+urgency, hotfix scope, or ordinary release authority, and do not reproduce a
+missing skip capability with ad hoc shell commands. A skip never authorizes a
+moving source ref, mutable artifact, tag mutation, another target, or a
+successful deployment claim without the executor's required terminal evidence.
 
 ## Separate Maintenance Validation from Release Gates
 
