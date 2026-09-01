@@ -1,9 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = [
-#   "PyYAML>=6,<7",
-# ]
 # ///
 """Run the complete Skillcraft Python test suite."""
 

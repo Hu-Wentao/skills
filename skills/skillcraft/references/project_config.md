@@ -128,10 +128,9 @@ their resolved instructions, declared commands, profile names, and
 `instructions_id` values differ. Add task-specific tests when configuration
 changes validation commands or safety boundaries.
 
-Run `uv run --script scripts/quick_validate.py <path/to/skill-folder>` after
-editing. Always invoke this validator through `uv run --script`; do not use
-`python`, `python3`, or `uv run python`. It rejects reusable Python code that
-compares `profile` with a concrete string literal.
+Run `node scripts/quick_validate.mjs <path/to/skill-folder>` after editing.
+The dependency-free Node validator rejects reusable Python code that compares
+`profile` with a concrete string literal without requiring PyYAML.
 
 ## Migration
 

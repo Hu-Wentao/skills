@@ -310,7 +310,7 @@ Skill creation involves these steps:
 3. Plan reusable skill contents (scripts, references, assets)
 4. Initialize the skill (run init_skill.py)
 5. Edit the skill (implement resources and write SKILL.md)
-6. Validate the skill (run quick_validate.py)
+6. Validate the skill (run quick_validate.mjs)
 7. Iterate based on real usage and forward-test complex skills.
 
 Follow these steps in order, skipping only if there is a clear reason why they are not applicable.
@@ -458,10 +458,8 @@ To begin implementation, start with the reusable resources identified above: `sc
 
 Added scripts must be tested by actually running them to ensure there are no bugs and that the output matches what is expected. If there are many similar scripts, only a representative sample needs to be tested to ensure confidence that they all work while balancing time to completion.
 
-When a Python test suite needs any third-party dependency, provide one
-`scripts/tests/run.py` entry point with complete PEP 723 metadata and run it
-through `uv run --script`. Do not rely on metadata in the scripts under test:
-`uv run python -m unittest discover` does not inherit those dependencies.
+Use the runtime-native test runner for each bundled script. Keep validation and
+test dependencies out of the skill's operational path.
 
 If you used `--examples`, delete any placeholder files that are not needed for the skill. Only create resource directories that are actually required.
 
@@ -499,18 +497,17 @@ Write instructions for using the skill and its bundled resources.
 Once development of the skill is complete, validate the skill folder to catch basic issues early:
 
 ```bash
-uv run --script scripts/quick_validate.py <path/to/skill-folder>
+node scripts/quick_validate.mjs <path/to/skill-folder>
 ```
 
-Always invoke `quick_validate.py` through `uv run --script` so uv reads its
-PEP 723 dependency metadata. Do not run it with `python`, `python3`, or
-`uv run python`.
+The validator is dependency-free and runs directly with Node. It checks YAML
+frontmatter format, required fields, naming rules, and opaque project-profile
+boundaries without requiring Python or PyYAML.
 
-The validation script checks YAML frontmatter format, required fields, and naming rules. If validation fails, fix the reported issues and run the command again.
+If validation fails, fix the reported issues and run the command again.
 
-When `scripts/tests/run.py` exists, run it with `uv run --script` after
-`quick_validate.py`; treat that runner's dependency declaration as the
-authoritative test environment.
+When `scripts/tests/quick_validate.test.mjs` exists, run it with
+`node --test scripts/tests/quick_validate.test.mjs` after the validator.
 
 For a config-aware skill, also run its resolver tests and verify at least:
 
