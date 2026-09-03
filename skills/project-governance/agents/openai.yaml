@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Governance"
-  short_description: "Govern test-case development, plans, releases, and defects"
-  default_prompt: "Use $project-governance to govern this project’s test-case development, domain terminology, plans, implementation handoffs, dependencies, releases, recovery, defects, and verification."
+  short_description: "Route project plans, releases, defects, and evidence"
+  default_prompt: "Use $project-governance to route this project task to its governing contract and authoritative references."

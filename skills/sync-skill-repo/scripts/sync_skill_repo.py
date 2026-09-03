@@ -553,8 +553,9 @@ def _check_source_repo(
     context: SourceContext,
     *,
     allow_dirty: bool,
-    allow_unpushed: bool,
     allow_skill_changes: bool,
+    expected_upstream_head: str | None = None,
+    expected_source_head: str | None = None,
 ) -> None:
     unmerged = run_git(
         context.repo, "diff", "--name-only", "--diff-filter=U"
@@ -590,11 +591,18 @@ def _check_source_repo(
             f"{behind} commit(s); reconcile it before publishing"
         )
     ahead = _source_ahead(context)
-    if ahead and not allow_unpushed:
-        raise SyncError(
-            f"Source repository has {ahead} existing unpushed commit(s); "
-            "review them and rerun with --allow-unpushed"
-        )
+    if ahead:
+        upstream_head = run_git(context.repo, "rev-parse", context.upstream)
+        source_head = run_git(context.repo, "rev-parse", "HEAD")
+        if (
+            expected_upstream_head != upstream_head
+            or expected_source_head != source_head
+        ):
+            raise SyncError(
+                f"Source repository has {ahead} existing ahead commit(s); "
+                "authorize only the exact range with --expected-upstream-head "
+                "and --expected-source-head"
+            )
 
 
 def _commit_skill(context: SourceContext, message: str) -> str | None:
@@ -742,37 +750,46 @@ def apply_copy(skill_dir: Path, destination: Path) -> None:
 
 def find_validator() -> Path:
     skills_root = Path(__file__).resolve().parents[2]
-    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     candidates = [
-        skills_root / "skillcraft" / "scripts" / "quick_validate.py",
-        Path.home()
-        / ".agents"
-        / "skills"
-        / "skillcraft"
-        / "scripts"
-        / "quick_validate.py",
-        codex_home / "skills" / "skillcraft" / "scripts" / "quick_validate.py",
+        skills_root / "skillcraft" / "scripts" / "quick_validate.mjs",
+        Path.home() / ".agents" / "skills" / "skillcraft" / "scripts" / "quick_validate.mjs",
     ]
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    raise SyncError("Cannot find skillcraft/scripts/quick_validate.py")
+    raise SyncError("Cannot find skillcraft/scripts/quick_validate.mjs")
 
 
 def validate_skill(destination: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        raise SyncError("node is required for skillcraft validation")
     result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--script",
-            str(find_validator()),
-            str(destination),
-        ],
+        [node, str(find_validator()), str(destination)],
         check=False,
+        capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        raise SyncError(f"skillcraft validation failed for {destination}")
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise SyncError(f"skillcraft validation failed for {destination}: {detail}")
+
+
+def run_skill_tests(skill_dir: Path) -> str:
+    runner = skill_dir / "scripts" / "tests" / "run.py"
+    if not runner.is_file():
+        return "not_present"
+    result = subprocess.run(
+        ["uv", "run", "--script", str(runner)],
+        cwd=skill_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise SyncError(f"skill tests failed for {skill_dir}: {detail}")
+    return "passed"
 
 
 def push_with_retry(repo: Path, attempts: int, retry_delay: float) -> None:
@@ -1645,7 +1662,7 @@ def refresh_named_skill(
     attempts: int,
     retry_delay: float,
 ) -> None:
-    """Refresh one named skill in every matching lock-managed scope."""
+    """Refresh one named skill from a neutral cwd and verify every lock target."""
 
     skill_name = read_skill_name(source_skill)
     pnpm = shutil.which("pnpm")
@@ -1659,89 +1676,89 @@ def refresh_named_skill(
         if any(target.scope == "global" for target in targets)
         else None
     )
+    project_target = next(
+        (target for target in targets if target.scope == "project"), None
+    )
     failures: list[str] = []
-    for attempt in range(1, attempts + 1):
-        result = subprocess.run(
-            command,
-            cwd=project_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        output = "\n".join(
-            part.strip() for part in (result.stdout, result.stderr) if part.strip()
-        )
-        normalized_output = output.lower()
-        if any(
-            marker in normalized_output
-            for marker in (
-                "eperm",
-                "eacces",
-                "operation not permitted",
-                "permission denied",
-            )
-        ):
-            raise SyncError(
-                "Named skill update failed with a non-retryable filesystem "
-                f"permission error. Command: {' '.join(command)}\n"
-                f"attempt {attempt}/{attempts}:\n"
-                f"{output or '<no installer output>'}"
-            )
 
-        if result.returncode == 0:
-            try:
-                for target in targets:
-                    _verify_installed_skill(
-                        source_skill,
-                        target.installed_skill,
-                        target.lock_path,
-                        (
-                            expected_git_tree_hash
-                            if target.scope == "global"
-                            else None
-                        ),
+    with tempfile.TemporaryDirectory(prefix="skill-named-update-") as temporary:
+        neutral_root = Path(temporary).resolve()
+        shadow_lock: Path | None = None
+        real_lock_bytes: bytes | None = None
+        if project_target is not None:
+            shadow_lock = neutral_root / "skills-lock.json"
+            real_lock_bytes = project_target.lock_path.read_bytes()
+            shadow_lock.write_bytes(real_lock_bytes)
+            agents = project_root / ".agents"
+            if not agents.is_dir():
+                raise SyncError(f"Project installation root is missing: {agents}")
+            (neutral_root / ".agents").symlink_to(agents, target_is_directory=True)
+
+        for attempt in range(1, attempts + 1):
+            result = subprocess.run(
+                command,
+                cwd=neutral_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            output = "\n".join(
+                part.strip() for part in (result.stdout, result.stderr) if part.strip()
+            )
+            normalized_output = output.lower()
+            if any(marker in normalized_output for marker in ("eperm", "eacces", "operation not permitted", "permission denied")):
+                raise SyncError(
+                    "Named skill update failed with a non-retryable filesystem "
+                    f"permission error. Command: {' '.join(command)}\n"
+                    f"attempt {attempt}/{attempts}:\n{output or '<no installer output>'}"
+                )
+
+            if result.returncode == 0:
+                try:
+                    if project_target is not None and shadow_lock is not None:
+                        assert real_lock_bytes is not None
+                        if project_target.lock_path.read_bytes() != real_lock_bytes:
+                            raise SyncError(
+                                f"Project lock changed during named update: {project_target.lock_path}"
+                            )
+                        updated = shadow_lock.read_bytes()
+                        temporary_lock = project_target.lock_path.with_name(
+                            f".{project_target.lock_path.name}.sync-skill-repo.tmp"
+                        )
+                        temporary_lock.write_bytes(updated)
+                        temporary_lock.replace(project_target.lock_path)
+                        real_lock_bytes = updated
+                    for target in targets:
+                        _verify_installed_skill(
+                            source_skill,
+                            target.installed_skill,
+                            target.lock_path,
+                            expected_git_tree_hash if target.scope == "global" else None,
+                        )
+                except SyncError as exc:
+                    failures.append(
+                        f"attempt {attempt}/{attempts}, verification failed:\n{exc}\n"
+                        f"{output or '<no installer output>'}"
                     )
-            except SyncError as exc:
+                else:
+                    if failures:
+                        print("Previous named update attempts failed:")
+                        for failure in failures:
+                            print(failure)
+                    if output:
+                        print(output)
+                    print(
+                        f"Refreshed tracked {skill_name} installations from neutral cwd "
+                        f"on attempt {attempt}/{attempts}."
+                    )
+                    return
+            else:
                 failures.append(
-                    f"attempt {attempt}/{attempts}, verification failed:\n{exc}\n"
+                    f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
                     f"{output or '<no installer output>'}"
                 )
-            else:
-                if failures:
-                    print("Previous named update attempts failed:")
-                    for failure in failures:
-                        print(failure)
-                if output:
-                    print(output)
-                print(
-                    f"Refreshed tracked {skill_name} installations on attempt "
-                    f"{attempt}/{attempts}."
-                )
-                return
-        else:
-            rendered_output = output or "<no installer output>"
-            failures.append(
-                f"attempt {attempt}/{attempts}, exit {result.returncode}:\n"
-                f"{rendered_output}"
-            )
-
-        normalized_failure = failures[-1].lower()
-        if any(
-            marker in normalized_failure
-            for marker in (
-                "eperm",
-                "eacces",
-                "operation not permitted",
-                "permission denied",
-            )
-        ):
-            raise SyncError(
-                "Named skill update failed with a non-retryable filesystem "
-                f"permission error. Command: {' '.join(command)}\n"
-                f"{failures[-1]}"
-            )
-        if attempt < attempts and retry_delay:
-            time.sleep(retry_delay)
+            if attempt < attempts and retry_delay:
+                time.sleep(retry_delay)
 
     raise SyncError(
         f"Named skill update failed after {attempts} attempts. "
@@ -1753,6 +1770,8 @@ def _resolve_publish_receipt(
     args: argparse.Namespace,
 ) -> tuple[PublishReceipt, Path, Target | None]:
     local_skill = _absolute_path(Path(args.skill_dir))
+    _reject_package_input(local_skill, "Skill input")
+    _reject_package_input(local_skill.resolve(), "Resolved skill input")
     _reject_project_config_target(local_skill, local_skill.name)
     skill_name = read_skill_name(local_skill)
     project_input = _project_skill_input(local_skill, skill_name)
@@ -1826,10 +1845,12 @@ def _publish_direct_source(args: argparse.Namespace, receipt: PublishReceipt) ->
     _check_source_repo(
         context,
         allow_dirty=args.allow_dirty,
-        allow_unpushed=args.allow_unpushed if args.push else False,
         allow_skill_changes=args.push,
+        expected_upstream_head=args.expected_upstream_head if args.push else None,
+        expected_source_head=args.expected_source_head if args.push else None,
     )
     validate_skill(context.skill_dir)
+    run_skill_tests(context.skill_dir)
     if not args.push:
         print("Push skipped; verified source matches its upstream state.")
         return
@@ -1874,8 +1895,9 @@ def _publish_project_copy(
     _check_source_repo(
         context,
         allow_dirty=args.allow_dirty,
-        allow_unpushed=args.allow_unpushed if args.push else False,
         allow_skill_changes=False,
+        expected_upstream_head=args.expected_upstream_head if args.push else None,
+        expected_source_head=args.expected_source_head if args.push else None,
     )
     changes, preserved = copy_plan(local_skill, target.destination)
     for action, relative in changes:
@@ -1890,6 +1912,7 @@ def _publish_project_copy(
     if args.push and changes:
         apply_copy(local_skill, target.destination)
     validate_skill(target.destination)
+    run_skill_tests(target.destination)
     if not args.push:
         print("Push skipped; verified project copy matches published source.")
         return
@@ -1930,8 +1953,172 @@ def publish_skill(args: argparse.Namespace) -> None:
     print("Publish completed: requested push and reinstall steps succeeded.")
 
 
+def _reject_package_input(path: Path, label: str) -> None:
+    parts = [part.casefold() for part in _absolute_path(path).parts]
+    if "node_modules" in parts or any(
+        parts[index:index + 2] == ["package", "node_modules"]
+        for index in range(len(parts) - 1)
+    ):
+        raise SyncError(f"{label} inside package/node_modules is not trusted source: {path}")
+
+
+def publish_batch(args: argparse.Namespace) -> dict[str, object]:
+    """Publish explicit skills from one source repo and emit one receipt."""
+
+    receipt: dict[str, object] = {
+        "schema": "sync-skill-repo.publish-receipt.v2",
+        "status": "failed",
+        "completed": False,
+        "skills": [],
+        "git": {"commit": None, "push": "not_started"},
+    }
+    try:
+        repo = Path(args.repo).expanduser().resolve()
+        _reject_package_input(repo, "Source repository")
+        if not repo.is_dir() or git_root(repo) != repo:
+            raise SyncError(f"--repo must be a Git worktree root: {repo}")
+        names = list(dict.fromkeys(args.skill))
+        if not names or len(names) != len(args.skill):
+            raise SyncError("publish-batch requires a non-empty unique --skill list")
+
+        contexts: list[SourceContext] = []
+        skill_receipts: list[dict[str, object]] = []
+        for name in names:
+            if not re.fullmatch(r"[a-z0-9-]+", name):
+                raise SyncError(f"Invalid explicit skill name: {name}")
+            skill_dir = repo / "skills" / name
+            _reject_package_input(skill_dir, "Skill input")
+            if read_skill_name(skill_dir) != name:
+                raise SyncError(f"Invalid skill input: {name}")
+            context = _source_context_in_repo(repo, skill_dir, require_tracked=True)
+            contexts.append(context)
+            skill_receipts.append(
+                {"name": name, "path": str(context.skill_relative), "validation": "pending", "tests": "pending", "update": "not_started"}
+            )
+        source = contexts[0]
+        if any(
+            (item.branch, item.upstream, item.upstream_push_url)
+            != (source.branch, source.upstream, source.upstream_push_url)
+            for item in contexts[1:]
+        ):
+            raise SyncError("Explicit skills do not share one branch and upstream")
+
+        include_paths: list[Path] = []
+        for raw in args.include_path:
+            path = Path(raw)
+            destination, normalized = contained_path(repo, path)
+            _reject_package_input(destination, "Included path")
+            include_paths.append(normalized)
+        allowed = [context.skill_relative for context in contexts] + include_paths
+        changed = _git_changed_paths(repo)
+        unmerged = run_git(repo, "diff", "--name-only", "--diff-filter=U")
+        if unmerged:
+            raise SyncError(f"Source repository has unresolved conflicts:\n{unmerged}")
+        outside = sorted(
+            path for path in changed if not any(_inside(path, root) for root in allowed)
+        )
+        if outside:
+            raise SyncError(
+                "Source repository has changes outside explicit publish paths:\n"
+                + "\n".join(str(path) for path in outside)
+            )
+
+        _refresh_source_upstream(source)
+        upstream_head = run_git(repo, "rev-parse", source.upstream)
+        source_head_before = run_git(repo, "rev-parse", "HEAD")
+        behind = _source_behind(source)
+        if behind:
+            raise SyncError(f"Source branch is behind or diverged from {source.upstream}")
+        ahead = _source_ahead(source)
+        if ahead:
+            if changed:
+                raise SyncError("Existing ahead commits and uncommitted publish changes must be separated")
+            if (
+                args.expected_upstream_head != upstream_head
+                or args.expected_source_head != source_head_before
+            ):
+                raise SyncError(
+                    "Existing ahead commits require exact --expected-upstream-head "
+                    "and --expected-source-head authorization"
+                )
+
+        receipt.update(
+            {
+                "source_repo": str(repo),
+                "branch": source.branch,
+                "upstream": source.upstream,
+                "upstream_head": upstream_head,
+                "source_head_before": source_head_before,
+                "skills": skill_receipts,
+                "explicit_paths": [str(path) for path in allowed],
+            }
+        )
+
+        update_targets: dict[str, tuple[UpdateTarget, ...]] = {}
+        update_root = _absolute_path(Path(args.project_root)) if args.project_root else repo
+        if args.reinstall:
+            for context in contexts:
+                update_targets[context.skill_dir.name] = resolve_named_update_targets(
+                    update_root, context.skill_dir.name, context
+                )
+
+        for context, item in zip(contexts, skill_receipts):
+            validate_skill(context.skill_dir)
+            item["validation"] = "passed"
+            item["tests"] = run_skill_tests(context.skill_dir)
+
+        commit = None
+        if changed:
+            run_git(repo, "add", "--", *(str(path) for path in allowed))
+            staged = {
+                Path(line)
+                for line in run_git(repo, "diff", "--cached", "--name-only").splitlines()
+                if line
+            }
+            unexpected_staged = sorted(
+                path for path in staged if not any(_inside(path, root) for root in allowed)
+            )
+            if unexpected_staged:
+                raise SyncError("Refusing unrelated staged paths: " + ", ".join(map(str, unexpected_staged)))
+            if staged:
+                run_git(repo, "commit", "-m", args.message or f"refactor: publish {len(names)} skills", "--", *(str(path) for path in allowed))
+                commit = run_git(repo, "rev-parse", "HEAD")
+        source_head_after = run_git(repo, "rev-parse", "HEAD")
+        receipt["source_head_after"] = source_head_after
+        receipt["git"] = {"commit": commit, "push": "skipped" if not args.push else "pending"}
+
+        if args.push:
+            push_source_with_retry(source, args.push_attempts, args.push_retry_delay)
+            receipt["git"] = {"commit": commit, "push": "succeeded", "remote_head": source_head_after}
+
+        if args.reinstall:
+            for context, item in zip(contexts, skill_receipts):
+                item["update"] = "pending"
+                try:
+                    refresh_named_skill(
+                        context.skill_dir,
+                        update_root,
+                        update_targets[context.skill_dir.name],
+                        attempts=args.attempts,
+                        retry_delay=args.retry_delay,
+                    )
+                except SyncError:
+                    item["update"] = "failed"
+                    raise
+                item["update"] = "verified"
+
+        receipt["status"] = "completed"
+        receipt["completed"] = True
+    except SyncError as exc:
+        receipt["error"] = str(exc)
+    print(json.dumps(receipt, ensure_ascii=False, indent=2))
+    return receipt
+
+
 def sync_skill(args: argparse.Namespace) -> None:
     logical_skill = _absolute_path(Path(args.skill_dir))
+    _reject_package_input(logical_skill, "Skill input")
+    _reject_package_input(logical_skill.resolve(), "Resolved skill input")
     _reject_project_config_target(logical_skill, logical_skill.name)
     skill_name = read_skill_name(logical_skill)
     registry_path = Path(args.registry).expanduser().resolve()
@@ -2014,6 +2201,7 @@ def sync_skill(args: argparse.Namespace) -> None:
 
     apply_copy(skill_dir, target.destination)
     validate_skill(target.destination)
+    run_skill_tests(target.destination)
     run_git(target.repo, "add", "--", str(target.destination_relative))
     staged = run_git(
         target.repo,
@@ -2077,13 +2265,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="project context whose lock is checked together with the global lock",
     )
     publish.add_argument("--allow-dirty", action="store_true")
-    publish.add_argument("--allow-unpushed", action="store_true")
+    publish.add_argument("--expected-upstream-head")
+    publish.add_argument("--expected-source-head")
     publish.add_argument("--push-attempts", type=_positive_int, default=3)
     publish.add_argument(
         "--push-retry-delay", type=_non_negative_float, default=2.0
     )
     publish.add_argument("--attempts", type=_positive_int, default=3)
     publish.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
+
+    publish_batch_parser = subparsers.add_parser(
+        "publish-batch",
+        help="validate, test, commit, push, update, and verify explicit skills from one repo",
+    )
+    publish_batch_parser.add_argument("--repo", required=True)
+    publish_batch_parser.add_argument("--skill", action="append", required=True)
+    publish_batch_parser.add_argument("--include-path", action="append", default=[])
+    publish_batch_parser.add_argument("--project-root")
+    publish_batch_parser.add_argument("--message")
+    publish_batch_parser.add_argument("--expected-upstream-head")
+    publish_batch_parser.add_argument("--expected-source-head")
+    publish_batch_parser.add_argument(
+        "--push", action=argparse.BooleanOptionalAction, default=True
+    )
+    publish_batch_parser.add_argument(
+        "--reinstall", action=argparse.BooleanOptionalAction, default=True
+    )
+    publish_batch_parser.add_argument("--push-attempts", type=_positive_int, default=3)
+    publish_batch_parser.add_argument(
+        "--push-retry-delay", type=_non_negative_float, default=2.0
+    )
+    publish_batch_parser.add_argument("--attempts", type=_positive_int, default=3)
+    publish_batch_parser.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
 
     sync = subparsers.add_parser(
         "sync", help="sync a lock-managed or explicit copy to a shared source"
@@ -2152,6 +2365,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(entry, ensure_ascii=False, indent=2))
         elif args.command == "publish":
             publish_skill(args)
+        elif args.command == "publish-batch":
+            receipt = publish_batch(args)
+            return 0 if receipt["completed"] else 2
         elif args.command == "sync":
             sync_skill(args)
         elif args.command == "refresh":

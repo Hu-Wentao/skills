@@ -1,105 +1,54 @@
 ---
 name: project-weekly-report
-description: Generate evidence-based project weekly reports from Git commits for the current or a specified author over the last seven days or a custom time range. Use when Codex needs to create a 项目周报, weekly status report, Git work summary, or author-and-date-filtered account of committed repository work.
+description: Generate evidence-based project weekly reports from Git commits for the current or specified author and date range. Use for 项目周报, weekly status reports, Git work summaries, or author/date-filtered committed-work accounts.
 ---
 
 # Project Weekly Report
 
-Generate a concise Chinese weekly report from structured Git evidence. Treat Git
-history as evidence of committed work, not as a complete record of every activity.
+Generate a concise Chinese report from committed Git evidence. Git history is not a complete activity record.
 
-## Collect Git evidence
+## Collect Evidence
 
-1. Resolve the directory containing this `SKILL.md` as `<skill-dir>`.
-2. Run the collector from the target Git repository:
+Run from the target repository:
 
-   ```bash
-   uv run <skill-dir>/scripts/collect_git_work.py --repo <repository>
-   ```
+```bash
+uv run <skill-root>/scripts/collect_git_work.py --repo <repository> \
+  [--author <name-or-email>] [--since <date>] [--until <date>]
+```
 
-3. Add filters only when requested:
+Defaults: current repository; configured Git email then name; exactly seven days before collection through collection time; all visible refs. Author matching is a fixed substring. Git date expressions are accepted.
 
-   ```bash
-   uv run <skill-dir>/scripts/collect_git_work.py \
-     --repo <repository> \
-     --author <git-name-or-email> \
-     --since <start-date> \
-     --until <end-date>
-   ```
+If collection fails, report the error and do not draft. If no commits match, state the exact repository, author, and range without inventing work.
 
-Use these defaults unless the user specifies otherwise:
+## Draft
 
-- repository: current working directory
-- author: `git config user.email`, falling back to `git config user.name`
-- since: exactly seven days before collection time
-- until: collection time
-- revisions: all refs visible in the repository
+Use Chinese unless requested otherwise. Resolve options explicitly:
 
-Accept Git date expressions such as `2026-07-28`, `2026-07-28T09:00:00+08:00`,
-or `last Monday`. Match `--author` as a fixed substring of the Git author header,
-so either an author name or email is valid.
-
-If the command fails, report its error without drafting a report. If it returns
-zero commits, state the repository, author, and time range that were checked; do
-not invent work items.
-
-## Draft the report
-
-Read the collector's JSON and write the report in Chinese unless the user asks
-for another language. Resolve the optional rendering parameters before
-drafting:
-
-- `include_stats`: boolean, default `false`. Set to `true` only when the user
-  explicitly requests the `变更统计` section or passes
-  `include_stats=true`.
-- `include_risks`: boolean, default `false`. Set to `true` only when the user
-  explicitly requests the `风险与待确认` section or passes
-  `include_risks=true`.
-
-Treat an omitted parameter as `false`; do not infer either option from the
-amount or type of Git changes. When an option is `false`, omit its heading and
-all of its data from the final report. The collector JSON may still contain the
-aggregate evidence needed to render an explicitly requested section.
-
-Use this compact structure, including the two conditional sections only when
-their corresponding parameter is `true`:
+- `include_stats=false`; enable only when requested.
+- `include_risks=false`; enable only when requested.
 
 ```markdown
 # 项目周报（<since> — <until>）
 
 ## 本周概览
-<1–3 sentences covering the main themes and result>
+<1–3 sentences on main outcomes>
 
 ## 完成事项
-- <group related commits into outcome-oriented work items>
+- <group related commits into outcome-oriented work>
 
-<!-- include only when include_stats=true -->
+<!-- only when include_stats=true -->
 ## 变更统计
 - 提交：<count>
 - 涉及文件：<count>
 - 代码变更：+<insertions> / -<deletions>
 
-<!-- include only when include_risks=true -->
+<!-- only when include_risks=true -->
 ## 风险与待确认
-- <only evidence-backed risks, gaps, or “无明确风险记录”>
+- <evidence-backed risk, gap, or “无明确风险记录”>
 ```
 
-Apply these rules:
+Group related subjects and paths instead of listing every commit. Preserve useful issue IDs, package names, and short hashes. Distinguish fixes, maintenance, docs, and tests only when evidence supports it.
 
-- Group related commit subjects and file paths into outcomes instead of listing
-  every commit mechanically.
-- Preserve meaningful issue IDs, package names, and short commit hashes when
-  they improve traceability.
-- Separate completed work from fixes, maintenance, documentation, and tests
-  only when the evidence supports those distinctions.
-- Never infer deployment status, business impact, review completion, meetings,
-  uncommitted work, or next-week plans from Git history alone.
-- Add a next-week plan only when the user supplies one; otherwise omit it.
-- Mention that the report covers committed Git work when that limitation matters.
+Never infer deployment, business impact, review completion, meetings, uncommitted work, or next-week plans. Add plans only when supplied by the user. Mention the committed-work limitation when material.
 
-## Collector output
-
-The script emits `project-weekly-report.git-work.v1` JSON containing the resolved
-repository, effective query, commit metadata, per-file numstat data, and aggregate
-counts. A binary file change contributes to `binaryFileChanges` but not to line
-totals. Merge commits use the diff against their first parent.
+The collector emits `project-weekly-report.git-work.v1` JSON with resolved query, commits, per-file numstat, and aggregates. Binary changes affect `binaryFileChanges`, not line totals; merge commits compare with the first parent.

@@ -2,10 +2,11 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Run the complete Skillcraft Python test suite."""
+"""Run the complete Skillcraft test suite."""
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -14,9 +15,13 @@ TEST_ROOT = Path(__file__).resolve().parent
 
 
 def main() -> int:
-    suite = unittest.defaultTestLoader.discover(
-        str(TEST_ROOT), pattern="test_*.py"
+    node = subprocess.run(
+        ["node", "--test", str(TEST_ROOT / "quick_validate.test.mjs")],
+        check=False,
     )
+    if node.returncode != 0:
+        return node.returncode
+    suite = unittest.defaultTestLoader.discover(str(TEST_ROOT), pattern="test_*.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
 

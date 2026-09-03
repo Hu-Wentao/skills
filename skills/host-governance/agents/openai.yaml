@@ -1,4 +1,4 @@
 interface:
   display_name: "Host Governance"
-  short_description: "Productize procedures and govern shared hosts"
-  default_prompt: "Use $host-governance to operate shared hosts and turn requested procedures into parameterized, tested, contracted functions that future calls execute directly."
+  short_description: "Govern shared hosts through contracted operations"
+  default_prompt: "Use $host-governance to resolve the authoritative host contract, inspect safely, and execute only authorized operations."

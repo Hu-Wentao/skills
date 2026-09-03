@@ -4,16 +4,22 @@
   "groupings": [
     {
       "title": "Project Lifecycle",
-      "description": "Skills for bootstrapping projects and governing requirements, plans, versions, defects, and verification.",
+      "description": "Project-governance routing for requirements, plans, releases, defects, and verification.",
       "skills": [
         "project-governance"
       ]
     },
     {
       "title": "Skill Tooling",
-      "description": "Skills for creating, validating, and updating reusable Codex skills.",
+      "description": "Public skill entry for creating, revising, validating, and publishing skills.",
       "skills": [
-        "skillcraft",
+        "skillcraft"
+      ]
+    },
+    {
+      "title": "Hidden Compatibility Backends",
+      "description": "Explicit compatibility backend; excluded from automatic model invocation.",
+      "skills": [
         "sync-skill-repo"
       ]
     },
@@ -29,7 +35,7 @@
     },
     {
       "title": "Git Workflows",
-      "description": "Skills for worktree-based development and controlled branch merging.",
+      "description": "Local-only worktree and branch lifecycle management; no push or publication ownership.",
       "skills": [
         "git-worktree"
       ]

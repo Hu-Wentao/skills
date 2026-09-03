@@ -1,4 +1,4 @@
 interface:
   display_name: "Docker Compose Guardrails"
-  short_description: "Guard Compose and host resource guarantees."
-  default_prompt: "Use $docker-compose-guardrails to review this deployment's container limits, host-level minimum-resource protection, and bounded build behavior."
+  short_description: "Enforce Compose and host resource boundaries"
+  default_prompt: "Use $docker-compose-guardrails to review this deployment’s limits, cgroup protection, and bounded build behavior."

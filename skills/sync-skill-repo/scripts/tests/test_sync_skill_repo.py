@@ -74,7 +74,8 @@ def publish_args(
         reinstall=reinstall,
         project_root=str(project_root) if project_root else None,
         allow_dirty=False,
-        allow_unpushed=False,
+        expected_upstream_head=None,
+        expected_source_head=None,
         push_attempts=3,
         push_retry_delay=0,
         attempts=3,
@@ -1298,7 +1299,6 @@ class SyncSkillRepoTests(unittest.TestCase):
                 MODULE._check_source_repo(
                     context,
                     allow_dirty=False,
-                    allow_unpushed=False,
                     allow_skill_changes=False,
                 )
 
@@ -1332,7 +1332,6 @@ class SyncSkillRepoTests(unittest.TestCase):
                 MODULE._check_source_repo(
                     context,
                     allow_dirty=True,
-                    allow_unpushed=True,
                     allow_skill_changes=True,
                 )
 
@@ -2611,6 +2610,131 @@ class SyncSkillRepoTests(unittest.TestCase):
             run.call_args.args[0],
             ["git", "-C", "/source/repo", "push"],
         )
+
+    def test_validator_uses_mjs_and_skill_test_runner(self) -> None:
+        self.assertEqual(MODULE.find_validator().name, "quick_validate.mjs")
+        with tempfile.TemporaryDirectory() as temporary:
+            skill = Path(temporary) / "demo-skill"
+            write_skill(skill, "demo-skill")
+            runner = skill / "scripts" / "tests" / "run.py"
+            runner.parent.mkdir(parents=True)
+            runner.write_text("print('ok')\n", encoding="utf-8")
+            succeeded = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch.object(MODULE.subprocess, "run", return_value=succeeded) as run:
+                self.assertEqual(MODULE.run_skill_tests(skill), "passed")
+            self.assertEqual(run.call_args.args[0][:3], ["uv", "run", "--script"])
+
+    def test_named_update_runs_from_neutral_cwd_not_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "consumer"
+            source = root / "source" / "demo-skill"
+            installed = project / ".agents" / "skills" / "demo-skill"
+            write_skill(source, "demo-skill")
+            write_skill(installed, "demo-skill")
+            lock = project / "skills-lock.json"
+            lock.write_text(json.dumps({"version": 1, "skills": {"demo-skill": {"computedHash": "a" * 64}}}), encoding="utf-8")
+            target = MODULE.UpdateTarget("project", lock, installed)
+            succeeded = subprocess.CompletedProcess(args=[], returncode=0, stdout="updated", stderr="")
+            seen = {}
+
+            def capture(command, **kwargs):
+                seen["command"] = command
+                seen["cwd"] = Path(kwargs["cwd"])
+                seen["has_package"] = (seen["cwd"] / "package.json").exists()
+                return succeeded
+
+            with patch.object(MODULE.shutil, "which", return_value="/bin/pnpm"):
+                with patch.object(MODULE.subprocess, "run", side_effect=capture):
+                    with patch.object(MODULE, "_verify_installed_skill"):
+                        MODULE.refresh_named_skill(source, project, (target,), attempts=1, retry_delay=0)
+            self.assertEqual(seen["command"], ["/bin/pnpm", "dlx", "skills", "update", "demo-skill", "-y"])
+            self.assertNotEqual(seen["cwd"], project)
+            self.assertFalse(seen["has_package"])
+
+    def test_batch_requires_exact_heads_for_existing_ahead_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "one")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "one")
+            configure_github_upstream(repo)
+            upstream = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            write_skill(skill, "demo-skill", "two")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "two")
+            head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+            args = MODULE.build_parser().parse_args(["publish-batch", "--repo", str(repo), "--skill", "demo-skill", "--no-reinstall"])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            args.expected_upstream_head = upstream
+            args.expected_source_head = head
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "run_skill_tests", return_value="not_present"):
+                        with patch.object(MODULE, "push_source_with_retry"):
+                            receipt = MODULE.publish_batch(args)
+            self.assertTrue(receipt["completed"])
+
+    def test_batch_existing_skill_runner_failure_blocks_commit_and_push(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            skill = repo / "skills" / "demo-skill"
+            write_skill(skill, "demo-skill", "before")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "base")
+            configure_github_upstream(repo)
+            write_skill(skill, "demo-skill", "after")
+            runner = skill / "scripts" / "tests" / "run.py"
+            runner.parent.mkdir(parents=True)
+            runner.write_text("raise SystemExit(7)\n", encoding="utf-8")
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "push_source_with_retry") as push:
+                    receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("skill tests failed", receipt["error"])
+            self.assertEqual(MODULE._source_ahead(MODULE._source_context(skill)), 0)
+            push.assert_not_called()
+
+    def test_batch_commits_once_and_update_failure_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "source"
+            init_repo(repo, "git@github.com:example/source.git")
+            for name in ("one-skill", "two-skill"):
+                write_skill(repo / "skills" / name, name, "before")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "base")
+            configure_github_upstream(repo)
+            for name in ("one-skill", "two-skill"):
+                write_skill(repo / "skills" / name, name, "after")
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "one-skill", "--skill", "two-skill",
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "run_skill_tests", return_value="not_present"):
+                        with patch.object(MODULE, "resolve_named_update_targets", return_value=()):
+                            with patch.object(MODULE, "push_source_with_retry"):
+                                with patch.object(MODULE, "refresh_named_skill", side_effect=[None, MODULE.SyncError("update failed")]):
+                                    receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertEqual(receipt["git"]["push"], "succeeded")
+            self.assertEqual(receipt["skills"][0]["update"], "verified")
+            self.assertEqual(receipt["skills"][1]["update"], "failed")
+            self.assertEqual(MODULE._source_ahead(MODULE._source_context(repo / "skills" / "one-skill")), 1)
+
+    def test_package_node_modules_input_fails_closed(self) -> None:
+        with self.assertRaisesRegex(MODULE.SyncError, "package/node_modules"):
+            MODULE._reject_package_input(Path("/tmp/package/node_modules/demo-skill"), "Skill input")
 
 
 if __name__ == "__main__":

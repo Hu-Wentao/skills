@@ -1,4 +1,6 @@
 interface:
-  display_name: "Sync Skill Repo"
-  short_description: "Publish and update one shared skill safely"
-  default_prompt: "Use $sync-skill-repo to publish this shared or lock-managed skill to GitHub, run its exact named Skills CLI update, and verify matching locks. Reject project-private sources and skills-config targets before any publication action."
+  display_name: "Sync Skill Repo Backend"
+  short_description: "Run deterministic shared-skill publication"
+  default_prompt: "Use $sync-skill-repo explicitly as the hidden backend for a validated shared-skill publish or compatibility sync."
+policy:
+  allow_implicit_invocation: false

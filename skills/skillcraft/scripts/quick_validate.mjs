@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseFrontmatter, FrontmatterError } from "./lib/frontmatter.mjs";
+import { parseFrontmatterDocument, FrontmatterError } from "./lib/frontmatter.mjs";
 
 export const MAX_SKILL_NAME_LENGTH = 64;
+export const CONTEXT_BUDGETS = Object.freeze({
+  normal: { bodyBytes: 5120, bodyLines: 80, descriptionChars: 300 },
+  router: { bodyBytes: 8192, bodyLines: 120, descriptionChars: 350 },
+  hidden: { bodyBytes: 4096, bodyLines: 60, descriptionChars: 300 },
+});
 
 export function findLiteralProfileBranch(skillPath) {
   const scripts = join(skillPath, "scripts");
   if (!isDirectory(scripts)) return null;
   for (const path of walkFiles(scripts).filter((item) => item.endsWith(".py")).sort()) {
-    if (path.split("/").includes("tests")) continue;
+    if (path.split(sep).includes("tests")) continue;
     let source;
     try { source = readFileSync(path, "utf8"); } catch { continue; }
     const comparison = findProfileComparison(source);
@@ -31,42 +36,75 @@ export function validateSkill(skillPathInput) {
   if (!content.startsWith("---")) return [false, "No YAML frontmatter found"];
 
   let frontmatter;
-  try { frontmatter = parseFrontmatter(content); }
-  catch (error) {
+  let body;
+  try {
+    const parsed = parseFrontmatterDocument(content);
+    frontmatter = parsed.attributes;
+    body = parsed.body;
+  } catch (error) {
     const message = error instanceof FrontmatterError ? error.message : String(error);
     return [false, message];
   }
 
-  const allowedProperties = new Set(["name", "description", "license", "allowed-tools", "metadata"]);
-  const unexpected = Object.keys(frontmatter).filter((key) => !allowedProperties.has(key)).sort();
-  if (unexpected.length > 0) {
-    return [false, `Unexpected key(s) in SKILL.md frontmatter: ${unexpected.join(", ")}. Allowed properties are: ${[...allowedProperties].sort().join(", ")}`];
-  }
+  const allowed = new Set(["name", "description", "license", "compatibility", "metadata", "allowed-tools", "disable-model-invocation"]);
+  const unexpected = Object.keys(frontmatter).filter((key) => !allowed.has(key)).sort();
+  if (unexpected.length) return [false, `Unexpected key(s) in SKILL.md frontmatter: ${unexpected.join(", ")}. Allowed properties are: ${[...allowed].sort().join(", ")}`];
   if (!("name" in frontmatter)) return [false, "Missing 'name' in frontmatter"];
   if (!("description" in frontmatter)) return [false, "Missing 'description' in frontmatter"];
 
   const name = frontmatter.name;
   if (typeof name !== "string") return [false, `Name must be a string, got ${typeName(name)}`];
   const normalizedName = name.trim();
-  if (normalizedName) {
-    if (!/^[a-z0-9-]+$/.test(normalizedName)) return [false, `Name '${normalizedName}' should be hyphen-case (lowercase letters, digits, and hyphens only)`];
-    if (normalizedName.startsWith("-") || normalizedName.endsWith("-") || normalizedName.includes("--")) return [false, `Name '${normalizedName}' cannot start/end with hyphen or contain consecutive hyphens.`];
-    if (normalizedName.length > MAX_SKILL_NAME_LENGTH) return [false, `Name is too long (${normalizedName.length} characters). Maximum is ${MAX_SKILL_NAME_LENGTH} characters.`];
-  }
+  if (!/^[a-z0-9-]+$/.test(normalizedName)) return [false, `Name '${normalizedName}' should be hyphen-case (lowercase letters, digits, and hyphens only)`];
+  if (normalizedName.startsWith("-") || normalizedName.endsWith("-") || normalizedName.includes("--")) return [false, `Name '${normalizedName}' cannot start/end with hyphen or contain consecutive hyphens.`];
+  if (normalizedName.length > MAX_SKILL_NAME_LENGTH) return [false, `Name is too long (${normalizedName.length} characters). Maximum is ${MAX_SKILL_NAME_LENGTH} characters.`];
+  if (normalizedName !== skillPath.split(sep).at(-1)) return [false, `Name '${normalizedName}' must match skill folder '${skillPath.split(sep).at(-1)}'`];
 
   const description = frontmatter.description;
   if (typeof description !== "string") return [false, `Description must be a string, got ${typeName(description)}`];
   const normalizedDescription = description.trim();
   if (normalizedDescription.includes("<") || normalizedDescription.includes(">")) return [false, "Description cannot contain angle brackets (< or >)"];
-  if (normalizedDescription.length > 1024) return [false, `Description is too long (${normalizedDescription.length} characters). Maximum is 1024 characters.`];
+
+  if ("disable-model-invocation" in frontmatter && typeof frontmatter["disable-model-invocation"] !== "boolean") return [false, "disable-model-invocation must be a boolean"];
+  if ("metadata" in frontmatter && (!frontmatter.metadata || typeof frontmatter.metadata !== "object" || Array.isArray(frontmatter.metadata))) return [false, "metadata must be a mapping"];
+  for (const key of ["license", "compatibility"]) {
+    if (key in frontmatter && typeof frontmatter[key] !== "string") return [false, `${key} must be a string`];
+  }
+  if ("allowed-tools" in frontmatter && typeof frontmatter["allowed-tools"] !== "string" && !Array.isArray(frontmatter["allowed-tools"])) return [false, "allowed-tools must be a string or list"];
+
+  const declaredProfile = frontmatter.metadata?.["context-budget"] ?? "normal";
+  const profile = frontmatter["disable-model-invocation"] === true ? "hidden" : declaredProfile;
+  if (!(profile in CONTEXT_BUDGETS)) return [false, `Unknown metadata.context-budget '${profile}'`];
+  const budget = CONTEXT_BUDGETS[profile];
+  if (normalizedDescription.length > budget.descriptionChars) return [false, `Description is too long for ${profile} budget (${normalizedDescription.length} characters). Maximum is ${budget.descriptionChars}.`];
+  const bodyBytes = Buffer.byteLength(body, "utf8");
+  const bodyLines = body.trimEnd() ? body.trimEnd().split(/\r?\n/).length : 0;
+  if (bodyBytes > budget.bodyBytes || bodyLines > budget.bodyLines) return [false, `SKILL.md body exceeds ${profile} context budget: ${bodyBytes}/${budget.bodyBytes} bytes, ${bodyLines}/${budget.bodyLines} lines`];
+
+  const linkError = validateLocalLinks(skillPath, body);
+  if (linkError) return [false, linkError];
 
   if (isFile(join(skillPath, "references", "project_config.md"))) {
     const literalBranch = findLiteralProfileBranch(skillPath);
-    if (literalBranch) {
-      return [false, `${relative(skillPath, literalBranch.path)}:${literalBranch.line} branches on a concrete project profile. Treat profile names as opaque and move project behavior to .agents/skills-config/${normalizedName}.`];
-    }
+    if (literalBranch) return [false, `${relative(skillPath, literalBranch.path)}:${literalBranch.line} branches on a concrete project profile. Treat profile names as opaque and move project behavior to .agents/skills-config/${normalizedName}.`];
   }
-  return [true, "Skill is valid!"];
+  return [true, `Skill is valid (${profile}: ${bodyBytes} bytes, ${bodyLines} lines, description ${normalizedDescription.length} chars)`];
+}
+
+function validateLocalLinks(skillPath, body) {
+  const root = resolve(skillPath);
+  const pattern = /\[[^\]]*\]\(([^)]+)\)/g;
+  for (const match of body.matchAll(pattern)) {
+    const raw = match[1].trim().replace(/^<|>$/g, "");
+    if (!raw || raw.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) continue;
+    const targetText = raw.split("#", 1)[0];
+    const parts = targetText.split("/");
+    if (parts[0] === "references" && parts.length !== 2) return `Reference links must be one level below SKILL.md: ${raw}`;
+    const target = resolve(skillPath, targetText);
+    if (!(target === root || target.startsWith(`${root}${sep}`))) return `Local link escapes skill directory: ${raw}`;
+    if (!isFile(target)) return `Local link target does not exist: ${raw}`;
+  }
+  return null;
 }
 
 function findProfileComparison(source) {
@@ -74,11 +112,7 @@ function findProfileComparison(source) {
   const string = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
   const literal = String.raw`(?:${string}|\[[^\]\n]*${string}[^\]\n]*\])`;
   const pattern = new RegExp(String.raw`${profile}\s*(?:==|!=|\b(?:not\s+in|in)\b)\s*${literal}|${literal}\s*(?:==|!=|\b(?:not\s+in|in)\b)\s*${profile}`);
-  let offset = 0;
-  for (const line of source.split(/\r?\n/)) {
-    if (pattern.test(line)) return { line: offset + 1 };
-    offset += 1;
-  }
+  for (const [index, line] of source.split(/\r?\n/).entries()) if (pattern.test(line)) return { line: index + 1 };
   return null;
 }
 
