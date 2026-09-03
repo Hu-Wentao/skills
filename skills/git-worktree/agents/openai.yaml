@@ -1,4 +1,4 @@
 interface:
-  display_name: "Scripted Git Worktree"
-  short_description: "Script worktree completion and safe maintenance"
-  default_prompt: "Use $git-worktree to script exact-HEAD worktree completion, delivery, and local maintenance safely."
+  display_name: "Local Git Worktrees"
+  short_description: "Manage local worktree and branch lifecycles"
+  default_prompt: "Use $git-worktree to inspect and complete this local worktree task with exact-HEAD safeguards; do not push."

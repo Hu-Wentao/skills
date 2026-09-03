@@ -1,4 +1,4 @@
 interface:
   display_name: "Write Technical Docs"
-  short_description: "Write and review clear developer documentation"
-  default_prompt: "Use $write-technical-docs to draft or revise clear developer documentation."
+  short_description: "Write and review accurate developer documentation"
+  default_prompt: "Use $write-technical-docs to draft or review this developer documentation against project facts and applicable style guidance."

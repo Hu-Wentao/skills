@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Dart Package"
+  short_description: "Version, validate, tag, and publish Dart packages"
+  default_prompt: "Use $release-dart-package-action to prepare and publish this Dart or Flutter package through its GitHub Actions tag workflow."

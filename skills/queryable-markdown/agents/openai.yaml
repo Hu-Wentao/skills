@@ -1,4 +1,4 @@
 interface:
   display_name: "Queryable Markdown"
-  short_description: "Query and safely edit Markdown with compact output"
-  default_prompt: "Use $queryable-markdown to retrieve or edit Markdown records through compact scripted mdq workflows."
+  short_description: "Query and safely edit Markdown records"
+  default_prompt: "Use $queryable-markdown to retrieve or edit these Markdown records through the smallest verified mdq workflow."

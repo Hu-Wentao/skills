@@ -7,12 +7,12 @@
 
 ### 项目生命周期
 
-- [`project-governance`](skills/project-governance)：启动项目设计，并治理需求、基线、计划、Git 版本、Skill、缺陷与验证追踪。
+- [`project-governance`](skills/project-governance)：路由需求、基线、计划、文档、发布、缺陷与验证治理；不负责 Skill 发布或本地 worktree 生命周期。
 
 ### Skill 工具
 
-- [`skillcraft`](skills/skillcraft)：创建、更新、验证和测试可复用 Codex skill。
-- [`sync-skill-repo`](skills/sync-skill-repo)：将共享或锁管理的 skill 校验、提交并推送到 GitHub，然后按名称刷新锁管理安装；项目私有 skill 留在所属项目内本地修订。
+- [`skillcraft`](skills/skillcraft)：创建、修订、验证和发布 Skill 的唯一公开入口。共享 Skill 修订默认通过确定性 runner 完成测试、精确提交、推送、逐名 update 与安装校验；项目私有 Skill 留在所属项目 Git 流程。
+- [`sync-skill-repo`](skills/sync-skill-repo)：`disable-model-invocation` 的隐藏兼容后端，仅供 `skillcraft` runner 或显式兼容调用。
 
 ### Flutter & Dart
 
@@ -23,7 +23,7 @@
 
 ### Git 工作流
 
-- [`git-worktree`](skills/git-worktree)：管理 Git worktree 的创建、分支合并与安全清理完整流程。
+- [`git-worktree`](skills/git-worktree)：只管理本地 Git worktree/branch 的创建、交付、合并、保留、救援与安全清理；不 push。
 
 ### 基础设施与安全
 
