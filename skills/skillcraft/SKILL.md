@@ -1,6 +1,7 @@
 ---
 name: skillcraft
-description: Create or revise reusable and project-private skills. Use for skill design, initialization, validation, progressive disclosure, profiles, forward tests, or “修订技能”. Revisions publish by default: shared skills use the canonical runner and named update; project-private skills validate, commit, and push through the owning project.
+description: >-
+  Create or revise reusable and project-private skills. Use for skill design, initialization, validation, progressive disclosure, profiles, forward tests, or “修订技能”. Revisions publish by default: shared skills use the canonical runner and named update; project-private skills validate, commit, and push through the owning project.
 metadata:
   context-budget: router
 ---

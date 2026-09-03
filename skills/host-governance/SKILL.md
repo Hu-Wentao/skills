@@ -1,6 +1,7 @@
 ---
 name: host-governance
-description: Govern shared hosts and infrastructure across projects: authoritative inventory, server bootstrap, Docker/storage, CI runners and Jenkins, PostgreSQL, Tailscale, Caddy, Cloudflare, resource inspection, and reusable host operations. Use for shared-host reads, plans, authorized mutations, verification, rollback, or incident recovery.
+description: >-
+  Govern shared hosts and infrastructure across projects: authoritative inventory, server bootstrap, Docker/storage, CI runners and Jenkins, PostgreSQL, Tailscale, Caddy, Cloudflare, resource inspection, and reusable host operations. Use for shared-host reads, plans, authorized mutations, verification, rollback, or incident recovery.
 metadata:
   context-budget: router
 ---
