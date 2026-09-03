@@ -53,9 +53,17 @@ function parseFrontmatterLines(source) {
       continue;
     }
     if (indent === 0) parent = null;
-    target[key] = parseScalar(rawValue.trim());
+    const scalar = rawValue.trim();
+    if (isPlainScalar(scalar) && /:\s/.test(scalar)) {
+      throw new FrontmatterError(`Invalid YAML plain scalar at line ${index + 1}; quote it or use a block scalar`);
+    }
+    target[key] = parseScalar(scalar);
   }
   return result;
+}
+
+function isPlainScalar(value) {
+  return value && !["'", '"', "[", "{"].includes(value[0]);
 }
 
 function parseScalar(value) {

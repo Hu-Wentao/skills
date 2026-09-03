@@ -57,6 +57,14 @@ test("rejects user-invocable and unknown fields", () => withFixture(fixture(
   assert.match(message, /Unexpected key.*user-invocable/);
 }));
 
+test("rejects a plain scalar that the Skills CLI YAML parser rejects", () => withFixture(fixture(
+  "name: example-skill\ndescription: Exercise validation: unsafe plain scalar."
+), ({ skill }) => {
+  const [valid, message] = validateSkill(skill);
+  assert.equal(valid, false);
+  assert.match(message, /Invalid YAML plain scalar/);
+}));
+
 test("enforces normal, router, and hidden context budgets", () => {
   for (const [label, frontmatter, lines, expected] of [
     ["normal", "name: example-skill\ndescription: Exercise validation.", 81, false],
