@@ -59,6 +59,25 @@ class SkillPolicyTest(unittest.TestCase):
         for owner, phrase in checks.items():
             self.assertIn(" ".join(phrase.split()), " ".join(self.references[owner].split()))
 
+    def test_one_time_operations_do_not_imply_productization(self) -> None:
+        productization = self.references["procedure-productization.md"]
+        self.assertIn(
+            "A request to execute, repair, recover, clean up, migrate, or order steps for one current target is a one-time operation",
+            self.skill,
+        )
+        self.assertIn(
+            "Selecting a plan or sequence authorizes only that execution path",
+            self.skill,
+        )
+        self.assertIn(
+            "Do not edit the host repository, controllers, contracts, tests, documentation, or versions",
+            self.skill,
+        )
+        self.assertIn("Productization requires explicit current-request intent", productization)
+        self.assertIn("never productize merely to unblock the current operation", productization)
+        self.assertNotIn("Otherwise capture the reviewed stable method", self.skill)
+        self.assertNotIn("Use the newly contracted controller to complete the current request", productization)
+
     def test_runner_enforces_current_user_authorization(self) -> None:
         resolver = (SKILL_ROOT / "scripts" / "resolve.py").read_text(encoding="utf-8")
         runner = (SKILL_ROOT / "scripts" / "host-governance.py").read_text(encoding="utf-8")
