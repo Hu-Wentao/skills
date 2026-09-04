@@ -1,9 +1,12 @@
 # Productize a Host Procedure
 
-Use this workflow when the user asks for a host procedure—such as installing
-specific software, configuring a service, or performing recurring
-maintenance—to become a host-governance function. The outcome is a tested,
-contracted operation that future invocations execute directly.
+Use this workflow only when the current user explicitly asks for a host procedure—such as installing specific software, configuring a service, or performing recurring maintenance—to become a reusable host-governance function. The outcome is a tested, contracted operation that future invocations execute directly.
+
+## Admission Gate
+
+Productization requires explicit current-request intent to create, automate, contract, retain, or support a reusable long-term capability. A request to perform one operation, recover one incident, clean up one target, migrate current state, or execute steps in a chosen order remains one-time work. "Use governance", repeated historical need, a selected plan, a conversation summary, or an assistant-proposed implementation does not cross this gate.
+
+For one-time work, compose existing contracted operations without changing repository code, contracts, tests, documentation, versions, or installed capabilities. If no existing operation can safely complete the task, report the missing capability as a blocker. Use a manual path only under the explicit one-round exception in [authorization-and-safety.md](authorization-and-safety.md); never productize merely to unblock the current operation.
 
 ## Reuse Before Building
 
@@ -89,10 +92,7 @@ recovery limits, and prohibited broad behavior. Run static validation, the
 focused tests, applicable full repository checks, and a dry-run or read-only
 plan.
 
-Use the newly contracted controller to complete the current request. Do not
-call the underlying script directly after the contract exists. Record stable
-verified facts only when repository writes are authorized; do not promote
-transient output.
+Use the newly contracted controller for the current request only when that same request also authorizes the corresponding live operation and effects. Otherwise stop at the requested implementation or publication boundary. Do not call the underlying script directly after the contract exists. Record stable verified facts only when repository writes are authorized; do not promote transient output.
 
 Future calls must start with the existing controller. A successful no-op plan
 and verify is the correct fast path when the desired state already holds.

@@ -37,7 +37,7 @@ Use `--authorized` only when current user intent covers the non-read-only operat
 ## Route the Operation
 
 - Generic transaction planning and ownership: [control.md](references/control.md).
-- Requested procedure becoming a reusable contracted function: [procedure-productization.md](references/procedure-productization.md).
+- Explicit request to turn a procedure into a reusable contracted function: [procedure-productization.md](references/procedure-productization.md).
 - Initial Linux server bootstrap: [server-bootstrap.md](references/server-bootstrap.md).
 - Docker Engine/Compose installation and bounded BuildKit cleanup: [docker-install.md](references/docker-install.md).
 - Docker volume leaks or runtime storage incidents: [docker-storage-maintenance.md](references/docker-storage-maintenance.md).
@@ -63,9 +63,13 @@ Read [authorization-and-safety.md](references/authorization-and-safety.md) befor
 - Snapshot current state, lock one serialized host transaction, re-read under lock, reject drift/collisions, validate the complete candidate, preserve recovery, and verify positive and negative paths.
 - Do not broaden network access to make validation pass. Keep destructive, billable, privileged, exposure-changing, and identity-changing outcomes separate.
 
-## Productize Repeated Procedures
+## Separate One-Time Operations from Productization
 
-When requested, first resolve an existing contracted controller. Otherwise capture the reviewed stable method as a deterministic project-owned controller, typed operation contract, tests, lock, verification, and bounded recovery; use that controller for the current task. Never create a generic shell-fragment or arbitrary-package executor.
+A request to execute, repair, recover, clean up, migrate, or order steps for one current target is a one-time operation, even when the method could be reused. Selecting a plan or sequence authorizes only that execution path; governance requirements, repetition history, summaries, and prior assistant proposals do not authorize a durable capability.
+
+For a one-time operation, resolve and compose existing contracted operations. Do not edit the host repository, controllers, contracts, tests, documentation, or versions, and do not install or publish a capability. If no existing operation can safely complete it, report the missing capability or use only an explicitly authorized one-round manual exception.
+
+Productize only when the current user explicitly asks to create, automate, contract, or retain a reusable long-term host capability. Then first resolve an existing contracted controller; otherwise follow [procedure-productization.md](references/procedure-productization.md). Never create a generic shell-fragment or arbitrary-package executor.
 
 ## Control Workflow
 
