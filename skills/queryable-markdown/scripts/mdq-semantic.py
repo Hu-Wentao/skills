@@ -254,6 +254,23 @@ def validate_endpoint(value: str, *, trusted_global: bool) -> str:
     return value.rstrip("/")
 
 
+def validate_index_relative(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SemanticError("semantic config index must be a non-empty relative path")
+    index = Path(value)
+    if index.is_absolute() or ".." in index.parts:
+        raise SemanticError("semantic config index must stay inside the project root")
+    try:
+        index.relative_to(Path(".mdq") / "semantic")
+    except ValueError as exc:
+        raise SemanticError(
+            "semantic config index must be inside .mdq/semantic"
+        ) from exc
+    if index.suffix.casefold() != ".sqlite3":
+        raise SemanticError("semantic config index must use the .sqlite3 extension")
+    return value
+
+
 def resolve_config(project_root: Path, *, required: bool = True) -> SemanticConfig | None:
     candidates = [project_config_path(project_root), GLOBAL_CONFIG_PATH]
     path = next(
@@ -300,11 +317,7 @@ def resolve_config(project_root: Path, *, required: bool = True) -> SemanticConf
             f"{GLOBAL_CONFIG_PATH}"
         )
     base_url = validate_endpoint(base_url, trusted_global=trusted_global)
-    if not isinstance(index_relative, str) or not index_relative.strip():
-        raise SemanticError("semantic config index must be a non-empty relative path")
-    index_path = Path(index_relative)
-    if index_path.is_absolute() or ".." in index_path.parts:
-        raise SemanticError("semantic config index must stay inside the project root")
+    index_relative = validate_index_relative(index_relative)
     return SemanticConfig(
         path=path,
         backend=backend,
@@ -342,9 +355,7 @@ def write_config(
     if api_key_env is not None and not api_key_env.isidentifier():
         raise SemanticError("api_key_env must be a valid environment variable name")
     base_url = validate_endpoint(base_url, trusted_global=trusted_global)
-    index = Path(index_relative)
-    if index.is_absolute() or ".." in index.parts:
-        raise SemanticError("index must stay inside the project root")
+    index_relative = validate_index_relative(index_relative)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": CONFIG_SCHEMA,
@@ -1217,7 +1228,7 @@ def verify_record(mdq: Any, item: IndexedRecord) -> VerifiedRecord | None:
     try:
         document = mdq.read_document(Path(item.source_path))
         records, diagnostics = mdq.extract_current(document)
-    except (OSError, UnicodeDecodeError, SemanticError):
+    except (OSError, UnicodeDecodeError, TimeoutError, SemanticError):
         return None
     if any(entry.get("severity") == "error" for entry in diagnostics):
         return None
@@ -1613,6 +1624,18 @@ def main() -> int:
                 "schema": CLI_SCHEMA,
                 "status": "invalid",
                 "diagnostics": [diagnostic("semantic_cli_error", "error", str(exc))],
+            },
+            getattr(args, "output", "json"),
+            3,
+        )
+    except (OSError, UnicodeDecodeError, TimeoutError) as exc:
+        return finish(
+            {
+                "schema": CLI_SCHEMA,
+                "status": "invalid",
+                "diagnostics": [
+                    diagnostic("semantic_cli_io_error", "error", str(exc))
+                ],
             },
             getattr(args, "output", "json"),
             3,

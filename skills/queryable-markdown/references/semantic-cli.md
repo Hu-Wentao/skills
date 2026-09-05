@@ -82,6 +82,10 @@ The derived index defaults to:
 <project-root>/.mdq/semantic/index.sqlite3
 ```
 
+A custom `--index` value, if used, must remain under `.mdq/semantic/` and
+use the `.sqlite3` extension. Authored Markdown paths cannot be used as the
+semantic cache.
+
 The index schema is `mdq.semantic.index.v1`. It binds every source to its exact
 source SHA-256, resolved Profile hash and source, backend, model, project root,
 and index version. `query` returns `stale` instead of using an index when any
