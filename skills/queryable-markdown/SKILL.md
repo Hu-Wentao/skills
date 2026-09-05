@@ -14,6 +14,7 @@ Use compact agent commands for normal work and stable JSON only for automation o
 | Exact record | `get <document> --id <id>` |
 | Collection lookup | `find <path>... --id <id>` or `--text <text>` |
 | Declared query | `run <document> --query <name> --value <value> --output compact` |
+| Semantic candidate retrieval | Read [semantic-cli.md](references/semantic-cli.md), then use `mdq-semantic.py configure`, `index`, and `query` |
 | Existing label scalar update | `set` preview, then exact repeat with `--apply` |
 | Verify edit | `check <document> --tier content|structure|contract` |
 | Programmatic JSON | `query`, `search`, `scan`, or `run` |
@@ -40,7 +41,7 @@ uv run <skill-root>/scripts/mdq.py find <path> --glob '**/*.md' \
 
 Repeat `--select` as needed. Compact output omits large raw/body/context fields when smaller declared fields exist. Rerun with `--output json` only when compact output requests details or another program needs the envelope.
 
-Without a persistent contract, conservative temporary selectors may support read-only `get` and `find`. A prose mention remains candidate evidence, not identity. A resolved versioned shared profile is a persistent contract; an unresolved or malformed reference is invalid and must not silently fall back for writes.
+Without a persistent contract, conservative temporary selectors may support read-only `get` and `find`. A prose mention remains candidate evidence, not identity. A resolved versioned shared profile is a persistent contract; an unresolved or malformed reference is invalid and must not silently fall back for writes. Semantic retrieval is a separate candidate-recall layer; it must index only mdq-resolved records and revalidate returned identities through mdq.
 
 ## Write and Verify
 

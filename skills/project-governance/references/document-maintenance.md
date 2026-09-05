@@ -43,7 +43,10 @@ roots when they differ from the defaults. For compatible level-2 heading
 records, use the versioned shared contract in [mdq-profile.md](mdq-profile.md)
 instead of copying the same selector and field block into every document.
 Profile-free ordinary Markdown queries remain read-only and must not acquire a
-contract merely because they were inspected.
+contract merely because they were inspected. The `queryable-markdown` semantic
+CLI may recall likely records for review, but its index is a local derived
+cache; revalidate each candidate with deterministic mdq before governance or
+write decisions.
 
 Also govern repository-embedded architecture and API contract artifacts even
 when their owning runtime convention places them outside `docs/`. The managed
