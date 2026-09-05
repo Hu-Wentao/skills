@@ -32,7 +32,7 @@ import yaml
 from markdown_it import MarkdownIt
 
 
-ENGINE = "mdq.py/3"
+ENGINE = "mdq.py/4"
 INDEX_SCHEMA = 1
 MAX_PROFILE_BYTES = 64 * 1024
 MAX_PATTERN_LENGTH = 512
@@ -50,6 +50,11 @@ SETEXT_RE = re.compile(r"^[ \t]{0,3}(=+|-+)[ \t]*$")
 GENERIC_ID_PATTERN = r"[A-Za-z][A-Za-z0-9_.]*(?:-[A-Za-z0-9_.]+)*-[0-9]+"
 GENERIC_ID_RE = re.compile(rf"\b({GENERIC_ID_PATTERN})\b")
 TEMPORARY_PROFILE_PREFIX = "temporary-"
+SHARED_PROFILE_PREFIX = "shared-profile:"
+PROFILE_REFERENCE_RE = re.compile(
+    r"^(?P<namespace>[a-z][a-z0-9-]*)/(?P<name>"
+    r"[a-z][a-z0-9._-]*-v(?P<version>[1-9][0-9]*))$"
+)
 TEMPORARY_GENERIC_KEY_PATTERN = (
     rf"^[ \t]*(?P<id>{GENERIC_ID_PATTERN})"
     r"(?=$|[ \t:：—–-])"
@@ -448,6 +453,116 @@ def load_yaml(text: str) -> Any:
     return yaml.load(text, Loader=DuplicateKeyLoader)
 
 
+def shared_profile_path(reference: str) -> Path | None:
+    match = PROFILE_REFERENCE_RE.fullmatch(reference)
+    if match is None:
+        return None
+    # Shared profiles are shipped as sibling skill assets. A document can
+    # select a versioned name, but it cannot provide an arbitrary filesystem
+    # path, URL, import, or executable source.
+    skills_root = Path(__file__).resolve().parents[2]
+    path = (
+        skills_root
+        / match.group("namespace")
+        / "assets"
+        / "mdq-profiles"
+        / f"{match.group('name')}.yaml"
+    ).resolve()
+    try:
+        path.relative_to(skills_root)
+    except ValueError:
+        return None
+    return path
+
+
+def load_shared_profile(
+    reference: str, diagnostics: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    match = PROFILE_REFERENCE_RE.fullmatch(reference)
+    if match is None:
+        diagnostics.append(
+            diagnostic(
+                "profile_reference_invalid",
+                "error",
+                "shared mdq profile references must use namespace/name-vN",
+                details={"reference": reference},
+            )
+        )
+        return None
+
+    path = shared_profile_path(reference)
+    if path is None or not path.is_file():
+        diagnostics.append(
+            diagnostic(
+                "profile_reference_missing",
+                "error",
+                f"shared mdq profile {reference!r} was not found",
+                details={"reference": reference},
+            )
+        )
+        return None
+
+    local_diagnostics: list[dict[str, Any]] = []
+    try:
+        raw = path.read_bytes()
+        if len(raw) > MAX_PROFILE_BYTES:
+            raise ValueError(f"profile exceeds {MAX_PROFILE_BYTES} bytes")
+        root = load_yaml(raw.decode("utf-8")) or {}
+    except (
+        OSError,
+        UnicodeDecodeError,
+        yaml.YAMLError,
+        TypeError,
+        ValueError,
+        RecursionError,
+    ) as exc:
+        diagnostics.append(
+            diagnostic(
+                "profile_reference_invalid",
+                "error",
+                f"shared mdq profile {reference!r} could not be loaded: {exc}",
+                details={"reference": reference, "path": str(path)},
+            )
+        )
+        return None
+
+    if not isinstance(root, dict):
+        diagnostics.append(
+            diagnostic(
+                "profile_reference_invalid",
+                "error",
+                "shared mdq profile must contain a mapping",
+                details={"reference": reference, "path": str(path)},
+            )
+        )
+        return None
+
+    expected_version = int(match.group("version"))
+    metadata = {
+        "x-profile-id": reference,
+        "x-profile-version": expected_version,
+    }
+    for key, expected in metadata.items():
+        if root.get(key) != expected:
+            local_diagnostics.append(
+                diagnostic(
+                    "profile_reference_invalid",
+                    "error",
+                    f"shared mdq profile field {key!r} does not match its reference",
+                    details={
+                        "reference": reference,
+                        "path": str(path),
+                        "expected": expected,
+                        "actual": root.get(key),
+                    },
+                )
+            )
+    diagnostics.extend(local_diagnostics)
+    if any(item["severity"] == "error" for item in local_diagnostics):
+        return None
+    return root
+
+
 def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -760,8 +875,41 @@ def parse_profile(text: str, lines: list[str]) -> ProfileLoad:
                 try:
                     root = load_yaml("".join(lines[1:closing])) or {}
                     if isinstance(root, dict) and "mdq" in root:
-                        if isinstance(root["mdq"], dict):
-                            found.append(("yaml-frontmatter", root["mdq"]))
+                        declaration = root["mdq"]
+                        if isinstance(declaration, dict):
+                            if "profile" in declaration:
+                                if set(declaration) != {"profile"}:
+                                    diagnostics.append(
+                                        diagnostic(
+                                            "profile_reference_invalid",
+                                            "error",
+                                            "a shared mdq profile reference cannot contain inline overrides",
+                                            line=1,
+                                        )
+                                    )
+                                elif not isinstance(declaration["profile"], str):
+                                    diagnostics.append(
+                                        diagnostic(
+                                            "profile_reference_invalid",
+                                            "error",
+                                            "frontmatter mdq.profile must be a string",
+                                            line=1,
+                                        )
+                                    )
+                                else:
+                                    reference = declaration["profile"]
+                                    profile = load_shared_profile(
+                                        reference, diagnostics
+                                    )
+                                    if profile is not None:
+                                        found.append(
+                                            (
+                                                f"{SHARED_PROFILE_PREFIX}{reference}",
+                                                profile,
+                                            )
+                                        )
+                            else:
+                                found.append(("yaml-frontmatter", declaration))
                         else:
                             diagnostics.append(
                                 diagnostic(
@@ -4387,6 +4535,23 @@ def query_refinement_candidate(
 
 def command_optimize(args: argparse.Namespace) -> int:
     document = read_document(Path(args.document))
+    if document.profile_source and document.profile_source.startswith(SHARED_PROFILE_PREFIX):
+        emit(
+            {
+                "schema": "mdq.optimize.v2",
+                "status": "invalid",
+                "applied": False,
+                "diagnostics": list(document.diagnostics)
+                + [
+                    diagnostic(
+                        "shared_profile_read_only",
+                        "error",
+                        "shared mdq profiles are versioned skill assets and cannot be repaired through a document",
+                    )
+                ],
+            }
+        )
+        return 3
     if document.profile is None:
         emit(
             {

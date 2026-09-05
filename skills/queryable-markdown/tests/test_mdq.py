@@ -61,6 +61,108 @@ class MdqCliTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
+    def test_versioned_shared_profile_reference_loads_from_sibling_skill_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  profile: project-governance/governed-document-v1
+---
+
+# Requirements
+
+## REQ-001: Login
+
+状态: draft
+审查级别: L0
+来源: specification
+""",
+            )
+            validation = self.run_cli(root, "validate", str(path))
+            result = self.run_cli(
+                root,
+                "get",
+                str(path),
+                "--id",
+                "REQ-001",
+                "--select",
+                "title",
+                "--select",
+                "status",
+                "--output",
+                "json",
+            )
+            self.assertEqual(
+                validation["profile_source"],
+                "shared-profile:project-governance/governed-document-v1",
+            )
+            self.assertEqual(result["status"], "matched")
+            self.assertEqual(
+                result["records"][0]["fields"],
+                {"title": "Login", "status": "draft"},
+            )
+
+    def test_shared_profile_reference_rejects_inline_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  profile: project-governance/governed-document-v1
+  version: 1
+---
+
+## REQ-001: Login
+""",
+            )
+            result = self.run_cli(
+                root,
+                "get",
+                str(path),
+                "--id",
+                "REQ-001",
+                "--output",
+                "json",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_reference_invalid",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
+    def test_shared_profile_reference_requires_an_installed_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  profile: project-governance/governed-document-v2
+---
+
+## REQ-001: Login
+""",
+            )
+            result = self.run_cli(
+                root,
+                "get",
+                str(path),
+                "--id",
+                "REQ-001",
+                "--output",
+                "json",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertIn(
+                "profile_reference_missing",
+                {item["code"] for item in result["diagnostics"]},
+            )
+
     def test_exact_lookup_ignores_prose_and_code_headings(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1860,6 +1962,36 @@ mdq:
             )
             self.assertEqual(preserved["count"], 1)
             self.assertTrue(self.run_cli(root, "verify", str(path))["valid"])
+
+    def test_optimize_does_not_rewrite_shared_profile_consumers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = self.document(
+                root,
+                """---
+mdq:
+  profile: project-governance/governed-document-v1
+---
+
+## REQ-001: Login
+""",
+            )
+            before = path.read_bytes()
+            result = self.run_cli(
+                root,
+                "optimize",
+                str(path),
+                "--id",
+                "REQ-001",
+                "--apply",
+                expected=3,
+            )
+            self.assertEqual(result["status"], "invalid")
+            self.assertEqual(path.read_bytes(), before)
+            self.assertIn(
+                "shared_profile_read_only",
+                {item["code"] for item in result["diagnostics"]},
+            )
 
     def test_optimize_respects_locked_query_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

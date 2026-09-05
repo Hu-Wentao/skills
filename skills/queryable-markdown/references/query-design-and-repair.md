@@ -14,6 +14,12 @@ Use this reference when creating or converting a contracted document, declaring 
 
 ## 1. Design the Access Contract First
 
+For project-governed documents that use the standard level-2 heading and label
+convention, prefer the versioned shared profile
+`project-governance/governed-document-v1`. It is a complete persistent contract,
+not a base to override. Use an inline contract when the document needs a
+custom identity, boundary, fields, named queries, or maintenance policy.
+
 Do not start with headings, tables, or markers. First identify:
 
 - the repeated domain entity;
@@ -114,7 +120,10 @@ Treat a zero-result exact query and a one-result giant body as different failure
 
 ## 6. Generate and Prove a Repair
 
-Run `optimize` without `--apply` first. A deterministic repair must:
+Run `optimize` without `--apply` first. A deterministic repair must not
+rewrite a document that consumes a shared profile; create and publish a new
+profile version when the shared extraction semantics need to change. For an
+inline profile, a deterministic repair must:
 
 1. derive from observable headings, labels, markers, table headers, column values, and declared fields;
 2. generalize to a stable pattern rather than embed the current literal value;

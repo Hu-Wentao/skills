@@ -17,7 +17,7 @@ Use this reference when creating, querying, editing, reviewing, verifying, optim
 
 ## 1. Document States, Operations, and Write Authority
 
-An `mdq` profile is a persistent query contract and optimization for repeated, deterministic extraction. Its absence does not make a Markdown document unqueryable: `query` and `search` may infer temporary selectors from Markdown structure, generic ID headings, and conservative ID labels. Temporary selectors live only in memory and never modify the Markdown or create a sidecar. Report `temporary_selectors_inferred` or `temporary_selectors_applied` so callers can distinguish this mode from a persisted contract.
+An `mdq` profile is a persistent query contract and optimization for repeated, deterministic extraction. It may be declared inline or by a versioned shared profile reference. Its absence does not make a Markdown document unqueryable: `query` and `search` may infer temporary selectors from Markdown structure, generic ID headings, and conservative ID labels. Temporary selectors live only in memory and never modify the Markdown or create a sidecar. Report `temporary_selectors_inferred` or `temporary_selectors_applied` so callers can distinguish this mode from a persisted contract.
 
 For non-generic conventions, callers may provide ephemeral `--record-level`, `--key-label`, `--key-pattern`, and `--key-group` arguments. `--record-level` and `--key-label` are repeatable. Apply the same regex length, group validation, and timeout limits as persistent profiles. When no safe record boundary can be recovered, return line-local evidence with `line_local_fallback`; do not fabricate a larger record.
 
@@ -44,7 +44,7 @@ A contracted document moves through these structural states:
 - **ordinary**: no declared profile; temporary read-only selectors may be inferred;
 - **valid**: one supported profile deterministically resolves its declared structure;
 - **drifted**: a valid profile exists but authored structure requires supported recovery or produces warnings;
-- **invalid**: a declared profile is conflicting, unsafe, malformed, or unsupported and cannot govern reliable edits.
+- **invalid**: a declared profile or shared profile reference is conflicting, unsafe, malformed, unavailable, or unsupported and cannot govern reliable edits.
 
 Creating a new contracted document writes the requested authored records and the smallest query-first contract that addresses them. Define the repeated entity, stable key, reusable queries, match semantics, bounded projection, and result-size limits before choosing the Markdown representation. Converting an existing document describes its current stable structure; it must not normalize or rewrite business content merely to simplify the profile.
 
@@ -69,7 +69,9 @@ A multi-file filesystem mutation cannot provide a portable global atomic commit.
 
 ## 3. Profile Placement
 
-Store exactly one profile in YAML Front Matter at byte zero. Delimit it with `---` and nest the profile under the top-level `mdq` key. For an existing complete YAML Front Matter block, merge the namespaced key:
+Store exactly one profile declaration in YAML Front Matter at byte zero. Delimit
+it with `---` and nest the declaration under the top-level `mdq` key. An inline
+profile keeps the complete extraction mapping:
 
 ```yaml
 ---
@@ -79,6 +81,24 @@ mdq:
   # Remaining profile keys
 ---
 ```
+
+A compatible shared profile may instead be selected by a versioned local skill
+asset:
+
+```yaml
+---
+mdq:
+  profile: project-governance/governed-document-v1
+---
+```
+
+A shared reference is the complete `mdq` declaration; it cannot contain inline
+overrides. The reference grammar is `namespace/name-vN`. The resolver maps it
+to an installed sibling skill's `assets/mdq-profiles/<name>.yaml`, verifies the
+profile ID and version metadata, and includes the resolved profile in the
+profile hash. It never accepts a document-supplied path, URL, import, command,
+or plugin. A missing, malformed, ambiguous, or mismatched shared reference is
+invalid and must not fall back to temporary selectors for writes.
 
 For documents without Front Matter, create the YAML block at byte zero, except
 for a project's `README.md`, which must remain an ordinary Markdown document.
@@ -388,6 +408,7 @@ Diagnostics should contain a stable `code`, `severity`, human-readable `message`
 - `query_max_matches_deprecated`
 - `raw_output_unavailable`
 - `query_contract_repair_planned`, `query_contract_repaired`, `query_contract_repair_ambiguous`, `query_contract_repair_unavailable`
+- `profile_reference_invalid`, `profile_reference_missing`, `shared_profile_read_only`
 - `query_contract_locked`, `query_contract_scope_denied`, `query_contract_key_loss`
 
 Warnings are valid output for intentionally incomplete documents. Exit nonzero only for command misuse, unreadable input, invalid profiles that block extraction, unsafe index paths, failed writes, or an explicitly requested raw projection that cannot safely be produced.
@@ -429,10 +450,10 @@ When `index` is absent, parse without writing. Resolve a relative index path aga
 - Limit profile regex length and apply regex only to bounded heading, field, or record text. Enforce a per-match timeout and return `regex_timeout` instead of continuing after the limit.
 - Reject YAML aliases and duplicate mapping keys so a small control-plane profile cannot expand into an unbounded object graph.
 - Never execute commands from a profile.
-- Never follow imports, URLs, symlinks, or dynamic plugin names declared by a document.
+- Never follow imports, URLs, symlinks, or dynamic plugin names declared by a document. Shared profile references are resolved only to the installed sibling skill asset and must remain within the skills root.
 - Collection writes reject explicit or matched Markdown symlinks. Collection reads do not follow matched symlink files.
 - Label-field mutation values are non-empty single-line text without surrounding whitespace. The v1 field result remains text, so writing `false` returns the string `"false"` rather than a typed YAML boolean.
 - Do not store prose embeddings or external service credentials in the profile or sidecar.
 - Keep the protocol versioned. New engines must preserve v1 extraction. Old engines fail closed on v2 profiles because they reject unknown versions and selectors; never downgrade or reinterpret a v2 table contract as v1.
 - Accept a positive legacy v2 `expect.max_matches` value for migration, ignore it during quality evaluation, and emit `query_max_matches_deprecated`. New or rewritten contracts must omit it; duplicate exact keys remain structural `duplicate_key` ambiguity rather than a query-quality budget.
-- An optimizer may replace only the source-located top-level `mdq:` block. Preserve every other Front Matter key and every authored body byte, compare the source hash immediately before apply, reparse the proposed bytes in memory, preserve existing structured keys, and refuse ambiguous candidate schemas.
+- An optimizer may replace only the source-located top-level `mdq:` block. Preserve every other Front Matter key and every authored body byte, compare the source hash immediately before apply, reparse the proposed bytes in memory, preserve existing structured keys, and refuse ambiguous candidate schemas. It must refuse to rewrite a shared profile reference; publish a new versioned skill asset instead.

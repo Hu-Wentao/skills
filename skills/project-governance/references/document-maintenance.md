@@ -39,7 +39,11 @@ in `INDEX.md` or another dedicated governed document.
 Require persistent `mdq` contracts only for project-governed requirements,
 baselines, plans, dependency evaluations, defects, archives, coverage,
 verification, and traceability documents. Preserve repository-owned governed
-roots when they differ from the defaults.
+roots when they differ from the defaults. For compatible level-2 heading
+records, use the versioned shared contract in [mdq-profile.md](mdq-profile.md)
+instead of copying the same selector and field block into every document.
+Profile-free ordinary Markdown queries remain read-only and must not acquire a
+contract merely because they were inspected.
 
 Also govern repository-embedded architecture and API contract artifacts even
 when their owning runtime convention places them outside `docs/`. The managed
@@ -103,7 +107,7 @@ For each governed document edit:
 1. resolve the exact record identity and source range;
 2. preserve authored bytes outside the authorized record or contract control
    region;
-3. apply the smallest contract, field, status, link, or lifecycle change;
+3. apply the smallest profile reference, contract, field, status, link, or lifecycle change;
 4. run `mdq validate`, `diagnose`, representative exact and negative queries;
 5. rerun collection scanning and the maintenance `verify` operation.
 

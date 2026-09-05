@@ -1,0 +1,26 @@
+x-profile-id: project-governance/governed-document-v1
+x-profile-version: 1
+version: 1
+records:
+  boundary:
+    levels: [2]
+  key:
+    pattern: '^(?P<id>[A-Za-z][A-Za-z0-9_.]*(?:-[A-Za-z0-9_.]+)*-[0-9]+)(?:\s+(?:—|–|-)\s+|[：:]\s*|\s+)(?P<title>.+)$'
+    group: id
+fields:
+  title:
+    source: heading
+    group: title
+  status:
+    source: label
+    labels: [状态, Status]
+  review_level:
+    source: label
+    labels: [审查级别, Review level]
+  source:
+    source: label
+    labels: [来源, Source]
+  raw:
+    source: body
+tolerance:
+  incomplete: true

@@ -19,7 +19,7 @@ authorized. Never repair a contract merely to complete an unrelated content edit
 
 Before editing, require:
 
-- a valid contract, or accepted drift that does not affect the target;
+- a valid inline or resolved shared contract, or accepted drift that does not affect the target;
 - one exact, case-sensitive structured target for update, rename, or delete;
 - no exact match for a proposed new identity;
 - a source-located bounded range;
@@ -52,7 +52,7 @@ Patch source bytes directly. Never use a generic Markdown serializer.
 | Add a record | Follow an explicit ordering rule or neighboring structure; copy layout, never business values. |
 | Rename identity | Change the identity source and only authorized, semantically unambiguous references. |
 | Delete a record | Delete exactly the record and its associated marker; preserve neighboring blank-line style. |
-| Change contract | Patch only the top-level `mdq` control block unless separately authorized. |
+| Change contract | Patch only the top-level `mdq` control block unless separately authorized. A shared profile reference is migrated by selecting a new published version; never patch the shared asset through a consumer document. |
 
 A `regex` field is an extractor, not a write address. Patch it only when the
 containing record and exact authored span are independently clear. Never invent
