@@ -1,8 +1,0 @@
-{
-  "name": "@fixture/hybrid",
-  "type": "module",
-  "exports": {
-    "./server": "./src/server.js",
-    "./client": "./src/client.js"
-  }
-}

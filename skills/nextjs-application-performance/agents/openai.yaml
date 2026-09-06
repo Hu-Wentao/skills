@@ -1,4 +1,0 @@
-interface:
-  display_name: "Next.js Application Performance"
-  short_description: "Design, measure, and optimize Next.js performance."
-  default_prompt: "Use $nextjs-application-performance to measure or improve this Next.js application's performance."

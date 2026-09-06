@@ -1,7 +1,0 @@
-{
-  "name": "@fixture/server",
-  "type": "module",
-  "exports": {
-    ".": "./src/index.js"
-  }
-}
