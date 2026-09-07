@@ -399,6 +399,16 @@ dedicated ingress instance or obtain a separately governed host operation.
 Record the failed phase, fixed identity, target, and whether source bytes must
 change before choosing the next operation:
 
+- Preserve the executor's stable error code. When the contract emits a safe
+  classification, keep category, phase, confirmation level, retryability,
+  minimum next operation, and evidence reference together. Never copy raw
+  exceptions, stdout/stderr, HTTP bodies, prompt/response content, paths, or
+  credentials into the classification.
+- Treat configuration/environment, identity/evidence conflict, transient
+  external failure, credential rejection, timeout, source defect, and external
+  result unknown as different decisions. Missing evidence remains `unknown`;
+  do not infer a credential or transient cause from a status code or substring.
+
 1. Determine whether a stable tag exists and whether any artifact manifest was
    persisted for the exact candidate and target.
 2. For a pre-tag artifact build or freeze failure, inspect the resolved task
@@ -434,6 +444,15 @@ must declare attempt limits, backoff, and the terminal state. A request to
 continue until verified keeps already-authorized retry or repair operations
 active; it does not convert repeated deterministic failures into transient
 ones or broaden the mutation scope.
+
+If an external write may have completed but its result was not observed, read
+back the exact tag, manifest, migration, target runtime, pointer, or routing
+generation owned by that operation before retrying. If the effect and safe
+resume point remain unprovable, report the result as unresolved and do not
+replay the mutation. Provider inference with unknown usage or terminal state is
+not automatically retried. Keep concrete retry counts and delays in the project
+contract or executor configuration; do not duplicate those values in this
+shared skill.
 
 ## Diagnose and Qualify Before Publishing
 
@@ -698,6 +717,20 @@ verification evidence, safe log paths, preserved failure worktrees, and every
 operation that remains unauthorized or incomplete. Never report secrets,
 authorization headers, request or response bodies, or private captured
 payloads.
+
+Separate runtime acceptance from formal release completion. Runtime acceptance
+must name the exact running identity, required health/security checks,
+credential semantic readiness, and product-path Canary evidence. Formal release
+completion additionally requires every immutable identity, deployment pointer,
+qualification, and promotion/readback fact required by the selected project
+contract. A runtime recovery or Verify may be successful while formal release
+completion remains pending; never lower the fixed acceptance boundary after a
+failure or manufacture missing receipts, pointers, tags, or promotion facts.
+
+`completedStages`, `failedStage`, and `nextOperation` are reporting projections,
+not checkpoint authority. Resume by re-reading the project-owned Git, Registry,
+manifest, receipt, target runtime, and routing facts for the same immutable
+identity.
 
 After every terminal deployment attempt, make the final user-visible handoff
 show these fields explicitly rather than leaving them only in progress events

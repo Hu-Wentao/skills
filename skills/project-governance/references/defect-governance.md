@@ -17,6 +17,13 @@ Use this workflow for one defect diagnosis, an implementation-ready repair plan,
 6. Classify the result as product defect, expected configuration or policy result, external dependency failure, invalid or damaged data, infrastructure or test failure, or insufficient observability.
 7. Claim a product root cause only when evidence explains both the observed behavior and why the relevant code path produced it.
 
+Keep observation, inference, and confirmation visibly separate throughout the
+evidence chain. When a comparable success path exists, compare its inputs,
+decision points, owner state, timing boundary, and terminal facts with the
+failure path before attributing causality. A changed symptom after an
+intervention is evidence about that intervention; it does not retroactively
+confirm every earlier hypothesis.
+
 ## Calibrate Repair and Verification
 
 Classify the repair by the highest applicable impact and risk tier before
@@ -90,6 +97,12 @@ to the selected tier and the layer that owns the invariant.
 3. For confirmed recurrence, compare a leaf patch with responsibility correction, delegation, or removal. Reject the leaf patch when it leaves the same failure generator active.
 4. Identify exact components, data paths, interfaces, tests, compatibility effects, security boundaries, and validation steps.
 5. Surface unresolved decisions that materially change product behavior before implementation.
+
+A temporary operational recovery proves only the bounded state it observed.
+After the durable repair, rerun the normal product or governed execution path
+that originally failed; a direct upstream diagnostic, manual state reset,
+container health check, or longer one-off timeout cannot substitute for that
+normal-path verification.
 
 ## Maintain Repair History
 
