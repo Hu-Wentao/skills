@@ -36,6 +36,8 @@ Read [authoring.md](references/authoring.md) for frontmatter, default paths, str
 
 ## Deliver by Ownership
 
+For an authorized revision, commit the completed change immediately after validation. If the revision is made directly on `main`, push that commit to `origin/main` immediately and verify that the local and remote heads match. Follow an explicit branch or pull-request workflow when the project requires another delivery path; do not leave a completed `main` commit only locally.
+
 ### Shared source or lock-managed installation
 
 A request to revise, improve, update, or “修订” authorizes the complete revision-and-publication transaction unless the user explicitly says local-only, no push, or no update. Before editing, state:

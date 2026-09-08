@@ -72,6 +72,8 @@ An imperative release-and-deploy request with one named target activates the nor
 
 Defect diagnosis remains read-only until implementation is requested. Classify repair risk by observable impact and crossed boundaries, then collect only the evidence required by that tier.
 
+For authorized changes, commit after the required checks. On direct `main`, immediately push to `origin/main` and verify matching heads; follow explicit branch or pull-request workflows and never leave a completed `main` commit local-only.
+
 ## Report
 
 Run the smallest contracted checks first. Report authoritative files changed, contract states, exact evidence, semantic decisions still open, verification gaps, compatibility, and external operations intentionally untouched. Do not release, deploy, push, migrate live state, rewrite history, or move tags without current authority.
