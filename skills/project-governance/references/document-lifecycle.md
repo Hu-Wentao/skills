@@ -24,7 +24,7 @@ Store rules that are currently effective and expected to constrain future implem
 
 ### Plans
 
-Store target behavior, current gaps, decisions, implementation phases, compatibility strategy, completion conditions, and unresolved questions. Declare status such as `Planned` or `Partially implemented`. Never present a target as current fact.
+Store target behavior, current gaps, decisions, implementation phases, compatibility strategy, completion conditions, and unresolved questions. Declare one of these plan statuses: `planned`, `partial`, `implemented`, `verified`, or `archived`. Use `implemented` when code has landed but testing or acceptance evidence is incomplete; use `verified` only when the implementation has sufficient test or acceptance evidence. Never present a target as current fact.
 
 ### Archive
 

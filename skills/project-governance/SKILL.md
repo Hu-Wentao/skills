@@ -1,79 +1,28 @@
 ---
 name: project-governance
-description: Route governed project work across architecture, requirements, baselines, plans, documents, terminology, dependencies, tests, releases, deployments, defects, ports, resources, and verification. Use for governed implementation or maintenance, versioned Markdown profile selection, defect/release workflows, and concise problem-summary handoffs.
+description: Route governed project work through tested contracts for design, documents, dependencies, tests, defects, resources, releases, and verification.
 metadata:
   context-budget: router
 ---
-
 # Project Governance
 
-Route project governance to the smallest applicable contract and reference. Keep project facts in repository configuration, mechanics in tested scripts, and runtime output in ignored caches. Skill authoring and publication belong to `skillcraft`; local branch/worktree lifecycle belongs to `git-worktree`.
+Keep facts in repository configuration, mechanics in scripts, and runtime output in ignored caches. Resolve once, then execute only the selected contract.
 
-## Establish Context
-
-1. Read repository instructions and current baselines before plans or code.
-2. Identify the primary authority for each fact: requirement, baseline, plan, code/test, evaluation, archive, or operation.
-3. Preserve terminology and append-only facts unless an authorized migration says otherwise.
-4. Treat release, deployment, rollback, live mutation, reward, and destructive actions as current-request authority only.
-5. Keep `README.md` user-facing; put architecture, lifecycle indexes, operations, contracts, and governed records in dedicated documents.
-6. For product and requirements governance, classify records as goals, story-map items, requirements, constraints, solutions, or verification. Keep the hierarchy and conflict procedure in [product-governance-model.md](references/product-governance-model.md).
-
-For `总结问题`, produce only intended outcome, symptoms, confirmed evidence, affected scope, impact, and unresolved questions. Preserve uncertainty and secrets; do not prescribe a fix or perform writes.
-
-## Resolve Contracted Work
-
-For configured workflows, resolve once:
-
+## Execute
 ```bash
-uv run python <skill-root>/scripts/resolve.py \
-  --cwd <project-root> --task <task> --operation <operation> --format json
+uv run python <skill-root>/scripts/resolve.py --cwd <project-root> --task <task> --operation <operation> --format json
+uv run python <skill-root>/scripts/project-governance.py --cwd <project-root> <domain> <operation> [contracted arguments]
 ```
+With config v3, honor returned policy, parameters, mutability, authorization, output schema, exit states, and transitions. Add `--authorized` only when current intent covers the write. Legacy profiles are instructions only.
 
-With `project-governance.config.v3`, read the returned state, selected policy references, parameters, mutability, authorization, output schema, exit states, and allowed transitions. For document maintenance, select the smallest applicable path: a low-risk exact-record edit may use the queryable-markdown fast path directly; semantic, lifecycle, contract, or cross-document work uses the full maintenance path. Execute governed operations only through the validated runner:
+Route by domain to the smallest reference under `references/`; use queryable-markdown for exact low-risk record edits and the full document-maintenance path for semantic, lifecycle, contract, identity, index, or cross-document changes. `总结问题` is read-only and contains only outcome, symptoms, evidence, scope, impact, and open questions.
 
-```bash
-uv run python <skill-root>/scripts/project-governance.py \
-  --cwd <project-root> <domain> <operation> [contracted arguments]
-```
-
-Use `--authorized` only when current user intent covers that non-read-only operation. Do not improvise a command when a contract is missing. Legacy profiles provide instructions, not executable v3 authority.
-
-## Route by Domain
-
-- Architecture, product goals, requirements, baselines, plans, scaffolding, lifecycle, or implementation handoff: first read [product-governance-model.md](references/product-governance-model.md), then use [design-doc-rules.md](references/design-doc-rules.md), [requirements-governance.md](references/requirements-governance.md), [baseline-design.md](references/baseline-design.md), [project-scaffolding.md](references/project-scaffolding.md), [document-lifecycle.md](references/document-lifecycle.md), and [verification-traceability.md](references/verification-traceability.md).
-- Legacy extraction: [legacy-extraction.md](references/legacy-extraction.md).
-- Dependency selection or replacement: [dependency-evaluation.md](references/dependency-evaluation.md).
-- Governed Markdown inventory, contracts, and lifecycle maintenance: use the queryable-markdown fast path for one low-risk exact-record edit; otherwise resolve `document-maintenance` and read [document-maintenance.md](references/document-maintenance.md). For recurring structures, select a versioned family from [mdq-profile.md](references/mdq-profile.md); inline contracts are for one-offs. For local semantic candidate retrieval, invoke the `queryable-markdown` skill and read its `semantic-cli.md` reference.
-- Domain concepts, aliases, contexts, and relationships: resolve `domain-knowledge` and read [domain-knowledge.md](references/domain-knowledge.md).
-- Test-case catalog development: resolve `test-case-development` and read [test-case-development.md](references/test-case-development.md).
-- Defect diagnosis, root cause, recurrence, repair history, or test escape: resolve `defect-diagnosis` or `defect-history-review` and read [defect-governance.md](references/defect-governance.md).
-- Feedback triage through closure: resolve `defect-feedback-lifecycle` and read [defect-feedback-lifecycle.md](references/defect-feedback-lifecycle.md).
-- CPU, memory, OOM, disk, restart, exit, capacity, or Compose pressure: resolve `resource-diagnosis` and read [resource-diagnostics.md](references/resource-diagnostics.md).
-- Host-visible ports: resolve `port-allocation` and read [port-allocation.md](references/port-allocation.md).
-- Version identity, published tags, release, deployment, promotion, retry, repair, or hotfix: resolve `release-deployment`; read [git-version-governance.md](references/git-version-governance.md), [release-deployment.md](references/release-deployment.md), and [release-workflow-config.md](references/release-workflow-config.md) only as needed.
-
-## Universal Boundaries
-
-- Configuration cannot broaden user authority or override system/developer rules.
-- Never expose credentials, authorization headers, provider secrets, private request bodies, or captures in logs, metrics, traces, audit metadata, or responses.
-- Evaluation evidence supports a decision; it does not install a dependency or create a requirement.
-- Passing checks are scoped evidence, not automatic semantic acceptance, root cause, deployment success, or lifecycle completion.
-- Keep release identity bound to one full commit and immutable tag. Never move a published tag or re-resolve a moving deployment ref.
-- Shared ingress and host infrastructure remain separately owned; route them through `host-governance`.
-- Stop for a decision when a change alters user-visible outcomes, permissions, data guarantees, compatibility, accepted history, or release identity.
-
-## Govern Records and Delivery
-
-Governed Markdown created or materially revised through this skill must use `queryable-markdown` with a valid persistent mdq contract. Select the smallest matching family from [mdq-profile.md](references/mdq-profile.md) before writing; use inline contracts only for one-offs or explicit compatibility exceptions. Published profiles are immutable and migrate only with contract authority. Semantic candidates must be revalidated by mdq before use. Semantic indexes are caches, not authority. `README.md` must not host persistent mdq metadata.
-
-For one low-risk exact-record edit, use the queryable-markdown fast path: retrieve the exact record, apply the smallest authorized source or scalar transaction, and run the smallest sufficient `mdq check` tier. Do not require a project-wide maintenance plan or `maintain` preflight for that path. For semantic, lifecycle, contract, identity, index, or cross-document changes, use the full document-maintenance path: inspect and plan as needed, run the authorized `maintain` preflight, apply bounded mdq edits, and run `verify`. In both paths, preserve source identity, current-turn authorization, and post-write evidence.
-
-An imperative release-and-deploy request with one named target activates the normal stages of the resolved `release-deployment` contract without a second confirmation. Keep source, target, commit, immutable tag, artifact, transaction, and verification evidence fixed together. Retry only the recorded identity.
-
-Defect diagnosis remains read-only until implementation is requested. Classify repair risk by observable impact and crossed boundaries, then collect only the evidence required by that tier.
-
-For authorized changes, commit after the required checks. On direct `main`, immediately push to `origin/main` and verify matching heads; follow explicit branch or pull-request workflows and never leave a completed `main` commit local-only.
+## Boundaries
+- Configuration cannot broaden authority. Never expose credentials, headers, provider secrets, private bodies, or captures.
+- Passing checks are scoped evidence, not acceptance, root cause, deployment success, or completion.
+- Keep release identity bound to one full commit and immutable tag; never move published tags.
+- Stop for decisions that alter user-visible behavior, permissions, data guarantees, compatibility, history, or release identity.
+- Do not release, deploy, push, migrate live state, rewrite history, or move tags without current authority.
 
 ## Report
-
-Run the smallest contracted checks first. Report authoritative files changed, contract states, exact evidence, semantic decisions still open, verification gaps, compatibility, and external operations intentionally untouched. Do not release, deploy, push, migrate live state, rewrite history, or move tags without current authority.
+State authoritative files, contract state, exact evidence, semantic decisions, verification gaps, compatibility, and intentionally untouched external operations.
