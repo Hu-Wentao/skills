@@ -55,7 +55,7 @@ uv run python <sync-skill-repo-root>/scripts/sync_skill_repo.py publish-batch \
   [--expected-upstream-head <sha> --expected-source-head <sha>]
 ```
 
-The runner owns context-budget validation, skill tests, exact-path staging, one commit and push, per-name `pnpm dlx skills update <name> -y` from a neutral cwd, installation/lock verification, and the structured receipt. Exact head arguments authorize only an already reviewed ahead range, such as a worktree merge; never replace them with a broad “allow unpushed” decision.
+The runner owns context-budget validation, skill tests, exact-path staging, one commit and push, per-name `skills update <name>` from a neutral cwd, installation/lock verification, and the structured receipt. Exact head arguments authorize only an already reviewed ahead range, such as a worktree merge; never replace them with a broad “allow unpushed” decision.
 
 Do not report completion unless the receipt has `completed: true`. A successful push followed by failed update or verification is incomplete.
 
