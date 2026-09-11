@@ -1,6 +1,6 @@
 # Local Git Safety
 
-All mutations must bind the reviewed source and target to exact heads. Refuse dirty worktrees, unresolved operations, changed heads, locked or prunable registrations, and automatic-merge blocks.
+All mutations must bind the reviewed source and target to exact heads. Refuse dirty source worktrees, non-document or overlapping dirty target changes, unresolved operations, changed heads, locked or prunable registrations, and automatic-merge blocks. Non-overlapping uncommitted paths under `docs/` are an explicit merge-target exception.
 
 `refs/agents/completed/<branch>` records exact local completion. `refs/agents/no-auto-merge/<branch>` prevents skill-managed merge and temporary delivery until explicitly removed with its expected marked head. Do not substitute ordinary tags.
 

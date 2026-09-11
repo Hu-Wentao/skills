@@ -2,7 +2,7 @@
 
 Inspect `owner-status` before editing an eligible non-main worktree. Treat a pre-existing task worktree as owned when the current implementation request clearly names its plan or specification.
 
-After authorized changes are committed, the source worktree is clean, and source checks pass, call `owner-finish --validated-source-head <sha>`.
+After authorized changes are committed, the source worktree is clean, and source checks pass, call `owner-finish --validated-source-head <sha>`. The recorded target may be dirty only when every uncommitted path is under `docs/` and none overlaps a path changed by the source branch.
 
 - `user_owned` creates or confirms the completion ref and stops at handoff. It never merges or removes the worktree.
 - `agent_temporary` creates or confirms completion, merges the exact source head into its recorded local target when safe, and returns `target_validation_required`.

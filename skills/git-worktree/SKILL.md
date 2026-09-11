@@ -17,7 +17,7 @@ uv run python <skill-root>/scripts/git_worktree.py --repo <worktree> owner-finis
 For maintenance, run `maintenance-audit --target <branch> --all`, review only `review_required`, then submit evidence-backed decisions to `maintenance-run`.
 
 ## Safety
-- Never claim completion for dirty, detached, conflicted, moved, unvalidated, main, or blocked state.
+- Never claim completion for dirty source, detached, conflicted, moved, unvalidated, main, or blocked state. A merge target may contain only non-overlapping, uncommitted `docs/` drafts.
 - Re-audit after rescue, merge, deletion, movement, or state changes; validate the target before removing a source.
 - Protect completion and no-auto-merge refs. Never push, alter remote refs, rebase, squash, stash, force-remove, or change normal tags.
 - Stage or commit another owner’s changes only with that owner’s authority.
