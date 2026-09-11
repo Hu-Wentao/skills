@@ -195,6 +195,26 @@ class GitWorktreeCliTests(unittest.TestCase):
             run(["git", "branch", "--show-current"], self.repo).stdout.strip(), "main"
         )
 
+    def test_merge_allows_non_overlapping_dirty_docs_in_target(self) -> None:
+        worktree = self.create("docs-safe-target")
+        self.commit_file(worktree, "feature.txt", "feature\n")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "draft.md").write_text("draft\n")
+
+        result = json.loads(self.cli("merge", "--source", "docs-safe-target").stdout)
+        self.assertEqual(result["source"], "docs-safe-target")
+        self.assertEqual((self.repo / "docs" / "draft.md").read_text(), "draft\n")
+        self.assertTrue((self.repo / "feature.txt").exists())
+
+    def test_merge_rejects_dirty_non_document_changes_in_target(self) -> None:
+        worktree = self.create("dirty-target")
+        self.commit_file(worktree, "feature.txt", "feature\n")
+        (self.repo / "draft.txt").write_text("draft\n")
+
+        result = self.cli("merge", "--source", "dirty-target", check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("non-document", result.stderr)
+
     def test_no_auto_merge_ref_blocks_until_explicitly_removed(self) -> None:
         worktree = self.create("feat/manual-integration")
         self.commit_file(worktree, "first.txt", "first\n")

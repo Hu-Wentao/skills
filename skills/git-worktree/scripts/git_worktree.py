@@ -533,6 +533,48 @@ def ensure_affected_worktrees_clean(repo: Path, *branches: str) -> None:
             )
 
 
+def ensure_merge_target_worktree_safe(repo: Path, source: str, target: str) -> None:
+    """Allow only non-overlapping documentation drafts in the merge target."""
+    target_worktrees = affected_worktrees(repo, target)
+    if len(target_worktrees) != 1:
+        raise WorkflowError(
+            f"Target branch '{target}' must be checked out in exactly one registered worktree."
+        )
+    target_worktree = target_worktrees[0]
+    target_path = Path(target_worktree.path)
+    if not target_path.exists() or target_worktree.prunable:
+        raise WorkflowError(f"Target branch '{target}' has a missing or prunable worktree: {target_path}")
+    ensure_no_operation(target_path)
+    changes = status_lines(target_path)
+    if not changes:
+        return
+    dirty_paths = [status_entry_path(entry) for entry in changes]
+    non_document_paths = [path for path in dirty_paths if not path.startswith("docs/")]
+    if non_document_paths:
+        rendered = "\n".join(changes)
+        raise WorkflowError(
+            f"Branch '{target}' is dirty with non-document changes in {target_path}:\n{rendered}"
+        )
+    source_paths = {
+        line.strip()
+        for line in run_git(repo, "diff", "--name-only", f"{target}...{source}").stdout.splitlines()
+        if line.strip()
+    }
+    overlap = sorted(set(dirty_paths) & source_paths)
+    if overlap:
+        raise WorkflowError(
+            f"Branch '{target}' has documentation drafts overlapping source paths: "
+            + ", ".join(overlap)
+        )
+
+
+def status_entry_path(entry: str) -> str:
+    payload = entry[3:] if len(entry) >= 3 else ""
+    if " -> " in payload:
+        payload = payload.rsplit(" -> ", 1)[-1]
+    return payload
+
+
 def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
@@ -1328,7 +1370,8 @@ def command_owner_finish(repo: Path, args: argparse.Namespace) -> None:
         )
     target_worktree = target_worktrees[0]
     target_path = Path(target_worktree.path)
-    ensure_affected_worktrees_clean(repo, branch, target)
+    ensure_affected_worktrees_clean(repo, branch)
+    ensure_merge_target_worktree_safe(repo, branch, target)
     target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
     source_contained = (
         run_git(
@@ -2184,7 +2227,8 @@ def command_merge(repo: Path, args: argparse.Namespace) -> dict[str, object]:
     verify_expected_head(target_head, args.expected_target_head, f"Target '{target}'")
     ensure_no_operation(repo)
 
-    ensure_affected_worktrees_clean(repo, source, target)
+    ensure_affected_worktrees_clean(repo, source)
+    ensure_merge_target_worktree_safe(repo, source, target)
     result = run_git(repo, "merge", "--no-ff", "--no-edit", source, check=False)
     if result.returncode != 0:
         conflicts = run_git(
