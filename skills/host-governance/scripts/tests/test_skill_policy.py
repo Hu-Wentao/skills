@@ -28,6 +28,7 @@ class SkillPolicyTest(unittest.TestCase):
         expected = {
             "context.md", "control.md", "project_config.md",
             "authorization-and-safety.md", "procedure-productization.md",
+            "three-layer.md",
             "server-bootstrap.md", "docker-install.md",
             "docker-storage-maintenance.md", "github-actions-runner.md",
             "jenkins.md", "postgresql.md", "tailscale.md", "caddy.md",
@@ -90,6 +91,14 @@ class SkillPolicyTest(unittest.TestCase):
         self.assertIn("resolve_environment(operation)", runner)
         self.assertIn("env=environment", runner)
         self.assertNotIn("print(environment)", runner)
+
+    def test_three_layer_route_keeps_manual_path_bounded(self) -> None:
+        self.assertIn("Use the smallest of three layers", self.skill)
+        three_layer = self.references["three-layer.md"]
+        self.assertIn("one-time manual", three_layer)
+        self.assertIn("user explicitly authorizes", three_layer)
+        self.assertIn("never becomes an arbitrary-command capability", three_layer)
+        self.assertIn("Do not inspect unrelated governance configuration", three_layer)
 
 
 if __name__ == "__main__":

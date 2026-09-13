@@ -2,7 +2,9 @@
 
 Use these instructions when the consuming repository has no project-specific
 profile. They define workflow and safety, not permission to modify a host or
-provider.
+provider. Route the decision through [three-layer.md](three-layer.md): a
+missing contract may use the one-time manual layer only after the exact SSH
+target and current user authorization are established.
 
 ## Locate the control repository
 
@@ -70,4 +72,7 @@ private application health check; project facts may require a different order.
   and verify at least one forbidden path remains denied.
 
 Do not commit, push, deploy, reload, save policy, mutate DNS, or alter a remote
-system merely because a profile declares a command.
+system merely because a profile declares a command. For an explicitly
+authorized one-time SSH action without a matching contract, execute only the
+bounded action already in scope; do not create or repair governance files as a
+prerequisite and do not turn the command into a reusable controller.

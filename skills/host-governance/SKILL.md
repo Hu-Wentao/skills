@@ -6,14 +6,34 @@ metadata:
 ---
 # Host Governance
 
-Use the authoritative host repository and resolve every operation before execution. Repository context is evidence, never live state. See [context.md](references/context.md).
+Use the smallest of three layers for the current task. Repository context is
+evidence, never live state. See [three-layer.md](references/three-layer.md).
+
+1. **Facts** — locate an exact device, service, or resource through the
+   authoritative [context contract](references/context.md). Do not infer an
+   alias, address, port, or owner from a nearby name.
+2. **Contract** — when an exact project operation exists, resolve it and run
+   only the validated controller. This remains the default for repeatable or
+   shared changes.
+3. **One-time manual** — when no matching contract exists, the exact target
+   and SSH route are already established, and the user explicitly authorizes
+   the current operation, use a bounded SSH command directly. Do not search
+   for or create configuration just to satisfy the contract path. This is a
+   single round and never becomes an arbitrary-command capability.
 
 ## Execute
 ```bash
 uv run python <skill-root>/scripts/resolve.py --cwd <project-root> --task <task> --operation <operation> --format json
 uv run python <skill-root>/scripts/host-governance.py --cwd <project-root> control <operation> [contracted arguments]
 ```
-Read returned policy references and use the runner only. See [project_config.md](references/project_config.md) and [authorization-and-safety.md](references/authorization-and-safety.md). Add `--authorized` only for a mutating operation covered by the current request. Read `references/project_config.md` before profile changes.
+Read returned policy references and use the runner only for the contract layer.
+See [project_config.md](references/project_config.md) and
+[authorization-and-safety.md](references/authorization-and-safety.md). Add
+`--authorized` only for a mutating operation covered by the current request.
+Read `references/project_config.md` before profile changes. The one-time
+manual layer does not require a project contract, but it still requires exact
+target validation, a bounded command, recovery evidence, and post-change
+verification.
 
 Route product details to [control.md](references/control.md), [procedure-productization.md](references/procedure-productization.md), [server-bootstrap.md](references/server-bootstrap.md), [docker-install.md](references/docker-install.md), [docker-storage-maintenance.md](references/docker-storage-maintenance.md), [github-actions-runner.md](references/github-actions-runner.md), [jenkins.md](references/jenkins.md), [postgresql.md](references/postgresql.md), [tailscale.md](references/tailscale.md), [caddy.md](references/caddy.md), [caddy-tailnet-private-ingress.md](references/caddy-tailnet-private-ingress.md), [cloudflare.md](references/cloudflare.md), and [cloudflare-tunnel.md](references/cloudflare-tunnel.md).
 

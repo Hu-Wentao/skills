@@ -12,6 +12,13 @@ When the current user explicitly states `授权手动进行紧急操作` or an u
 
 Limit the round to the exact target, actions, and material effects in the request and accepted plan. Prefer an available governed operation. Never turn the exception into a persistent arbitrary-command capability. Before mutation, inspect exact state, establish recovery, preserve secret-safe evidence, verify each effect, and report every manual change. A later turn or new task requires the authorization again.
 
+If no matching project contract exists, this one-round exception may use the
+three-layer manual route after the exact SSH alias, jump route, and affected
+path are already established. Do not resolve unrelated configuration or create
+a controller to make the exception look contracted. The command must remain
+bounded to the authorized target and action, and the same snapshot, recovery,
+and verification requirements still apply.
+
 ## Conversation-scoped SSH
 
 When the user states `本次对话允许执行SSH读写` or equivalent, treat it as standing SSH authorization for the current conversation, task, and established targets. Do not request per-command or per-turn SSH approval. Preserve contracts, alias and target validation, locks, secret handling, verification, and rollback requirements.
