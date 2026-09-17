@@ -1,4 +1,4 @@
 interface:
   display_name: "Landing Creator"
-  short_description: "先确认页面内容与证据，再将内容文档实现为 Astro 落地页"
-  default_prompt: "使用 $landing-creator 为这个产品规划落地页；先与我确认内容并形成文档，再用 Astro 实现。"
+  short_description: "创建或修订 Landing：内容确认、已有页面扫描与实现验收"
+  default_prompt: "使用 $landing-creator 创建或修订 Landing：新建先确认内容再用 Astro 制作；已有页面先扫描并提出修订方案。"

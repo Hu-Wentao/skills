@@ -1,18 +1,24 @@
 ---
 name: landing-creator
 description: >-
-  Plan and build landing pages with Astro through a 13-step evidence-aware design process. Use for product homepages, campaign or launch pages, waitlists, and landing-page redesigns that need user-confirmed content before implementation. Also use for landing 内容规划、落地页文案与设计。
+  Create or revise landing pages with a 13-step evidence-aware workflow. Use for new Astro landings, scans and audits of existing pages, content/CTA reviews, and confirmed revisions. Confirm new-page content before building; preserve the existing stack during revisions.
 ---
 
 # Landing Creator
 
-先规划内容并与用户确认，再保存内容文档，最后用 Astro 制作页面。13 步是设计工作，不是 13 个页面区块。
+提供「创建 Landing」与「修订 Landing」两个入口。13 步是设计工作，不是 13 个页面区块。
+
+## 选择入口
+
+- **创建 Landing**：从零规划页面。走下方访谈、确认、文档与 Astro 制作流程。
+- **修订 Landing**：扫描、审查或修改已有页时，先读 [修订流程](references/revision-workflow.md)。扫描交付问题与方案；按已有授权实施改动。保留现有技术栈，不默认迁移 Astro。
+- 结合本轮意图选择入口；已有页明确要求重做时可走创建流程，并先记录旧版约束。
 
 ## 读取上下文
 
 - 遵守用户指定的仓库、目录、语言和任务范围；检查项目指令、现有页面、产品文档、实际能力、品牌素材与构建命令。使用当前环境可用工具，不假定某个 MCP 必然存在。
 - 阅读 [13 步流程](references/design-process.md)，逐项检查问题、交付物和标准。已有文档与确认记录可复用；遇到冲突先核实。
-- 仅请求规划时交付内容文档；已有确认版时核对版本与变更，再进入实施；新建页面走完整流程。
+- 仅请求规划时交付内容文档；已有确认版时核对版本与变更，再进入实施。修订扫描按修订流程交付，不先要求补齐完整新建问卷。
 
 ## 访谈与确认
 

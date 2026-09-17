@@ -16,7 +16,7 @@
 
 ### Web & Landing
 
-- [`landing-creator`](skills/landing-creator)：按 13 步流程规划并确认页面内容，形成文档后用 Astro 制作 landing；区分产品证据、设计决定和待验证假设。
+- [`landing-creator`](skills/landing-creator)：创建与修订 landing 的两个入口：确认内容后用 Astro 新建，或扫描现有页并按确认方案修订；区分事实、假设与设计决定。
 
 ### Flutter & Dart
 
