@@ -14,6 +14,10 @@
 - [`skillcraft`](skills/skillcraft)：创建、修订、验证和发布 Skill 的唯一公开入口。共享 Skill 修订默认通过确定性 runner 完成测试、精确提交、推送、逐名 update 与安装校验；项目私有 Skill 留在所属项目 Git 流程。
 - [`sync-skill-repo`](skills/sync-skill-repo)：`disable-model-invocation` 的隐藏兼容后端，仅供 `skillcraft` runner 或显式兼容调用。
 
+### Web & Landing
+
+- [`landing-creator`](skills/landing-creator)：按 13 步流程规划并确认页面内容，形成文档后用 Astro 制作 landing；区分产品证据、设计决定和待验证假设。
+
 ### Flutter & Dart
 
 - [`create-dart-bg-activity`](skills/create-dart-bg-activity)：创建由 launchd 管理的 Dart macOS 后台进程。

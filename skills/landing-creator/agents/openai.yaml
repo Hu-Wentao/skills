@@ -1,0 +1,4 @@
+interface:
+  display_name: "Landing Creator"
+  short_description: "先确认页面内容与证据，再将内容文档实现为 Astro 落地页"
+  default_prompt: "使用 $landing-creator 为这个产品规划落地页；先与我确认内容并形成文档，再用 Astro 实现。"

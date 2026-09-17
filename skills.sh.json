@@ -24,6 +24,13 @@
       ]
     },
     {
+      "title": "Web & Landing",
+      "description": "Evidence-aware landing-page planning, confirmed content, and Astro implementation.",
+      "skills": [
+        "landing-creator"
+      ]
+    },
+    {
       "title": "Flutter & Dart",
       "description": "Skills for Flutter, Dart tooling, localization, and deployment workflows.",
       "skills": [
