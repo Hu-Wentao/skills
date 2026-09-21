@@ -133,6 +133,13 @@ def normalize_source(raw: str) -> str:
     return value.lower()
 
 
+def _matches_host(remote_url: str, host: str) -> bool:
+    expected = host.lower().strip().rstrip("/")
+    if not expected:
+        raise SyncError("Host allowlist entry cannot be empty")
+    return normalize_source(remote_url).startswith(f"{expected}/")
+
+
 def empty_registry() -> dict[str, object]:
     return {"schema": SCHEMA, "repositories": []}
 
@@ -384,7 +391,11 @@ def resolve_target(
 
 
 def _source_context_in_repo(
-    repo: Path, skill_dir: Path, *, require_tracked: bool
+    repo: Path,
+    skill_dir: Path,
+    *,
+    require_tracked: bool,
+    allowed_host: str = "github.com",
 ) -> SourceContext:
     repository = repo.expanduser().resolve()
     skill = skill_dir.expanduser().resolve()
@@ -402,9 +413,9 @@ def _source_context_in_repo(
     if require_tracked and not tracked:
         raise SyncError(f"Skill is not tracked in its source repository: {skill}")
     origin = run_git(repository, "remote", "get-url", "origin", check=False)
-    if not origin or not normalize_source(origin).startswith("github.com/"):
+    if not origin or not _matches_host(origin, allowed_host):
         raise SyncError(
-            f"Skill source repository has no GitHub origin: {repository}"
+            f"Skill source repository has no {allowed_host} origin: {repository}"
         )
     branch = run_git(repository, "branch", "--show-current")
     if not branch:
@@ -443,11 +454,9 @@ def _source_context_in_repo(
         upstream_remote,
         check=False,
     )
-    if not upstream_push_url or not normalize_source(
-        upstream_push_url
-    ).startswith("github.com/"):
+    if not upstream_push_url or not _matches_host(upstream_push_url, allowed_host):
         raise SyncError(
-            f"Configured upstream remote is not GitHub: {upstream_remote}"
+            f"Configured upstream remote is not {allowed_host}: {upstream_remote}"
         )
     upstream_branch = merge_ref.removeprefix("refs/heads/")
     expected_upstream = f"{upstream_remote}/{upstream_branch}"
@@ -1081,6 +1090,88 @@ def _verify_installed_skill(
             expected_git_tree_hash,
         )
         print(f"Verified lock hash: {computed_hash} ({lock_path})")
+
+
+def _resolve_private_install_roots(
+    args: argparse.Namespace, private_host: str | None, repo: Path
+) -> list[Path]:
+    """Resolve private-host install roots with fail-closed shape checks."""
+
+    if not args.install_root:
+        return []
+    if not private_host:
+        raise SyncError("--install-root requires --private-host")
+    roots: list[Path] = []
+    for raw in args.install_root:
+        root = _absolute_path(Path(raw).expanduser())
+        if root.name != "skills" or root.parent.name != ".agents":
+            raise SyncError(
+                f"--install-root must be a <project>/.agents/skills directory: {root}"
+            )
+        if not root.is_dir():
+            raise SyncError(f"--install-root directory does not exist: {root}")
+        if _inside(root, repo):
+            raise SyncError(
+                f"--install-root must stay outside the source repository: {root}"
+            )
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _sync_private_install(context: SourceContext, install_root: Path) -> str:
+    """Mirror one published skill into an install root and verify it exactly."""
+
+    installed = install_root / context.skill_dir.name
+    source = context.skill_dir
+    if installed.exists() or installed.is_symlink():
+        if installed.is_symlink() or not installed.is_dir():
+            raise SyncError(
+                f"Private install target is not a manageable directory: {installed}"
+            )
+        shutil.rmtree(installed)
+    apply_copy(source, installed)
+    changes = installed_content_changes(source, installed)
+    if changes:
+        detail = ", ".join(f"{action} {path}" for action, path in changes)
+        raise SyncError(
+            f"Private install for {installed.name} differs after copy: {detail}"
+        )
+    print(f"Verified private install matches source: {installed}")
+    return "verified"
+
+
+def _apply_private_install_roots(
+    receipt: dict[str, object],
+    install_roots: list[Path],
+    contexts: list[SourceContext],
+    skill_receipts: list[dict[str, object]],
+) -> None:
+    """Sync and verify every private install root, preserving partial receipts."""
+
+    if not install_roots:
+        for item in skill_receipts:
+            item["update"] = "not_managed_private"
+        return
+    install_receipts: list[dict[str, object]] = []
+    for root in install_roots:
+        root_receipt: dict[str, object] = {"root": str(root), "skills": {}}
+        for context, item in zip(contexts, skill_receipts):
+            item["update"] = "pending"
+            try:
+                root_receipt["skills"][context.skill_dir.name] = (  # type: ignore[index]
+                    _sync_private_install(context, root)
+                )
+            except SyncError:
+                skills_map = root_receipt["skills"]
+                assert isinstance(skills_map, dict)
+                skills_map[context.skill_dir.name] = "failed"
+                item["update"] = "failed"
+                receipt["install_roots"] = install_receipts + [root_receipt]
+                raise
+            item["update"] = "verified"
+        install_receipts.append(root_receipt)
+    receipt["install_roots"] = install_receipts
 
 
 def _shared_global_skills_root() -> Path:
@@ -1980,6 +2071,19 @@ def publish_batch(args: argparse.Namespace) -> dict[str, object]:
         names = list(dict.fromkeys(args.skill))
         if not names or len(names) != len(args.skill):
             raise SyncError("publish-batch requires a non-empty unique --skill list")
+        private_host = (args.private_host or "").lower().strip() or None
+        if args.private_host and not private_host:
+            raise SyncError("--private-host must be a non-empty host name")
+        if private_host and args.project_root:
+            raise SyncError(
+                "--project-root is a Skills CLI update option and cannot combine "
+                "with --private-host; use --install-root"
+            )
+        install_roots = _resolve_private_install_roots(args, private_host, repo)
+        if private_host:
+            receipt["mode"] = "private-host"
+            receipt["private_host"] = private_host
+            receipt["install_roots"] = []
 
         contexts: list[SourceContext] = []
         skill_receipts: list[dict[str, object]] = []
@@ -1990,7 +2094,12 @@ def publish_batch(args: argparse.Namespace) -> dict[str, object]:
             _reject_package_input(skill_dir, "Skill input")
             if read_skill_name(skill_dir) != name:
                 raise SyncError(f"Invalid skill input: {name}")
-            context = _source_context_in_repo(repo, skill_dir, require_tracked=True)
+            context = _source_context_in_repo(
+                repo,
+                skill_dir,
+                require_tracked=True,
+                allowed_host=private_host or "github.com",
+            )
             contexts.append(context)
             skill_receipts.append(
                 {"name": name, "path": str(context.skill_relative), "validation": "pending", "tests": "pending", "update": "not_started"}
@@ -2056,7 +2165,7 @@ def publish_batch(args: argparse.Namespace) -> dict[str, object]:
 
         update_targets: dict[str, tuple[UpdateTarget, ...]] = {}
         update_root = _absolute_path(Path(args.project_root)) if args.project_root else repo
-        if args.reinstall:
+        if args.reinstall and not private_host:
             for context in contexts:
                 update_targets[context.skill_dir.name] = resolve_named_update_targets(
                     update_root, context.skill_dir.name, context
@@ -2092,20 +2201,25 @@ def publish_batch(args: argparse.Namespace) -> dict[str, object]:
             receipt["git"] = {"commit": commit, "push": "succeeded", "remote_head": source_head_after}
 
         if args.reinstall:
-            for context, item in zip(contexts, skill_receipts):
-                item["update"] = "pending"
-                try:
-                    refresh_named_skill(
-                        context.skill_dir,
-                        update_root,
-                        update_targets[context.skill_dir.name],
-                        attempts=args.attempts,
-                        retry_delay=args.retry_delay,
-                    )
-                except SyncError:
-                    item["update"] = "failed"
-                    raise
-                item["update"] = "verified"
+            if private_host:
+                _apply_private_install_roots(
+                    receipt, install_roots, contexts, skill_receipts
+                )
+            else:
+                for context, item in zip(contexts, skill_receipts):
+                    item["update"] = "pending"
+                    try:
+                        refresh_named_skill(
+                            context.skill_dir,
+                            update_root,
+                            update_targets[context.skill_dir.name],
+                            attempts=args.attempts,
+                            retry_delay=args.retry_delay,
+                        )
+                    except SyncError:
+                        item["update"] = "failed"
+                        raise
+                    item["update"] = "verified"
 
         receipt["status"] = "completed"
         receipt["completed"] = True
@@ -2281,6 +2395,18 @@ def build_parser() -> argparse.ArgumentParser:
     publish_batch_parser.add_argument("--repo", required=True)
     publish_batch_parser.add_argument("--skill", action="append", required=True)
     publish_batch_parser.add_argument("--include-path", action="append", default=[])
+    publish_batch_parser.add_argument(
+        "--private-host",
+        help="authorize one private Git host (for example an internal GitLab) "
+        "instead of github.com for the source repository upstream",
+    )
+    publish_batch_parser.add_argument(
+        "--install-root",
+        action="append",
+        default=[],
+        help="<project>/.agents/skills directory that receives verified skill "
+        "copies after push; requires --private-host",
+    )
     publish_batch_parser.add_argument("--project-root")
     publish_batch_parser.add_argument("--message")
     publish_batch_parser.add_argument("--expected-upstream-head")

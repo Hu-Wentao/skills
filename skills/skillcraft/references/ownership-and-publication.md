@@ -7,7 +7,7 @@ Inspect logical and resolved paths before source detection. A project path remai
 1. A regular project `skills-lock.json` with a valid matching entry owns a lock-managed installation. Its source and safe relative `skillPath` identify the shared source.
 2. A matching entry with invalid version, source, entry shape, or `skillPath` is ambiguous. Fail closed.
 3. A project `.agents/skills/<name>` path without a matching project lock is project-private source, even when tracked or linked into a shared directory.
-4. A tracked source at `skills/<name>` in an independent GitHub repository is shared direct source.
+4. A tracked source at `skills/<name>` in an independent GitHub repository is shared direct source. A tracked source at `skills/<name>` in an independent private-host repository is project-private source with a designated private source repository.
 5. `.agents/skills-config/<name>` is project-owned configuration, not skill source.
 
 A same-name global lock does not convert project-private source into shared source. Paths inside package-manager dependency trees are not authoritative source.
@@ -23,6 +23,8 @@ First-time repository creation or first installation is separate. Obtain the sou
 ## Project-private revision
 
 Project-private changes remain owned by their project. Unless the user explicitly requests local-only or no-push, revision includes validation, tests, commit, and remote push through that project’s own Git/worktree rules. Never use the shared publication runner, source registry, or Skills CLI update for this path. Migrating the skill to shared source requires separate user intent and a reviewed ownership change.
+
+Exception: when the project designates an independent repository on a private Git host as the source of record (tracked at `skills/<name>`), the canonical runner's private-host mode is the sanctioned delivery path, with verified `--install-root` copies replacing the unavailable Skills CLI update. The GitHub publication path, its locks, and its registry stay untouched.
 
 ## Registry compatibility
 

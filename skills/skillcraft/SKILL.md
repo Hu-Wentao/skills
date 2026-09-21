@@ -63,6 +63,18 @@ Do not report completion unless the receipt has `completed: true`. A successful 
 
 Unless the user explicitly requests local-only or no-push, a revision authorizes validation, tests, commit, and remote push through the owning project’s own Git/worktree rules. Do not invoke the shared publication runner, source registry, Skills CLI update, or migrate the skill to shared ownership.
 
+Exception — designated private source repository: when the owning project keeps this skill in an independent repository on a private Git host (for example an internal GitLab) at `skills/<name>`, publish revisions through the canonical runner in private-host mode instead of ad-hoc Git commands:
+
+```bash
+uv run python <sync-skill-repo-root>/scripts/sync_skill_repo.py publish-batch \
+  --repo <private-source-checkout> \
+  --skill <skill-name> \
+  --private-host <git-host> \
+  [--install-root <project>/.agents/skills]
+```
+
+Private-host mode keeps validation, tests, exact-path staging, one commit, one push, and receipt reporting, and replaces the unavailable Skills CLI update with verified `--install-root` copies. Never bind CLI locks, run Skills CLI updates, or register private repositories for GitHub-flow resolution on this path.
+
 ## Safety and Completion
 
 - Never publish `skills-config`, generated cache, secrets, dependency trees, build output, or input resolved through `package/node_modules`.

@@ -2497,7 +2497,7 @@ class SyncSkillRepoTests(unittest.TestCase):
             git(repo, "config", "branch.main.merge", "refs/heads/main")
 
             with self.assertRaisesRegex(
-                MODULE.SyncError, "upstream remote is not GitHub"
+                MODULE.SyncError, "upstream remote is not github.com"
             ):
                 MODULE._source_context(skill)
 
@@ -2735,6 +2735,185 @@ class SyncSkillRepoTests(unittest.TestCase):
     def test_package_node_modules_input_fails_closed(self) -> None:
         with self.assertRaisesRegex(MODULE.SyncError, "package/node_modules"):
             MODULE._reject_package_input(Path("/tmp/package/node_modules/demo-skill"), "Skill input")
+
+
+class PrivateHostBatchTests(unittest.TestCase):
+    def _private_repo(self, root: Path, host: str = "gitlab.internal") -> tuple[Path, Path]:
+        repo = root / "source"
+        init_repo(repo, f"git@{host}:ops/skills/bakai-skill.git")
+        skill = repo / "skills" / "demo-skill"
+        write_skill(skill, "demo-skill", "before")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "base")
+        configure_github_upstream(repo)
+        return repo, skill
+
+    def test_batch_private_origin_fails_closed_without_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, _ = self._private_repo(Path(temporary).resolve())
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("no github.com origin", receipt["error"])
+
+    def test_batch_private_host_mismatched_host_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, _ = self._private_repo(Path(temporary).resolve(), host="gitlab.real")
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+                "--private-host", "gitlab.other",
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("no gitlab.other origin", receipt["error"])
+
+    def test_batch_private_host_install_root_requires_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, _ = self._private_repo(Path(temporary).resolve(), host="github.com")
+            project = Path(temporary).resolve() / "project" / ".agents" / "skills"
+            project.mkdir(parents=True)
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+                "--install-root", str(project),
+            ])
+            receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("--install-root requires --private-host", receipt["error"])
+
+    def test_batch_private_host_rejects_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, _ = self._private_repo(Path(temporary).resolve())
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+                "--private-host", "gitlab.internal",
+                "--project-root", str(Path(temporary).resolve() / "project"),
+            ])
+            receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("cannot combine", receipt["error"])
+
+    def test_batch_private_host_install_root_shape_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo, _ = self._private_repo(root)
+            bad = root / "project" / "skills"
+            bad.mkdir(parents=True)
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+                "--private-host", "gitlab.internal",
+                "--install-root", str(bad),
+            ])
+            receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn(".agents/skills", receipt["error"])
+
+    def test_batch_private_host_install_root_outside_source_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo, _ = self._private_repo(root)
+            inside = repo / ".agents" / "skills"
+            inside.mkdir(parents=True)
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo),
+                "--skill", "demo-skill", "--no-reinstall",
+                "--private-host", "gitlab.internal",
+                "--install-root", str(inside),
+            ])
+            receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertIn("outside the source repository", receipt["error"])
+
+    def test_batch_private_host_without_install_root_marks_not_managed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, skill = self._private_repo(Path(temporary).resolve())
+            write_skill(skill, "demo-skill", "after")
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo), "--skill", "demo-skill",
+                "--private-host", "gitlab.internal",
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "run_skill_tests", return_value="not_present"):
+                        with patch.object(MODULE, "push_source_with_retry"):
+                            receipt = MODULE.publish_batch(args)
+            self.assertTrue(receipt["completed"])
+            self.assertEqual(receipt["mode"], "private-host")
+            self.assertEqual(receipt["skills"][0]["update"], "not_managed_private")
+            self.assertIsNotNone(receipt["git"]["commit"])
+
+    def test_batch_private_host_publishes_with_install_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo, skill = self._private_repo(root)
+            write_skill(skill, "demo-skill", "after")
+            (skill / "references").mkdir()
+            (skill / "references" / "guide.md").write_text("guide\n", encoding="utf-8")
+            project_skills = root / "project" / ".agents" / "skills"
+            stale = project_skills / "demo-skill"
+            stale.mkdir(parents=True)
+            (stale / "SKILL.md").write_text("stale\n", encoding="utf-8")
+            (stale / "stray.txt").write_text("stray\n", encoding="utf-8")
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo), "--skill", "demo-skill",
+                "--private-host", "gitlab.internal",
+                "--install-root", str(project_skills),
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "run_skill_tests", return_value="not_present"):
+                        with patch.object(MODULE, "push_source_with_retry"):
+                            receipt = MODULE.publish_batch(args)
+            self.assertTrue(receipt["completed"])
+            self.assertEqual(receipt["mode"], "private-host")
+            self.assertEqual(receipt["private_host"], "gitlab.internal")
+            self.assertEqual(receipt["skills"][0]["update"], "verified")
+            self.assertEqual(
+                receipt["install_roots"],
+                [{"root": str(project_skills), "skills": {"demo-skill": "verified"}}],
+            )
+            self.assertIn("after", (stale / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn(
+                "guide", (stale / "references" / "guide.md").read_text(encoding="utf-8")
+            )
+            self.assertFalse((stale / "stray.txt").exists())
+
+    def test_batch_private_host_install_failure_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repo, skill = self._private_repo(root)
+            write_skill(skill, "demo-skill", "after")
+            project_skills = root / "project" / ".agents" / "skills"
+            project_skills.mkdir(parents=True)
+            args = MODULE.build_parser().parse_args([
+                "publish-batch", "--repo", str(repo), "--skill", "demo-skill",
+                "--private-host", "gitlab.internal",
+                "--install-root", str(project_skills),
+            ])
+            with patch.object(MODULE, "_refresh_source_upstream"):
+                with patch.object(MODULE, "validate_skill"):
+                    with patch.object(MODULE, "run_skill_tests", return_value="not_present"):
+                        with patch.object(MODULE, "push_source_with_retry"):
+                            with patch.object(
+                                MODULE,
+                                "_sync_private_install",
+                                side_effect=MODULE.SyncError("install failed"),
+                            ):
+                                receipt = MODULE.publish_batch(args)
+            self.assertFalse(receipt["completed"])
+            self.assertEqual(receipt["git"]["push"], "succeeded")
+            self.assertEqual(receipt["skills"][0]["update"], "failed")
+            self.assertEqual(
+                receipt["install_roots"][0]["skills"]["demo-skill"], "failed"
+            )
 
 
 if __name__ == "__main__":
