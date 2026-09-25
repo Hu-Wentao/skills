@@ -2038,6 +2038,76 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("Source 'moving-source' HEAD changed", rejected.stderr)
 
+    def test_conflict_preview_detects_conflicts_and_blob_hashes(self) -> None:
+        conflicting = self.create("conflicting")
+        self.commit_file(conflicting, "base.txt", "source\n")
+        self.commit_file(self.repo, "base.txt", "target\n")
+
+        result = json.loads(self.cli("conflict-preview", "--all").stdout)
+        self.assertEqual(result["action"], "conflict_preview")
+        self.assertEqual(result["conflicts_found"], 1)
+        branches = {item["branch"]: item for item in result["branches"]}
+        conflict = branches["conflicting"]
+        self.assertEqual(conflict["status"], "conflict")
+        self.assertEqual(len(conflict["conflicted_files"]), 1)
+        file_entry = conflict["conflicted_files"][0]
+        self.assertEqual(file_entry["file"], "base.txt")
+        self.assertTrue(file_entry["ours_sha"])
+        self.assertTrue(file_entry["theirs_sha"])
+
+    def test_conflict_preview_reports_clean_merge(self) -> None:
+        clean = self.create("clean")
+        self.commit_file(clean, "clean.txt", "clean\n")
+        result = json.loads(self.cli("conflict-preview", "--all").stdout)
+        branches = {item["branch"]: item for item in result["branches"]}
+        self.assertEqual(branches["clean"]["status"], "clean")
+
+    def test_conflict_preview_marks_contained_branch_as_no_conflict(self) -> None:
+        contained = self.create("contained")
+        self.commit_file(contained, "extra.txt", "extra\n")
+        result = json.loads(self.cli("conflict-preview", "--all").stdout)
+        branches = {item["branch"]: item for item in result["branches"]}
+        self.assertNotEqual(branches["contained"]["status"], "conflict")
+
+    def test_conflict_preview_selects_specific_branch(self) -> None:
+        first = self.create("first")
+        second = self.create("second")
+        self.commit_file(first, "first.txt", "first\n")
+        self.commit_file(second, "second.txt", "second\n")
+        result = json.loads(
+            self.cli("conflict-preview", "--branch", "second").stdout
+        )
+        self.assertEqual([item["branch"] for item in result["branches"]], ["second"])
+
+    def test_conflict_preview_rejects_missing_target(self) -> None:
+        result = self.cli(
+            "conflict-preview", "--target", "ghost", "--all", check=False
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not exist", result.stderr)
+
+    def test_conflict_preview_requires_git_2_38(self) -> None:
+        import importlib.util
+
+        conflicting = self.create("conflicting-old-git")
+        self.commit_file(conflicting, "base.txt", "source\n")
+        self.commit_file(self.repo, "base.txt", "target\n")
+
+        spec = importlib.util.spec_from_file_location("gwt_version_guard", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        try:
+            module.git_version = lambda _repo: (2, 37)
+            exit_code = module.main(
+                ["--repo", str(self.repo), "conflict-preview", "--all"]
+            )
+        finally:
+            sys.modules.pop(spec.name, None)
+            if hasattr(module, "git_version"):
+                del module.git_version
+        self.assertEqual(exit_code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

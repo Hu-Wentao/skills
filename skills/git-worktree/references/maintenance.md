@@ -15,3 +15,5 @@ Rescue clean uncontained detached heads with `rescue-detached` and an exact expe
 Do not treat release, repair, or hotfix branch retention as proof that a published fix is integrated. Resolve release governance separately and retain unresolved protected lineages.
 
 Explicit recovery commands include `branch-audit`, exact local `merge`, guarded `remove`, and evidence-classified `branch-delete`. Protected branch deletion needs separate exact authority.
+
+To organize unmerged branches toward a target, see `branch-triage.md`: dry-run conflicts with `conflict-preview`, then merge the valuable, delete the worthless, and summarize conflicts for the user.

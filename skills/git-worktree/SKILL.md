@@ -16,13 +16,15 @@ uv run python <skill-root>/scripts/git_worktree.py --repo <worktree> owner-finis
 ```
 For maintenance, run `maintenance-audit --target <branch> --all`, review only `review_required`, then submit evidence-backed decisions to `maintenance-run`.
 
+For triage, run `conflict-preview --target <branch> --all` to dry-run each unmerged branch against the target, then follow `references/branch-triage.md` to merge the valuable, delete the worthless, and summarize conflicts for the user.
+
 ## Safety
 - Never claim completion for dirty source, detached, conflicted, moved, unvalidated, main, or blocked state. A merge target may contain only non-overlapping, uncommitted `docs/` drafts.
 - Re-audit after rescue, merge, deletion, movement, or state changes; validate the target before removing a source.
 - Protect completion and no-auto-merge refs. Never push, alter remote refs, rebase, squash, stash, force-remove, or change normal tags.
 - Stage or commit another owner’s changes only with that owner’s authority.
 
-Read `references/owner-delivery.md`, `maintenance.md`, and `safety.md` when completing, maintaining, or recovering work.
+Read `references/owner-delivery.md`, `maintenance.md`, `branch-triage.md`, and `safety.md` when completing, maintaining, triaging, or recovering work.
 
 ## Report
 Include exact source/target HEADs, ownership and delivery state, refs, validation, decisions, retained or removed worktrees, blockers, and untouched remote refs.

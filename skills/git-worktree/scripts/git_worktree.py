@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -2173,6 +2174,119 @@ def resolve_source(repo: Path, source: str | None, target: str) -> str:
     )
 
 
+GIT_MERGE_TREE_MIN_VERSION = (2, 38)
+
+
+def git_version(repo: Path) -> tuple[int, int, int]:
+    output = run_git(repo, "--version").stdout.strip()
+    version_str = output.split()[-1] if output else ""
+    parts: list[int] = []
+    for token in version_str.split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return (parts[0], parts[1], parts[2])
+
+
+def conflict_preview(
+    repo: Path, target: str, source: str
+) -> dict[str, object]:
+    """Dry-run three-way merge of <source> into <target> without touching the
+    working tree. Reports conflicted files and the blob hashes of both sides so
+    the caller can summarize the conflict at a functional level.
+
+    Requires git >= 2.38 for `git merge-tree --write-tree`. """
+    if git_version(repo) < GIT_MERGE_TREE_MIN_VERSION:
+        raise WorkflowError(
+            "conflict-preview requires git >= 2.38 (for `git merge-tree "
+            "--write-tree`). Found "
+            f"{git_version(repo)[0]}.{git_version(repo)[1]}. Upgrade git or "
+            "inspect conflicts with `merge` manually."
+        )
+    target_head = run_git(repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
+    source_head = run_git(repo, "rev-parse", f"{source}^{{commit}}").stdout.strip()
+    result = run_git(
+        repo, "merge-tree", "--write-tree", target, source, check=False
+    )
+    stdout = result.stdout
+    conflict_lines = [
+        line for line in stdout.splitlines() if line.startswith("CONFLICT (")
+    ]
+    stage_hashes: dict[str, dict[str, str]] = {}
+    for line in stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2:
+            fields = parts[0].split()
+            if len(fields) == 3:
+                mode, sha, stage = fields
+                stage_hashes.setdefault(parts[1], {})[stage] = {
+                    "mode": mode,
+                    "sha": sha,
+                }
+    conflicted_files: list[dict[str, object]] = []
+    for line in conflict_lines:
+        match = re.match(r"^CONFLICT \([^)]*\): Merge conflict in (.+)$", line)
+        if not match:
+            continue
+        path = match.group(1)
+        stages = stage_hashes.get(path, {})
+        ours = stages.get("2", {})
+        theirs = stages.get("3", {})
+        conflicted_files.append(
+            {
+                "file": path,
+                "ours_sha": ours.get("sha"),
+                "ours_mode": ours.get("mode"),
+                "theirs_sha": theirs.get("sha"),
+                "theirs_mode": theirs.get("mode"),
+            }
+        )
+    if conflict_lines:
+        status = "conflict"
+    elif result.returncode != 0:
+        # stderr-only failure such as "not something we can merge": the source is
+        # already contained in or identical to the target, so there is nothing
+        # to merge.
+        status = "already_contained"
+    else:
+        status = "clean"
+    return {
+        "branch": source,
+        "head": source_head,
+        "target": target,
+        "target_head": target_head,
+        "status": status,
+        "conflicted_files": conflicted_files,
+        "merge_tree_stdout": stdout.strip(),
+        "merge_tree_stderr": result.stderr.strip(),
+    }
+
+
+def command_conflict_preview(repo: Path, args: argparse.Namespace) -> None:
+    target = args.target or current_branch(repo)
+    if not local_branch_exists(repo, target):
+        raise WorkflowError(f"Target branch does not exist locally: {target}")
+    sources = sorted(args.branch) if args.branch else unmerged_candidates(repo, target)
+    branches = [conflict_preview(repo, target, source) for source in sources]
+    git_version_str = ".".join(str(part) for part in git_version(repo))
+    emit(
+        {
+            "action": "conflict_preview",
+            "git_version": git_version_str,
+            "target": target,
+            "target_head": run_git(
+                repo, "rev-parse", f"{target}^{{commit}}"
+            ).stdout.strip(),
+            "count": len(branches),
+            "conflicts_found": sum(
+                1 for branch in branches if branch["status"] == "conflict"
+            ),
+            "branches": branches,
+        }
+    )
+
+
 def command_merge(repo: Path, args: argparse.Namespace) -> dict[str, object]:
     target = args.target or current_branch(repo)
     if current_branch(repo) != target:
@@ -2677,6 +2791,23 @@ def build_parser() -> argparse.ArgumentParser:
     branch_window.add_argument("--recent-count", type=positive_int)
     branch_window.add_argument("--recent-days", type=positive_int)
     branch_audit.set_defaults(handler=command_branch_audit)
+
+    conflict_preview = commands.add_parser(
+        "conflict-preview",
+        help="Dry-run merge conflict preview for unmerged branches (git >= 2.38)",
+    )
+    conflict_preview.add_argument("--target")
+    conflict_preview.add_argument(
+        "--all",
+        action="store_true",
+        help="Preview all unmerged branches (default when no --branch given)",
+    )
+    conflict_preview.add_argument(
+        "--branch",
+        action="append",
+        help="Specific branch to preview (repeatable; overrides --all)",
+    )
+    conflict_preview.set_defaults(handler=command_conflict_preview)
 
     create = commands.add_parser("create", help="Create a branch and worktree")
     create.add_argument("--branch", required=True)
