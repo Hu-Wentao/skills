@@ -16,7 +16,7 @@ uv run python <skill-root>/scripts/git_worktree.py --repo <worktree> owner-finis
 ```
 For maintenance, run `maintenance-audit --target <branch> --all`, review only `review_required`, then submit evidence-backed decisions to `maintenance-run`.
 
-For triage, run `conflict-preview --target <branch> --all` to dry-run each unmerged branch against the target, then follow `references/branch-triage.md` to merge the valuable, delete the worthless, and summarize conflicts for the user.
+For triage, run `conflict-preview --target <branch> --all` to dry-run each unmerged branch against the target, then follow `references/branch-triage.md` to merge the valuable, retain the merged, delete only the unmergeable and worthless after explicit user confirmation, and summarize conflicts for the user.
 
 ## Safety
 - Never claim completion for dirty source, detached, conflicted, moved, unvalidated, main, or blocked state. A merge target may contain only non-overlapping, uncommitted `docs/` drafts.

@@ -1586,7 +1586,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertTrue(merged_item["relation"]["contained_in_target"])
         self.assertEqual(
             merged_item["decision_evidence"]["possible_decisions"],
-            ["delete", "retain"],
+            ["retain", "delete"],
         )
 
         unique_item = candidates[f"worktree:{detached_unique.resolve()}"]
@@ -1688,7 +1688,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         )
         self.assertEqual(
             worktree_item["decision_evidence"]["possible_decisions"],
-            ["delete", "retain"],
+            ["retain", "delete"],
         )
 
     def test_maintenance_audit_defaults_dirty_attached_branch_to_retain(self) -> None:
@@ -1892,7 +1892,7 @@ class GitWorktreeCliTests(unittest.TestCase):
         self.assertFalse(candidate["relation"]["contained_in_target"])
         self.assertEqual(
             candidate["decision_evidence"]["possible_decisions"],
-            ["merge", "delete", "retain"],
+            ["merge", "retain", "delete"],
         )
 
         target_head = run(["git", "rev-parse", "main"], self.repo).stdout.strip()

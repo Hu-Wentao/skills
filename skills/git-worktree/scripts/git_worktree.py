@@ -843,15 +843,15 @@ def decision_evidence(
     elif kind == "worktree":
         decision_scope = "worktree_only_branch_ref_retained"
         if contained or not worktrees[0].get("detached", False):
-            possible = ["delete", "retain"]
+            possible = ["retain", "delete"]
         else:
-            possible = ["merge", "delete", "retain"]
+            possible = ["merge", "retain", "delete"]
     else:
         decision_scope = "branch_and_committed_history"
         if contained or patch_equivalent:
-            possible = ["delete", "retain"]
+            possible = ["retain", "delete"]
         else:
-            possible = ["merge", "delete", "retain"]
+            possible = ["merge", "retain", "delete"]
 
     requirements: list[str] = []
     if dirty:

@@ -1,10 +1,22 @@
 # Branch Triage (整理分支)
 
 Triage local unmerged branches toward a target (usually `main`): merge the
-valuable, delete the worthless, and surface conflicts for the user. This is a
+valuable, retain the merged, delete only the unmergeable and worthless, and
+surface conflicts for the user. This is a
 review-and-decide workflow, not an autonomous cleanup — the script supplies
 evidence, the model judges value, and the user (or an explicit auto-merge
 authorization) approves the destructive steps.
+
+## Decision standard (user-required)
+
+- Already contained in or patch-equivalent to the target → `retain`. A merged
+  branch is a record: never list it as a deletion candidate and never propose
+deleting it. Delete such a branch only when the user explicitly requests
+  deletion and names the branch.
+- Not contained → drive toward `merge` when the work is valuable and the merge
+  is clean; escalate conflicts instead of forcing them.
+- `delete` is valid only when the branch is unmergeable AND has no remaining
+  value, and only after the user confirms that named branch.
 
 ## Scope (read first)
 
@@ -24,9 +36,9 @@ authorization) approves the destructive steps.
 2. Conflict preview: `conflict-preview --target main --all`. Dry-run each merge
    against `main` without touching the working tree (requires git >= 2.38).
 3. Assess each candidate. Combine the audit evidence with the conflict preview:
-   - Already contained / patch-equivalent → its work is effectively already in
-     `main`; `retain` only to delete after the user confirms, or delete if the
-     user pre-authorized.
+   - Already contained / patch-equivalent → `retain`; its work is effectively
+     already in `main`, so keep the branch as a record. Never propose deleting
+     it; delete only if the user explicitly requests deleting that branch.
    - `clean` status → no merge conflict; proceed to a value decision.
    - `conflict` status → see Conflict summary below; do not auto-merge.
    - Dirty source, detached work, auto-merge block, or incomplete completion →
