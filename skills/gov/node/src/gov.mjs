@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // gov — read-only lifecycle view over governed Markdown (plans, defects) built on the Node mdq engine.
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { read_document } from "../../../queryable-markdown/node/src/document.mjs";
@@ -247,6 +247,94 @@ function run_set(args, rows, loaded) {
   return 0;
 }
 
+// ---- tasks: checklist lines `- [ ] T1 text`; states [ ] todo, [~] doing, [x] done, [-] dropped ----
+const TASK_LINE = /^(\s*(?:[-*]|\d+[.)])\s+)\[([ ~xX-])\](\s+)(.*)$/;
+const TASK_STATES = { todo: " ", doing: "~", done: "x", dropped: "-" };
+const STATE_NAME = { " ": "todo", "~": "doing", x: "done", X: "done", "-": "dropped" };
+
+export function parse_tasks(text) {
+  const out = [];
+  let fenced = false;
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return; }
+    if (fenced) return;
+    const m = TASK_LINE.exec(line);
+    if (!m) return;
+    const id = /^(T\d+)\b/.exec(m[4])?.[1] ?? null;
+    out.push({ line: i + 1, id, state: STATE_NAME[m[2]], text: m[4] });
+  });
+  return out;
+}
+
+function run_task(args, rows) {
+  const [id, which, state] = args.rest;
+  if (!id) { console.error("gov: usage: gov task <ID> [<task> <todo|doing|done|dropped>] [--apply]"); return 2; }
+  const hit = rows.filter((r) => r.id === id);
+  if (hit.length !== 1) { console.error(hit.length ? `gov: id ${id} is ambiguous` : `gov: no record ${id}`); return 3; }
+  const full = path.join(args.root, hit[0].path);
+  const text = readFileSync(full, "utf-8");
+  const tasks = parse_tasks(text);
+  if (!which) {
+    const counts = {};
+    for (const t of tasks) counts[t.state] = (counts[t.state] ?? 0) + 1;
+    if (args.json) console.log(JSON.stringify({ id, path: hit[0].path, counts, tasks }, null, 2));
+    else {
+      console.log(`${id}: ${tasks.length} tasks ${JSON.stringify(counts)}`);
+      for (const t of tasks) console.log(`  ${t.id ?? `#${tasks.indexOf(t) + 1}`}  ${t.state.padEnd(7)} ${t.text.slice(0, 80)}`);
+    }
+    return 0;
+  }
+  if (!(state in TASK_STATES)) { console.error(`gov: state must be one of ${Object.keys(TASK_STATES).join(", ")}`); return 2; }
+  const matches = tasks.filter((t) => t.id === which || (/^\d+$/.test(which) && tasks.indexOf(t) + 1 === Number(which) && !t.id) || (/^\d+$/.test(which) && tasks.indexOf(t) + 1 === Number(which) && t.id === null));
+  if (matches.length !== 1) { console.error(matches.length ? `gov: task ${which} is ambiguous` : `gov: no task ${which} in ${hit[0].path}`); return 3; }
+  const target = matches[0];
+  const lines = text.split(/(?<=\n)/);
+  const eol = lines[target.line - 1].match(/\r?\n$/)?.[0] ?? "";
+  const m = TASK_LINE.exec(lines[target.line - 1].slice(0, lines[target.line - 1].length - eol.length));
+  lines[target.line - 1] = `${m[1]}[${TASK_STATES[state]}]${m[3]}${m[4]}${eol}`;
+  if (args.apply) writeFileSync(full, lines.join(""));
+  console.log(`${args.apply ? "set" : "would set"} ${id} ${which}: ${target.state} -> ${state} (${hit[0].path}:${target.line})${args.apply ? "" : "  [dry run; add --apply]"}`);
+  return 0;
+}
+
+// ---- init: config + CI + hook templates (dry run unless --apply; never overwrites) ----
+const GOV_CMD = "node .agents/skills/gov/scripts/gov.mjs";
+const INIT_FILES = (root) => ({
+  ".agents/skills-config/gov/config.yaml": () => {
+    const example = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "references", "example-config.friday-relay.yaml");
+    return existsSync(example) ? readFileSync(example, "utf-8") : "schema: gov.config.v1\nkinds: {}\n";
+  },
+  ".github/workflows/gov-check.yml": () => `name: gov-check
+on:
+  pull_request:
+    paths: ["docs/**", ".agents/skills-config/gov/**"]
+jobs:
+  gov:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # restore skills (see the skills restore script) before this step if .agents/skills is not committed
+      - run: ${GOV_CMD} check --level error
+`,
+  ".agents/skills-config/gov/claude-hook.example.json": () => JSON.stringify({
+    hooks: { PostToolUse: [{ matcher: "Edit|Write|MultiEdit", hooks: [{ type: "command", command: `${GOV_CMD} check --level error` }] }] },
+  }, null, 2) + "\n",
+});
+
+function run_init(args) {
+  let code = 0;
+  for (const [rel, make] of Object.entries(INIT_FILES(args.root))) {
+    const full = path.join(args.root, rel);
+    if (existsSync(full)) { console.log(`skip   ${rel} (exists)`); continue; }
+    if (args.apply) { mkdirSync(path.dirname(full), { recursive: true }); writeFileSync(full, make()); }
+    console.log(`${args.apply ? "write " : "would write"} ${rel}`);
+  }
+  if (!args.apply) console.log("[dry run; add --apply]. Hook example is NOT merged into .claude/settings.json; copy it yourself.");
+  return code;
+}
+
 // ---- CLI ----
 function parse_args(argv) {
   const args = { command: argv[0], rest: [], root: process.cwd(), config: null, json: false, kind: null, status: null, level: "warning", apply: false, force: false };
@@ -265,10 +353,12 @@ function parse_args(argv) {
   return args;
 }
 
-const USAGE = `usage: gov <ls|show|check|set> [--root DIR] [--config FILE] [--kind plan|defect] [--status S] [--json]
+const USAGE = `usage: gov <ls|show|check|set|task|init> [--root DIR] [--config FILE] [--kind plan|defect] [--status S] [--json]
   ls                 list governed records with canonical status
   show <ID>          one record with raw status, source and findings
   set <ID> <status> [--apply] [--force]  change status (dry run unless --apply; checks vocabulary and transitions)
+  task <ID> [<n|Tn> <todo|doing|done|dropped>] [--apply]  list or change checklist tasks
+  init [--apply]     write config, CI workflow, hook example (never overwrites)
   check [--level L]  report vocabulary, alias, contract and conflict findings (exit 1 on errors)`;
 
 export function main(argv) {
@@ -276,6 +366,7 @@ export function main(argv) {
   const args = parse_args(argv);
   const skills_root = find_skills_root();
   if (skills_root) set_skills_root(skills_root);
+  if (args.command === "init") return run_init(args);
   let loaded;
   try { loaded = load_config(args.root, args.config); } catch (error) { console.error(`gov: ${error.message}`); return 2; }
   const { rows, findings } = collect(args.root, loaded.config);
@@ -294,6 +385,7 @@ export function main(argv) {
     console.log(JSON.stringify(out.length === 1 ? out[0] : out, null, 2));
     return 0;
   }
+  if (args.command === "task") return run_task(args, rows);
   if (args.command === "set") return run_set(args, rows, loaded);
   if (args.command === "check") {
     const order = { info: 0, warning: 1, error: 2 };
