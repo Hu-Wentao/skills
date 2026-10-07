@@ -1,0 +1,14 @@
+{
+  "name": "gov-node",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "build": "bun build src/gov.mjs --target=node --format=esm --outfile=../scripts/gov.mjs",
+    "check": "node --check src/gov.mjs"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0",
+    "yaml": "^2.6.0"
+  }
+}
