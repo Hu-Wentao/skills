@@ -1,0 +1,32 @@
+# Example gov config for a repository that already has docs/plans and docs/defects (friday-relay layout).
+# Copy to <repo>/.agents/skills-config/gov/config.yaml. Aliases map legacy spellings found in the repository
+# onto the canonical vocabulary; they are matched case-insensitively with spaces, hyphens and underscores equal.
+schema: gov.config.v1
+kinds:
+  plan:
+    paths: [docs/plans]
+    glob: "**/*.md"
+    exclude: [README.md, INDEX.md]
+    status_from: [field]
+    vocabulary: [draft, planned, partial, implemented, verified, archived, superseded, deferred]
+    aliases:
+      proposed: draft
+      confirmed gap: draft
+      accepted: planned
+      ready for implementation: planned
+      方案已确认: planned
+      partially implemented: partial
+      in progress: partial
+      retired: archived
+  defect:
+    paths: [docs/defects]
+    glob: "DEF-*.md"
+    exclude: []
+    status_from: [frontmatter, field]
+    vocabulary: [confirmed, fixing, fixed, verified, superseded]
+    aliases:
+      pending_repair: confirmed
+      in_progress: fixing
+      implemented: fixed
+      resolved: fixed
+    expected_profile: project-governance/defect-profile-v1

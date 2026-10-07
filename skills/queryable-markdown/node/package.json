@@ -1,0 +1,14 @@
+{
+  "name": "mdq-node",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "build": "bun build src/main.mjs --target=node --format=esm --outfile=../scripts/mdq.mjs",
+    "parity": "node parity/compare.mjs"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0",
+    "yaml": "^2.6.0"
+  }
+}
