@@ -234,6 +234,17 @@ export class PyMatch {
 
 export class PyPattern {
   constructor(pattern, { ignorecase = false, multiline = false, dotall = false } = {}) {
+    // Leading global inline flags, e.g. (?i) or (?is): Python applies them to the whole pattern.
+    const lead = /^\(\?([aiLmsux]+)\)/.exec(pattern);
+    if (lead) {
+      for (const f of lead[1]) {
+        if (f === "i") ignorecase = true;
+        else if (f === "m") multiline = true;
+        else if (f === "s") dotall = true;
+        else if (f !== "u" && f !== "a") throw new PyRegexUnsupported(`inline flag ${f}`);
+      }
+      pattern = pattern.slice(lead[0].length);
+    }
     const t = translate_pattern(pattern);
     this.pattern = pattern;
     this.groups = t.groups;
