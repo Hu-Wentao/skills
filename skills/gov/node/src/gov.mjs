@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // gov — read-only lifecycle view over governed Markdown (plans, defects) built on the Node mdq engine.
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { read_document } from "../../../queryable-markdown/node/src/document.mjs";
@@ -18,6 +18,15 @@ const DEFAULT_CONFIG = {
       status_from: ["field"],
       vocabulary: ["draft", "planned", "partial", "implemented", "verified", "archived", "superseded"],
       aliases: {},
+      transitions: {
+        draft: ["planned", "superseded", "archived"],
+        planned: ["partial", "implemented", "superseded", "archived"],
+        partial: ["planned", "implemented", "superseded"],
+        implemented: ["verified", "partial", "archived"],
+        verified: ["archived", "superseded"],
+        archived: [],
+        superseded: [],
+      },
     },
     defect: {
       paths: ["docs/defects"],
@@ -27,6 +36,13 @@ const DEFAULT_CONFIG = {
       vocabulary: ["confirmed", "fixing", "fixed", "verified", "superseded"],
       aliases: { pending_repair: "confirmed", in_progress: "fixing", implemented: "fixed" },
       expected_profile: "project-governance/defect-profile-v1",
+      transitions: {
+        confirmed: ["fixing", "fixed", "superseded"],
+        fixing: ["confirmed", "fixed", "superseded"],
+        fixed: ["fixing", "verified", "superseded"],
+        verified: ["superseded"],
+        superseded: [],
+      },
     },
   },
 };
@@ -172,14 +188,75 @@ export function collect(root, config) {
   return { rows, findings };
 }
 
+// ---- status writes ----
+// Where a record's status lives: frontmatter `status:` is the authority; otherwise a single body label line.
+const FM_STATUS = /^(status\s*:\s*)(.*?)(\s*(?:#.*)?)$/;
+const BODY_STATUS = /^((?:[-*]\s+)?(?:\*\*|__)?(?:状态|status)(?:\*\*|__)?\s*[:：]\s*(?:\*\*|__)?)(.*?)((?:\*\*|__)?\s*)$/i;
+
+export function plan_status_edit(text, new_status) {
+  const lines = text.split(/(?<=\n)/);
+  if (lines.length && lines[0].replace(/^\uFEFF/, "").trim() === "---") {
+    for (let i = 1; i < lines.length; i++) {
+      if (["---", "..."].includes(lines[i].trim())) break;
+      const eol = lines[i].match(/\r?\n$/)?.[0] ?? "";
+      const m = FM_STATUS.exec(lines[i].slice(0, lines[i].length - eol.length));
+      if (m) {
+        const old = m[2].replace(/^["']|["']$/g, "");
+        lines[i] = `${m[1]}${new_status}${m[3]}${eol}`;
+        return { text: lines.join(""), line: i + 1, old, where: "frontmatter" };
+      }
+    }
+  }
+  const hits = [];
+  lines.forEach((line, i) => {
+    const eol = line.match(/\r?\n$/)?.[0] ?? "";
+    const m = BODY_STATUS.exec(line.slice(0, line.length - eol.length));
+    if (m) hits.push({ i, m, eol });
+  });
+  if (hits.length === 1) {
+    const { i, m, eol } = hits[0];
+    lines[i] = `${m[1]}${new_status}${m[3]}${eol}`;
+    return { text: lines.join(""), line: i + 1, old: m[2], where: "body" };
+  }
+  return { error: hits.length ? `${hits.length} status lines in body; refusing to guess` : "no status line found (frontmatter `status:` or body `Status:`)" };
+}
+
+function run_set(args, rows, loaded) {
+  const [id, target] = args.rest;
+  if (!id || !target) { console.error("gov: usage: gov set <ID> <status> [--apply] [--force] [--root DIR]"); return 2; }
+  const hit = rows.filter((r) => r.id === id);
+  if (hit.length !== 1) { console.error(hit.length ? `gov: id ${id} is ambiguous (${hit.length} records); edit the file directly` : `gov: no record ${id}`); return 3; }
+  const row = hit[0];
+  const kind = loaded.config.kinds[row.kind];
+  if (rows.filter((r) => r.path === row.path).length > 1) { console.error(`gov: ${row.path} holds several records; gov set only edits single-record files`); return 3; }
+  const wanted = kind.vocabulary.find((v) => v === target) ?? null;
+  if (!wanted) { console.error(`gov: ${JSON.stringify(target)} is not in the ${row.kind} vocabulary (${kind.vocabulary.join(", ")})`); return 3; }
+  const allowed = kind.transitions?.[row.status];
+  if (row.status === null && !args.force) { console.error(`gov: current status of ${id} is unreadable; fix it first or pass --force`); return 3; }
+  if (row.status === wanted) { console.log(`${id}: already ${wanted}`); return 0; }
+  if (allowed && !allowed.includes(wanted) && !args.force) {
+    console.error(`gov: ${row.status} -> ${wanted} is not an allowed transition for ${row.kind} (allowed: ${allowed.join(", ") || "none"}); pass --force to override`);
+    return 3;
+  }
+  const full = path.join(args.root, row.path);
+  const edit = plan_status_edit(readFileSync(full, "utf-8"), wanted);
+  if (edit.error) { console.error(`gov: ${row.path}: ${edit.error}`); return 3; }
+  const report = { id, path: row.path, line: edit.line, where: edit.where, from: edit.old, to: wanted, applied: args.apply };
+  if (args.apply) writeFileSync(full, edit.text);
+  console.log(args.json ? JSON.stringify(report, null, 2) : `${args.apply ? "set" : "would set"} ${id}: ${edit.old} -> ${wanted} (${row.path}:${edit.line}, ${edit.where})${args.apply ? "" : "  [dry run; add --apply]"}`);
+  return 0;
+}
+
 // ---- CLI ----
 function parse_args(argv) {
-  const args = { command: argv[0], rest: [], root: process.cwd(), config: null, json: false, kind: null, status: null, level: "warning" };
+  const args = { command: argv[0], rest: [], root: process.cwd(), config: null, json: false, kind: null, status: null, level: "warning", apply: false, force: false };
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--root") args.root = path.resolve(argv[++i]);
     else if (a === "--config") args.config = path.resolve(argv[++i]);
     else if (a === "--json") args.json = true;
+    else if (a === "--apply") args.apply = true;
+    else if (a === "--force") args.force = true;
     else if (a === "--kind") args.kind = argv[++i];
     else if (a === "--status") args.status = argv[++i];
     else if (a === "--level") args.level = argv[++i];
@@ -188,9 +265,10 @@ function parse_args(argv) {
   return args;
 }
 
-const USAGE = `usage: gov <ls|show|check> [--root DIR] [--config FILE] [--kind plan|defect] [--status S] [--json]
+const USAGE = `usage: gov <ls|show|check|set> [--root DIR] [--config FILE] [--kind plan|defect] [--status S] [--json]
   ls                 list governed records with canonical status
   show <ID>          one record with raw status, source and findings
+  set <ID> <status> [--apply] [--force]  change status (dry run unless --apply; checks vocabulary and transitions)
   check [--level L]  report vocabulary, alias, contract and conflict findings (exit 1 on errors)`;
 
 export function main(argv) {
@@ -216,6 +294,7 @@ export function main(argv) {
     console.log(JSON.stringify(out.length === 1 ? out[0] : out, null, 2));
     return 0;
   }
+  if (args.command === "set") return run_set(args, rows, loaded);
   if (args.command === "check") {
     const order = { info: 0, warning: 1, error: 2 };
     const shown = findings.filter((f) => order[f.level] >= order[args.level] && (!args.kind || f.kind === args.kind));
