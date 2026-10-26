@@ -107,6 +107,28 @@ def require_boolean(value: Any, field: str) -> bool:
     return value
 
 
+def normalize_lifecycle(operation: dict[str, Any], field: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    if "tier" in operation:
+        tier = require_string(operation["tier"], f"{field}.tier")
+        if tier not in {"production", "standard", "incident"}:
+            raise ResolveError(f"{field}.tier is unsupported")
+        result["tier"] = tier
+    lifecycle = "active"
+    if "lifecycle" in operation:
+        lifecycle = require_string(operation["lifecycle"], f"{field}.lifecycle")
+        if lifecycle not in {"active", "superseded"}:
+            raise ResolveError(f"{field}.lifecycle is unsupported")
+        result["lifecycle"] = lifecycle
+    if lifecycle == "superseded":
+        result["superseded_reason"] = require_string(
+            operation.get("superseded_reason"), f"{field}.superseded_reason"
+        )
+    elif "superseded_reason" in operation:
+        raise ResolveError(f"{field}.superseded_reason requires lifecycle superseded")
+    return result
+
+
 def require_exact_keys(mapping: dict[str, Any], allowed: set[str], field: str) -> None:
     unknown = sorted(set(mapping) - allowed)
     if unknown:
@@ -342,6 +364,9 @@ def normalize_contract(
                 "output_schema",
                 "exit_codes",
                 "next_states",
+                "tier",
+                "lifecycle",
+                "superseded_reason",
             },
             operation_field,
         )
@@ -422,6 +447,7 @@ def normalize_contract(
             normalized_operation["environment"] = normalize_environment(
                 operation["environment"], f"{operation_field}.environment"
             )
+        normalized_operation.update(normalize_lifecycle(operation, operation_field))
         normalized_operations[name] = normalized_operation
     return {
         "schema": "host-governance.task-contract.v1",

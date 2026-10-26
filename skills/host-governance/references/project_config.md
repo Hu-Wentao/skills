@@ -38,6 +38,12 @@ mutability values are `read_only`, `repository_write`, `host_write`,
 `external_write`, `composite_write`, and `destructive`. Use `composite_write`
 only when one serialized controller changes both host and provider state.
 
+Optional governance metadata per operation: `tier` (`production`, `standard`,
+`incident`), `lifecycle` (`active` by default, or `superseded`), and
+`superseded_reason`, which is required exactly when `lifecycle` is
+`superseded`. The resolver validates and passes them through; it does not
+refuse superseded operations.
+
 ```json
 {
   "schema": "host-governance.task-contract.v1",
