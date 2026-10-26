@@ -282,6 +282,33 @@ tasks:
             ],
         )
 
+    def test_v2_operation_lifecycle_metadata(self) -> None:
+        config_root = self.write_v2_config()
+        contract_path = config_root / "control.contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        inspect = contract["operations"]["inspect"]
+        inspect.update(
+            tier="production", lifecycle="superseded", superseded_reason="Replaced."
+        )
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        resolved = self.run_resolver("--task", "control", "--format", "json")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        self.assertIn('"superseded_reason": "Replaced."', resolved.stdout)
+
+        for change, message in (
+            ({"superseded_reason": None}, "superseded_reason"),
+            ({"tier": "critical"}, "tier is unsupported"),
+            ({"lifecycle": "retired"}, "lifecycle is unsupported"),
+            ({"lifecycle": "active"}, "requires lifecycle superseded"),
+        ):
+            broken = {**inspect, **change}
+            broken = {key: value for key, value in broken.items() if value is not None}
+            contract["operations"]["inspect"] = broken
+            contract_path.write_text(json.dumps(contract), encoding="utf-8")
+            rejected = self.run_resolver("--task", "control", "--format", "json")
+            self.assertEqual(rejected.returncode, 2, change)
+            self.assertIn(message, rejected.stderr)
+
     def test_v2_rejects_unsupported_or_nonsensitive_credential_source(self) -> None:
         config_root = self.write_v2_config()
         contract_path = config_root / "control.contract.json"
