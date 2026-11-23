@@ -8,7 +8,7 @@ metadata:
 
 # Skillcraft
 
-Own the model-facing semantics for skill creation and revision. Keep authoring judgment here; delegate publication mechanics to the hidden `sync-skill-repo` runner.
+Own the model-facing semantics for skill creation and revision. Keep authoring judgment here. Skills published to Frely are uploaded with `frely item publish` (read [frely.md](references/frely.md)); the `sync-skill-repo` runner is only for shared GitHub source repositories and only when that skill is installed.
 
 ## Classify Ownership
 
@@ -41,6 +41,8 @@ For an authorized revision, commit the completed change immediately after valida
 
 ### Shared source or lock-managed installation
 
+Only when the `sync-skill-repo` skill is installed. If it is not, do not look for it and do not push the source to a Git remote: a skill that belongs on Frely is published there (next section).
+
 A request to revise, improve, update, or “修订” authorizes the complete revision-and-publication transaction unless the user explicitly says local-only, no push, or no update. Before editing, state:
 
 `修订技能后将推送远端并 update。`
@@ -62,7 +64,7 @@ Do not report completion unless the receipt has `completed: true`. A successful 
 
 ### Frely item
 
-Never revise a Frely-managed installation in place. Publish revised source with `frely item publish` only when the user asks; see [frely.md](references/frely.md).
+Never revise a Frely-managed installation in place. A skill whose source folder you own and publish to Frely is revised in that folder and delivered with `frely item publish`: a revision request authorizes publishing the new version unless the user says local-only, but the first publication of a new slug needs the user's explicit ask. Frely is the destination; do not push these skills to a Git remote or run the shared publication runner. See [frely.md](references/frely.md).
 
 ### Project-private source
 

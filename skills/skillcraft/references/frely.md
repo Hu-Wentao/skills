@@ -24,7 +24,7 @@ If the `frely` command is missing or the status call fails, treat the folder as 
 
 ## Publish to Frely
 
-Publication is outward-facing: only after the user asks for it.
+Frely is where these skills are uploaded; nothing here goes through `sync-skill-repo` or a Git remote. A revision request authorizes publishing the new version of a slug that is already published (unless the user says local-only); the first publication of a new slug is outward-facing and needs the user's explicit ask.
 
 ```bash
 frely item publish <source-folder> [--slug <slug>] [--premium <path>]... [--json]
@@ -34,6 +34,7 @@ frely item publish <source-folder> [--slug <slug>] [--premium <path>]... [--json
 - `--premium <path>` marks files that buyers receive only after purchase; leave everything else free. Free-tier package limits apply (64 files, 64 KB per file, 128 KB total).
 - The result prints the version and the install command `frely item install <owner>/<slug>`. Afterwards run `frely item update <folder>` on any installed copy of your own.
 - Run the skill's validator and tests first; do not ship a failing skill.
+- Every new slug takes one of the author's Skill slots (Free: 100 in all, any level; 1 may be shown on the profile page). A revision of an existing slug takes none and creates a new version. If publish answers `creator_skill_limit_reached`, tell the user to delete a skill they no longer need or upgrade; never delete anything on their behalf.
 
 ## Calling Frely from a skill
 
