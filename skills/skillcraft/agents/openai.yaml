@@ -3,4 +3,4 @@ interface:
   short_description: "Create, revise, validate, and publish skills"
   icon_small: "./assets/skillcraft-small.svg"
   icon_large: "./assets/skillcraft.png"
-  default_prompt: "Use $skillcraft to revise this skill and publish it by ownership: shared through the canonical runner, project-private through its project Git workflow."
+  default_prompt: "Use $skillcraft to revise this skill and publish it by ownership: skills on Frely with frely item publish, project-private through its project Git workflow."
