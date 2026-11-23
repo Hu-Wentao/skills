@@ -1,0 +1,107 @@
+// Tests for the __SKILL_NAME__ project configuration resolver. Run: node --test
+import assert from "node:assert/strict";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const SKILL_NAME = "__SKILL_NAME__";
+const SOURCE_SKILL = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const temp = mkdtempSync(join(tmpdir(), `${SKILL_NAME}-resolve-`));
+after(() => rmSync(temp, { recursive: true, force: true }));
+
+function project(name, { profile, behavior, command = "node --test" } = {}) {
+  const root = join(temp, name);
+  mkdirSync(join(root, ".git"), { recursive: true });
+  const skill = join(root, ".agents", "skills", SKILL_NAME);
+  mkdirSync(dirname(skill), { recursive: true });
+  cpSync(SOURCE_SKILL, skill, { recursive: true });
+  if (profile !== undefined) {
+    const configRoot = join(root, ".agents", "skills-config", SKILL_NAME);
+    mkdirSync(configRoot, { recursive: true });
+    writeFileSync(join(configRoot, "config.yaml"), [
+      `schema: ${SKILL_NAME}.config.v1`,
+      `profile: ${name}`,
+      "tasks:",
+      "  default:",
+      "    base: references/default.md",
+      `    profile: ${profile}`,
+      "    commands:",
+      `      validate: ${command}`,
+      "",
+    ].join("\n"));
+    if (behavior !== undefined) writeFileSync(join(configRoot, "project.md"), behavior);
+  }
+  return { root, resolver: join(skill, "scripts", "resolve.mjs") };
+}
+
+function run({ root, resolver }, ...args) {
+  return spawnSync(process.execPath, [resolver, "--cwd", root, ...args], { cwd: root, encoding: "utf8" });
+}
+
+const field = (stdout, key) => stdout.split("\n").find((line) => line.startsWith(`${key}:`));
+
+test("generic fallback and stable id", () => {
+  const p = project("fallback");
+  const first = run(p, "--task", "default");
+  const second = run(p, "--task", "default");
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /profile: generic/);
+  assert.equal(field(first.stdout, "instructions_id"), field(second.stdout, "instructions_id"));
+});
+
+test("project profile is composed", () => {
+  const p = project("compose", { profile: "project.md", behavior: "# Repository Rules\n\nUse the project validator.\n" });
+  const result = run(p, "--task", "default", "--emit", "instructions");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /## Generic Instructions/);
+  assert.match(result.stdout, /## Project Instructions/);
+  assert.match(result.stdout, /Use the project validator\./);
+  assert.match(result.stdout, /node --test/);
+});
+
+test("same skill behaves differently in two projects", () => {
+  const a = project("project-a", { profile: "project.md", behavior: "Use behavior A.\n", command: "validate-a" });
+  const b = project("project-b", { profile: "project.md", behavior: "Use behavior B.\n", command: "validate-b" });
+  const ra = run(a, "--task", "default");
+  const rb = run(b, "--task", "default");
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.equal(rb.status, 0, rb.stderr);
+  assert.match(ra.stdout, /profile: project-a/);
+  assert.match(rb.stdout, /profile: project-b/);
+  assert.match(ra.stdout, /validate: validate-a/);
+  assert.match(rb.stdout, /validate: validate-b/);
+  assert.notEqual(field(ra.stdout, "instructions_id"), field(rb.stdout, "instructions_id"));
+  const textA = readFileSync(join(a.root, ra.stdout.match(/path: (.*)/)[1]), "utf8");
+  const textB = readFileSync(join(b.root, rb.stdout.match(/path: (.*)/)[1]), "utf8");
+  assert.match(textA, /Use behavior A\./);
+  assert.doesNotMatch(textA, /Use behavior B\./);
+  assert.match(textB, /Use behavior B\./);
+  assert.doesNotMatch(textB, /Use behavior A\./);
+});
+
+test("invalid schema is rejected", () => {
+  const p = project("bad-schema", { profile: "project.md", behavior: "x\n" });
+  const configPath = join(p.root, ".agents", "skills-config", SKILL_NAME, "config.yaml");
+  writeFileSync(configPath, readFileSync(configPath, "utf8").replace(`${SKILL_NAME}.config.v1`, "wrong.config.v1"));
+  const result = run(p, "--task", "default");
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /schema must be/);
+});
+
+test("missing configured task is rejected", () => {
+  const p = project("missing-task", { profile: "project.md", behavior: "x\n" });
+  const result = run(p, "--task", "not-configured");
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /tasks\.not-configured must be a mapping/);
+});
+
+test("profile path escape is rejected", () => {
+  const p = project("escape", { profile: "../../outside.md" });
+  writeFileSync(join(p.root, ".agents", "outside.md"), "outside");
+  const result = run(p, "--task", "default");
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /escapes its allowed root/);
+});

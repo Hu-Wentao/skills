@@ -23,7 +23,7 @@ repository owns the profile that specializes its behavior.
 <skill-root>/
 ├── SKILL.md
 ├── references/<task>.md
-└── scripts/resolve.py
+└── scripts/resolve.mjs
 
 <project-root>/.agents/
 ├── skills-config/<skill-name>/
@@ -99,7 +99,7 @@ Before a config-aware task, resolve `<skill-root>` from the active skill's
 `SKILL.md` location, then run:
 
 ```bash
-uv run python <skill-root>/scripts/resolve.py --task <task>
+node <skill-root>/scripts/resolve.mjs --task <task>
 ```
 
 The resolver must:
@@ -129,8 +129,9 @@ their resolved instructions, declared commands, profile names, and
 changes validation commands or safety boundaries.
 
 Run `node scripts/quick_validate.mjs <path/to/skill-folder>` after editing.
-The dependency-free Node validator rejects reusable Python code that compares
-`profile` with a concrete string literal without requiring PyYAML.
+The dependency-free Node validator rejects reusable Python or JavaScript code
+(`.py`, `.mjs`, `.js`, `.cjs`) that compares `profile` with a concrete string
+literal.
 
 ## Migration
 
@@ -142,3 +143,9 @@ When extracting project branches from an existing reusable skill:
 4. Preserve a working generic fallback.
 5. Compare resolved behavior before removing the old branch.
 6. Document breaking schema or task-name changes explicitly.
+
+New skills scaffold a zero-dependency `scripts/resolve.mjs` (Node built-ins
+only; Bun also runs it), so consumers need Node or Bun but not `uv` or Python.
+An existing skill with `scripts/resolve.py` keeps working unchanged; switching
+it to `resolve.mjs` changes `instructions_id` once, which only regenerates the
+cache.

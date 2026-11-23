@@ -15,7 +15,8 @@ Own the model-facing semantics for skill creation and revision. Keep authoring j
 Inspect both the logical path and resolved path before editing:
 
 - `<project>/.agents/skills/<name>` with a valid matching project `skills-lock.json` entry is a lock-managed shared installation.
-- The same path without a matching lock entry is project-private source owned by that project.
+- The same path without a matching lock entry, and not Frely-managed, is project-private source owned by that project.
+- A folder under `<project>/.agents/skills/` that `frely item status <folder> --json` reports as Frely-managed is a marketplace installation: never edit or commit it (read [frely.md](references/frely.md)).
 - Tracked `skills/<name>` in an independent source repository is shared direct source.
 - `<project>/.agents/skills-config/<name>` is project configuration, never a publication target.
 - Invalid matching lock data is ambiguous: stop instead of falling back.
@@ -58,6 +59,10 @@ uv run python <sync-skill-repo-root>/scripts/sync_skill_repo.py publish-batch \
 The runner owns context-budget validation, skill tests, exact-path staging, one commit and push, per-name `skills update <name>` from a neutral cwd, installation/lock verification, and the structured receipt. Exact head arguments authorize only an already reviewed ahead range, such as a worktree merge; never replace them with a broad “allow unpushed” decision.
 
 Do not report completion unless the receipt has `completed: true`. A successful push followed by failed update or verification is incomplete.
+
+### Frely item
+
+Never revise a Frely-managed installation in place. Publish revised source with `frely item publish` only when the user asks; see [frely.md](references/frely.md).
 
 ### Project-private source
 

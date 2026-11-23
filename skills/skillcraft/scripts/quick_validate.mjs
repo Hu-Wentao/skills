@@ -15,7 +15,7 @@ export const CONTEXT_BUDGETS = Object.freeze({
 export function findLiteralProfileBranch(skillPath) {
   const scripts = join(skillPath, "scripts");
   if (!isDirectory(scripts)) return null;
-  for (const path of walkFiles(scripts).filter((item) => item.endsWith(".py")).sort()) {
+  for (const path of walkFiles(scripts).filter((item) => /\.(py|mjs|js|cjs)$/.test(item)).sort()) {
     if (path.split(sep).includes("tests")) continue;
     let source;
     try { source = readFileSync(path, "utf8"); } catch { continue; }
@@ -111,7 +111,7 @@ function findProfileComparison(source) {
   const profile = String.raw`(?:[A-Za-z_]\w*\.)*profile`;
   const string = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
   const literal = String.raw`(?:${string}|\[[^\]\n]*${string}[^\]\n]*\])`;
-  const pattern = new RegExp(String.raw`${profile}\s*(?:==|!=|\b(?:not\s+in|in)\b)\s*${literal}|${literal}\s*(?:==|!=|\b(?:not\s+in|in)\b)\s*${profile}`);
+  const pattern = new RegExp(String.raw`${profile}\s*(?:===?|!==?|\b(?:not\s+in|in)\b)\s*${literal}|${literal}\s*(?:===?|!==?|\b(?:not\s+in|in)\b)\s*${profile}`);
   for (const [index, line] of source.split(/\r?\n/).entries()) if (pattern.test(line)) return { line: index + 1 };
   return null;
 }

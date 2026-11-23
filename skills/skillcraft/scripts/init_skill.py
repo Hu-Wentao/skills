@@ -24,8 +24,8 @@ from generate_openai_yaml import write_openai_yaml
 MAX_SKILL_NAME_LENGTH = 64
 ALLOWED_RESOURCES = {"scripts", "references", "assets"}
 PROJECT_CONFIG_TEMPLATES = (
-    ("resolve.py.template", "scripts/resolve.py", True),
-    ("test_resolve.py.template", "scripts/tests/test_resolve.py", True),
+    ("resolve.mjs.template", "scripts/resolve.mjs", True),
+    ("test_resolve.mjs.template", "scripts/tests/test_resolve.mjs", True),
     ("default.md.template", "references/default.md", False),
     ("project_config.md.template", "references/project_config.md", False),
 )
@@ -123,7 +123,7 @@ Before executing any supported task, resolve `<skill-root>` from this active
 `SKILL.md` location, then resolve the behavior for the current repository:
 
 ```bash
-uv run python <skill-root>/scripts/resolve.py --task <task>
+node <skill-root>/scripts/resolve.mjs --task <task>
 ```
 
 Read the returned `instructions.path` whenever `instructions_id` changes, then
@@ -401,7 +401,7 @@ def init_skill(
     print("3. Update agents/openai.yaml if the UI metadata should differ")
     print("4. Run the validator when ready to check the skill structure")
     if project_config:
-        print("5. Customize the default resolver task and run scripts/tests/test_resolve.py")
+        print("5. Customize the default resolver task and run node --test scripts/tests/test_resolve.mjs")
     print(
         "6. Forward-test complex skills with realistic user requests to ensure they work as intended"
         if project_config

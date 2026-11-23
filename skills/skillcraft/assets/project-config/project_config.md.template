@@ -26,7 +26,7 @@ Resolve `<skill-root>` from the active skill's `SKILL.md` location, then run
 the resolver before a configured task:
 
 ```bash
-uv run python <skill-root>/scripts/resolve.py --task default
+node <skill-root>/scripts/resolve.mjs --task default
 ```
 
 Read the returned instruction path once per new `instructions_id`. Resolution

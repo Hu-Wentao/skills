@@ -14,10 +14,10 @@ function fixture(frontmatter = "name: example-skill\ndescription: Exercise valid
   return { root, skill };
 }
 
-function configuredFixture(resolver) {
+function configuredFixture(resolver, file = "resolve.py") {
   const value = fixture();
   writeFileSync(join(value.skill, "references", "project_config.md"), "# Project Configuration\n");
-  writeFileSync(join(value.skill, "scripts", "resolve.py"), resolver);
+  writeFileSync(join(value.skill, "scripts", file), resolver);
   return value;
 }
 
@@ -97,6 +97,21 @@ test("rejects a literal project profile branch", () => withFixture(configuredFix
 
 test("accepts profile as an opaque manifest value", () => withFixture(configuredFixture(
   "profile = load_config().get('profile', 'generic')\nprint(f'profile: {profile}')\n"
+), ({ skill }) => {
+  const [valid, message] = validateSkill(skill);
+  assert.equal(valid, true, message);
+}));
+
+test("rejects a literal project profile branch in a JavaScript resolver", () => withFixture(configuredFixture(
+  "const profile = 'generic';\nif (profile === 'customer-a') console.log('customer behavior');\n", "resolve.mjs"
+), ({ skill }) => {
+  const [valid, message] = validateSkill(skill);
+  assert.equal(valid, false);
+  assert.match(message, /resolve\.mjs:2 branches on a concrete project profile/);
+}));
+
+test("accepts an opaque profile in a JavaScript resolver", () => withFixture(configuredFixture(
+  "const profile = String(config.profile ?? 'generic');\nconsole.log(`profile: ${profile}`);\n", "resolve.mjs"
 ), ({ skill }) => {
   const [valid, message] = validateSkill(skill);
   assert.equal(valid, true, message);

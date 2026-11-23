@@ -6,7 +6,7 @@ Inspect logical and resolved paths before source detection. A project path remai
 
 1. A regular project `skills-lock.json` with a valid matching entry owns a lock-managed installation. Its source and safe relative `skillPath` identify the shared source.
 2. A matching entry with invalid version, source, entry shape, or `skillPath` is ambiguous. Fail closed.
-3. A project `.agents/skills/<name>` path without a matching project lock is project-private source, even when tracked or linked into a shared directory.
+3. A project `.agents/skills/<name>` path that `frely item status <folder> --json` reports as Frely-managed is a marketplace installation and is never edited or committed ([frely.md](frely.md)). Any other path without a matching project lock is project-private source, even when tracked or linked into a shared directory.
 4. A tracked source at `skills/<name>` in an independent GitHub repository is shared direct source. A tracked source at `skills/<name>` in an independent private-host repository is project-private source with a designated private source repository.
 5. `.agents/skills-config/<name>` is project-owned configuration, not skill source.
 

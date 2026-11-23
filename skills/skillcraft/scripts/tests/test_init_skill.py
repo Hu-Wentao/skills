@@ -51,8 +51,8 @@ class InitSkillTest(unittest.TestCase):
 
             skill = skills_root / "demo-skill"
             expected = (
-                skill / "scripts" / "resolve.py",
-                skill / "scripts" / "tests" / "test_resolve.py",
+                skill / "scripts" / "resolve.mjs",
+                skill / "scripts" / "tests" / "test_resolve.mjs",
                 skill / "references" / "default.md",
                 skill / "references" / "project_config.md",
             )
@@ -60,19 +60,19 @@ class InitSkillTest(unittest.TestCase):
             skill_text = (skill / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn("## Resolve Project Behavior", skill_text)
             self.assertIn(
-                "<skill-root>/scripts/resolve.py --task <task>",
+                "node <skill-root>/scripts/resolve.mjs --task <task>",
                 skill_text,
             )
             self.assertNotIn(
-                ".agents/skills/demo-skill/scripts/resolve.py",
+                ".agents/skills/demo-skill/scripts/resolve.mjs",
                 skill_text,
             )
             self.assertIn("same reusable skill can behave differently", skill_text)
 
             generic = subprocess.run(
                 [
-                    sys.executable,
-                    str(skill / "scripts" / "resolve.py"),
+                    "node",
+                    str(skill / "scripts" / "resolve.mjs"),
                     "--cwd",
                     str(repo),
                     "--task",
@@ -88,8 +88,9 @@ class InitSkillTest(unittest.TestCase):
 
             generated_tests = subprocess.run(
                 [
-                    sys.executable,
-                    str(skill / "scripts" / "tests" / "test_resolve.py"),
+                    "node",
+                    "--test",
+                    str(skill / "scripts" / "tests" / "test_resolve.mjs"),
                 ],
                 cwd=repo,
                 capture_output=True,
@@ -101,7 +102,7 @@ class InitSkillTest(unittest.TestCase):
                 0,
                 msg=generated_tests.stdout + generated_tests.stderr,
             )
-            self.assertIn("Ran 6 tests", generated_tests.stderr)
+            self.assertIn("pass 6", generated_tests.stdout)
 
     def test_user_level_project_config_skill_resolves_separate_project(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skillcraft-user-") as raw_root:
@@ -159,8 +160,8 @@ class InitSkillTest(unittest.TestCase):
 
             resolved = subprocess.run(
                 [
-                    sys.executable,
-                    str(skill / "scripts" / "resolve.py"),
+                    "node",
+                    str(skill / "scripts" / "resolve.mjs"),
                     "--cwd",
                     str(repo),
                     "--task",
@@ -227,7 +228,7 @@ class InitSkillTest(unittest.TestCase):
             )
             self.assertIn('display_name: "Plain Skill"', openai_yaml)
             self.assertIn('short_description: "Create a plain reusable skill"', openai_yaml)
-            self.assertFalse((skill / "scripts" / "resolve.py").exists())
+            self.assertFalse((skill / "scripts" / "resolve.mjs").exists())
             self.assertFalse((skill / "references" / "project_config.md").exists())
             self.assertNotIn(
                 "## Resolve Project Behavior",

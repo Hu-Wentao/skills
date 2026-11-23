@@ -1,0 +1,218 @@
+#!/usr/bin/env node
+// Resolve generic and repository-owned instructions for __SKILL_NAME__.
+// Zero dependencies: Node built-ins only (also runs under Bun).
+
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SKILL_NAME = "__SKILL_NAME__";
+const RESOLVER_VERSION = "1";
+
+export class ResolveError extends Error {}
+
+function isRelativeTo(path, root) {
+  const rel = relative(root, path);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && !/^[a-zA-Z]:/.test(rel));
+}
+
+function isFile(path) {
+  try { return statSync(path).isFile(); } catch { return false; }
+}
+
+export function findRepoRoot(start) {
+  let current = resolve(start);
+  for (;;) {
+    if (existsSync(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new ResolveError("no Git repository found from the selected working directory");
+}
+
+// Mapping-only YAML subset used by project configuration.
+export function parseSimpleYaml(text) {
+  const root = {};
+  const stack = [[-1, root]];
+  for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    if (!rawLine.trim() || rawLine.trimStart().startsWith("#")) continue;
+    if (rawLine.startsWith("\t")) throw new ResolveError(`config.yaml:${lineNumber}: tabs are not supported`);
+    const indent = rawLine.length - rawLine.trimStart().length;
+    if (indent % 2 || !rawLine.includes(":")) {
+      throw new ResolveError(`config.yaml:${lineNumber}: expected two-space key: value`);
+    }
+    const trimmed = rawLine.trim();
+    const colon = trimmed.indexOf(":");
+    const key = trimmed.slice(0, colon);
+    const value = trimmed.slice(colon + 1).trim();
+    while (stack.length && indent <= stack[stack.length - 1][0]) stack.pop();
+    if (!stack.length) throw new ResolveError(`config.yaml:${lineNumber}: invalid indentation`);
+    const parent = stack[stack.length - 1][1];
+    if (Object.hasOwn(parent, key)) throw new ResolveError(`config.yaml:${lineNumber}: duplicate key '${key}'`);
+    if (value) {
+      parent[key] = value.replace(/^["']+|["']+$/g, "");
+    } else {
+      const child = {};
+      parent[key] = child;
+      stack.push([indent, child]);
+    }
+  }
+  return root;
+}
+
+function loadConfig(path) {
+  if (!existsSync(path)) return [{}, ""];
+  const text = readFileSync(path, "utf8");
+  return [parseSimpleYaml(text), text];
+}
+
+function requireMapping(value, field) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ResolveError(`${field} must be a mapping`);
+  }
+  return value;
+}
+
+function resolvePath(value, root, field) {
+  const base = resolve(root);
+  const candidate = resolve(base, value);
+  if (!isRelativeTo(candidate, base)) throw new ResolveError(`${field} escapes its allowed root`);
+  if (!isFile(candidate)) throw new ResolveError(`${field} not found: ${candidate}`);
+  return candidate;
+}
+
+function displayPath(path, repoRoot) {
+  const resolved = resolve(path);
+  const root = resolve(repoRoot);
+  return isRelativeTo(resolved, root) ? relative(root, resolved).split(sep).join("/") : resolved;
+}
+
+function sortedObject(object) {
+  return Object.fromEntries(Object.entries(object).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+export function resolveTask(task, cwd) {
+  const repoRoot = findRepoRoot(cwd);
+  const skillRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const configRoot = join(repoRoot, ".agents", "skills-config", SKILL_NAME);
+  const configPath = join(configRoot, "config.yaml");
+  const cacheRoot = join(repoRoot, ".agents", ".cache", SKILL_NAME);
+
+  const [config, configText] = loadConfig(configPath);
+  let profile = "generic";
+  let taskConfig = {};
+  if (Object.keys(config).length) {
+    const expectedSchema = `${SKILL_NAME}.config.v1`;
+    if (config.schema !== expectedSchema) throw new ResolveError(`config.yaml schema must be ${expectedSchema}`);
+    profile = String(config.profile ?? "project");
+    const tasks = requireMapping(config.tasks, "tasks");
+    taskConfig = requireMapping(Object.hasOwn(tasks, task) ? tasks[task] : undefined, `tasks.${task}`);
+  }
+
+  const baseValue = String(taskConfig.base ?? `references/${task}.md`);
+  const basePath = resolvePath(baseValue, skillRoot, `tasks.${task}.base`);
+  const baseText = readFileSync(basePath, "utf8").trim();
+  const sources = { base: displayPath(basePath, repoRoot) };
+
+  let profileText = "";
+  if (taskConfig.profile !== undefined) {
+    const profilePath = resolvePath(String(taskConfig.profile), configRoot, `tasks.${task}.profile`);
+    profileText = readFileSync(profilePath, "utf8").trim();
+    sources.profile = displayPath(profilePath, repoRoot);
+    sources.project_config = displayPath(configPath, repoRoot);
+  }
+
+  const commands = requireMapping(taskConfig.commands ?? {}, `tasks.${task}.commands`);
+  const normalizedCommands = sortedObject(
+    Object.fromEntries(Object.entries(commands).map(([key, value]) => [String(key), String(value)])),
+  );
+
+  const parts = [
+    `# Resolved ${SKILL_NAME} Instructions`,
+    "",
+    `- Task: \`${task}\``,
+    `- Profile: \`${profile}\``,
+    "",
+    "## Resolution Policy",
+    "",
+    "Project instructions override generic configurable defaults when both ",
+    "address the same choice. They cannot override external authority, the ",
+    "skill's non-configurable safety invariants, schema validation, or ",
+    "path-containment rules. Declared commands are not executed by resolution.",
+    "",
+    "## Generic Instructions",
+    "",
+    baseText,
+  ];
+  if (profileText) parts.push("", "## Project Instructions", "", profileText);
+  const commandEntries = Object.entries(normalizedCommands);
+  if (commandEntries.length) {
+    parts.push("", "## Declared Commands", "");
+    for (const [name, command] of commandEntries) parts.push(`- \`${name}\`: \`${command}\``);
+  }
+  const instructions = `${parts.join("\n").trimEnd()}\n`;
+
+  const hashInput = {
+    base: baseText,
+    commands: normalizedCommands,
+    config: configText,
+    profile,
+    profile_text: profileText,
+    resolver_version: RESOLVER_VERSION,
+    skill: SKILL_NAME,
+    task,
+  };
+  const digest = createHash("sha256").update(JSON.stringify(hashInput)).digest("hex").slice(0, 16);
+  const instructionsId = `${SKILL_NAME}/${task}@${digest}`;
+  const cachePath = join(cacheRoot, task, `${digest}.md`);
+  mkdirSync(dirname(cachePath), { recursive: true });
+  writeFileSync(cachePath, instructions, "utf8");
+
+  const manifest = [
+    "status: ready",
+    `skill: ${SKILL_NAME}`,
+    `task: ${task}`,
+    `profile: ${profile}`,
+    `instructions_id: ${instructionsId}`,
+    "instructions:",
+    `  path: ${displayPath(cachePath, repoRoot)}`,
+    "sources:",
+    ...Object.entries(sortedObject(sources)).map(([name, value]) => `  ${name}: ${value}`),
+  ];
+  if (commandEntries.length) {
+    manifest.push("commands:", ...commandEntries.map(([name, value]) => `  ${name}: ${value}`));
+  }
+  return { manifest: `${manifest.join("\n")}\n`, instructions };
+}
+
+function main(argv) {
+  let task = "default";
+  let cwd = process.cwd();
+  let emit = "manifest";
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--task") task = argv[++i];
+    else if (arg === "--cwd") cwd = argv[++i];
+    else if (arg === "--emit") emit = argv[++i];
+    else { console.error(`error: unknown argument ${arg}`); return 2; }
+  }
+  if (!task || !cwd || !["manifest", "instructions"].includes(emit)) {
+    console.error("usage: resolve.mjs [--task <task>] [--cwd <dir>] [--emit manifest|instructions]");
+    return 2;
+  }
+  try {
+    const { manifest, instructions } = resolveTask(task, cwd);
+    process.stdout.write(emit === "instructions" ? instructions : manifest);
+    return 0;
+  } catch (error) {
+    if (error instanceof ResolveError) { console.error(`error: ${error.message}`); return 2; }
+    throw error;
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = main(process.argv.slice(2));
+}
